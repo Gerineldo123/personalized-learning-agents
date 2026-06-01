@@ -1,0 +1,260 @@
+这是一个重要的架构升级方向。我根据你的想法重新梳理开发方案。
+
+---
+
+## 核心变更对比
+
+| 模块 | 当前实现 | 你的目标 |
+|------|----------|----------|
+| 画像 | 用户主动描述"我是XX专业"→LLM抽取 | AI自动分析对话记录+拍照解题+学习时长 → 画像 |
+| 资源 | 用户说"生成文章"→单次生成 | 画像变化 → 自动触发资源生成 |
+| 视频 | 无 | AI先生成提示词 → 外部视频AI根据提示词生成 |
+| 习题 | 仅展示 | 用户可管理：错题本/收藏/删除 |
+| 路径 | 纯文本验收标准 | 验收标准 → 可点击跳转对应学习资源 |
+
+---
+
+## 新架构数据流
+
+```mermaid
+flowchart TD
+    A[AI对话] --> H[对话历史]
+    B[拍照解题] --> H
+    C[答题记录] --> H
+    D[学习时长] --> H
+    
+    H --> P[ProfileAgent<br/>分析历史数据]
+    P --> R[ResourceGenerator<br/>根据画像生成资源]
+    R --> V[视频提示词 → 外部视频AI]
+    R --> Q[习题 → 用户管理<br/>错题本/收藏/删除]
+    R --> M[文章/代码/导图]
+    
+    P --> LP[PathPlanningAgent<br/>规划路径]
+    LP --> CK[验收标准<br/>含资源跳转链接]
+    
+    E[EvaluationAgent] --> P
+```
+
+---
+
+## 开发方案
+
+### 阶段 A：数据基础层（预计 1.5 天）
+
+#### A1 新建数据模型
+
+| 模型 | 表 | 关键字段 |
+|------|-----|----------|
+| `ChatHistory` | `chat_history` | `id, user_id, role, message, msg_type(text/photo), photo_url, created_at` |
+| `QuizRecord` | `quiz_records` | `id, user_id, resource_id, answers, score, time_spent, created_at` |
+| `LearningSession` | `learning_sessions` | `id, user_id, session_type, duration_seconds, resource_id, created_at` |
+
+#### A2 对话历史记录
+
+| 文件 | 改动 |
+|------|------|
+| `services/chat_service.py` | `route_to_agent` 完成后写入 `ChatHistory` |
+| `api/routes/chat.py` | 增加 `GET /api/chat/history?user_id=x` |
+| `api/routes/session.py` | **新建** — `POST /api/session/report` 前端定时上报学习时长 |
+
+#### A3 拍照解题 API
+
+| 文件 | 改动 |
+|------|------|
+| `api/routes/chat.py` | `ChatRequest` 增加 `image_base64: str | None` |
+| `services/vision_service.py` | **新建** — Base64 图片转文字描述，构造 prompt 调用 LLM 解题 |
+| `views/ChatView.vue` | 输入框旁增加拍照/上传按钮，发送前转为 base64 |
+
+---
+
+### 阶段 B：画像重构（预计 1.5 天）
+
+#### B1 ProfileAgent 改造
+
+```python
+# 当前：只解析 user_message 这一个字段
+# 改造：收集多数据源，统一分析
+
+async def process(self, state):
+    # 1. 从 DB 查询最近 7 天的对话历史
+    chat_history = query_chat_history(user_id, days=7)
+    
+    # 2. 从 DB 查询答题记录统计
+    quiz_stats = query_quiz_stats(user_id)
+    
+    # 3. 从 DB 查询学习时长分布
+    session_stats = query_session_stats(user_id)
+    
+    # 4. 合并已有画像
+    old_profile = query_profile(user_id)
+    
+    # 5. 构造综合 prompt，让 LLM 分析所有数据
+    prompt = f"""
+    对话记录：{chat_history}
+    答题统计：{quiz_stats}  
+    学习时长：{session_stats}
+    当前画像：{old_profile}
+    
+    请综合分析，更新学生画像的 6 个维度...
+    """
+    
+    # 6. LLM 输出 → 更新画像
+```
+
+#### B2 触发时机
+
+| 触发条件 | 触发动作 |
+|----------|----------|
+| 每次对话结束 | 记录历史，异步触发画像微调 |
+| 每完成 5 道习题 | 触发画像更新 |
+| 每累计学习 30 分钟 | 触发画像重评估 |
+
+---
+
+### 阶段 C：资源生成重构（预计 2 天）
+
+#### C1 画像驱动自动生成
+
+```python
+# services/resource_generator.py (新建)
+
+async def generate_resources_for_profile(user_id):
+    profile = get_profile(user_id)
+    
+    # 根据 profile.weak_points 生成针对性习题
+    for weak in profile.weak_points:
+        await ContentGenAgent().generate_quiz(weak)
+    
+    # 根据 profile.learning_goal 生成路径规划
+    await PathPlanningAgent().plan(profile.learning_goal)
+    
+    # 根据 profile.knowledge_base 生成导图（对薄弱学科）
+    for subject, score in profile.knowledge_base.items():
+        if score < 0.4:
+            await MindMapAgent().generate(subject)
+```
+
+#### C2 视频资源生成（两步法）
+
+| 步骤 | 文件 | 说明 |
+|------|------|------|
+| 第1步 | `agents/content_gen_agent.py` | `_generate_video_prompt` → LLM 生成视频脚本+分镜+风格描述 |
+| 第2步 | `services/video_service.py` | **新建** — 调用外部视频生成 API（如 Sora/Runway/Pika/可灵），传入提示词，轮询任务状态，获取视频 URL |
+| 存储 | `models/resource.py` | `content` 中存 `{video_prompt, video_url, status}` |
+
+#### C3 习题用户管理
+
+| 文件 | 改动 |
+|------|------|
+| `api/routes/quiz.py` | **新建** — `POST /mistake/add`, `POST /favorite/add`, `DELETE /resource/{id}` |
+| `api/routes/quiz.py` | `GET /mistakes?user_id=x` — 错题本列表 |
+| `api/routes/quiz.py` | `GET /favorites?user_id=x` — 收藏列表 |
+| `components/resource/QuizCard.vue` | 每道题增加 ⭐收藏 / 📕错题本 / 🗑删除 三个按钮 |
+| `views/MistakeView.vue` | **新建** — 错题复习页面 |
+| `router.ts` | 增加 `/mistakes` 路由 |
+
+---
+
+### 阶段 D：路径资源关联（预计 0.5 天）
+
+#### D1 路实验收标准跳转
+
+```
+当前 path.steps[i].checkpoint 是纯文本：
+"学生应能独立写出带参数的Python装饰器"
+
+改造后包含资源 ID：
+{
+  "checkpoint_text": "学生应能独立写出带参数的Python装饰器",
+  "related_resource_ids": [12, 15],
+  "related_resource_titles": ["装饰器专项练习", "装饰器代码案例"]
+}
+```
+
+| 文件 | 改动 |
+|------|------|
+| `agents/path_planning_agent.py` | prompt 中增加要求：每步 checkpoint 附带 `related_resource_ids` |
+| `views/PathView.vue` | 验收标准改为可点击链接，跳转至 `ResourcesView` 对应资源详情 |
+
+---
+
+### 阶段 E：前端体验整合（预计 1 天）
+
+#### E1 拍照解题入口
+
+```
+ChatView 输入框区域：
+
+┌─────────────────────────────────────┐
+│  [📎拍照] [🖼上传]                  │
+│  ┌──────────────────────────────┐   │
+│  │ 输入你的问题...               │   │
+│  └──────────────────────────────┘   │
+│        [发送]                       │
+└─────────────────────────────────────┘
+
+点击拍照 → 调用摄像头 → base64编码 → 附带发送
+```
+
+#### E2 快捷功能面板
+
+```
+ChatView 上方：
+
+[📝写文章] [📝出题] [🗺路径规划] [🧠思维导图] [📹生成视频]
+```
+
+点击后自动填入 `resource_type` 到请求中。
+
+#### E3 学习统计仪表盘
+
+```
+HomeView 新增：
+
+┌──────────┬──────────┬──────────┬──────────┐
+│ 今日学习  │ 本周对话  │ 错题数量  │ 资源收藏  │
+│  45分钟   │  12次    │   8题    │  5个     │
+└──────────┴──────────┴──────────┴──────────┘
+```
+
+---
+
+## 新增文件清单
+
+```
+backend/
+├── models/
+│   ├── chat_history.py     # 对话历史
+│   ├── quiz_record.py      # 答题记录
+│   └── learning_session.py # 学习时长
+├── services/
+│   ├── vision_service.py   # 拍照 OCR + AI 解题
+│   ├── resource_generator.py # 画像驱动资源生成
+│   └── video_service.py    # 视频提示词转视频
+├── api/routes/
+│   ├── quiz.py             # 答题提交 + 错题本 + 收藏
+│   └── session.py          # 学习时长上报
+
+frontend/src/
+├── views/
+│   ├── MistakeView.vue     # 错题本
+│   └── FavoritesView.vue   # 收藏夹
+└── components/
+    └── chat/
+        └── PhotoUploader.vue # 拍照/上传组件
+```
+
+---
+
+## 工作量与建议执行顺序
+
+| 阶段 | 内容 | 预计 |
+|------|------|------|
+| A | 数据基础层（模型+历史记录+拍照API+时长上报） | 1.5 天 |
+| B | 画像重构（多数据源分析） | 1.5 天 |
+| C | 资源生成重构（画像驱动+视频+习题管理） | 2 天 |
+| D | 路径资源关联（验收标准跳转） | 0.5 天 |
+| E | 前端体验整合 | 1 天 |
+| **合计** | | **6.5 天** |
+
+**执行顺序：A → B → C → D → E**，每条改完独立验证。是否从阶段 A 开始？

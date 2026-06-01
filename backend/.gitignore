@@ -1,0 +1,34 @@
+# === 密钥文件 ===
+api_config.json
+
+# === 虚拟环境 ===
+venv/
+env/
+.venv/
+
+# === 数据库文件 ===
+*.db
+*.db-journal
+*.db-wal
+
+# === 向量数据库 ===
+chroma_data/
+
+# === 环境变量 ===
+.env
+.env.local
+
+# === Python 缓存 ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

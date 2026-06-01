@@ -1,0 +1,14 @@
+{
+  "main": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key": "sk-your-api-key-here",
+    "api_secret": "",
+    "model": "gpt-3.5-turbo"
+  },
+  "video": {
+    "base_url": "https://vms.cn-huadong-1.xf-yun.com/v1",
+    "api_key": "your-vms-api-key",
+    "api_secret": "your-vms-api-secret",
+    "model": ""
+  }
+}
