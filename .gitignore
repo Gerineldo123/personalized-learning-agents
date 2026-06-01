@@ -30,7 +30,7 @@ logs/
 api_config.json
 
 # === 临时文件 ===
-*.tmp
+/*.tmp
 *.temp
 *.swp
 *.swo
