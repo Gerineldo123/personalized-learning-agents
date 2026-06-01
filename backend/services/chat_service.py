@@ -1,21 +1,17 @@
-from core.llm_client import chat_completion
-from agents.registry import get_agent, get_all_agents
-from core.sse import sse_stream
-from agents.base import AgentState
-from core.database import SessionLocal
-from models.student import StudentProfile
-from services.safety_service import check_text, check_text_input
 from fastapi.responses import StreamingResponse
 
-INTENT_PROMPT = """根据对话历史和用户消息，判断应调用哪个智能体。
+from graph.builder import compile_graph
+from graph.state import AgentGraphState
+from agents.registry import get_agent
+from agents.base import AgentState
+from core.database import SessionLocal
+from core.sse import sse_stream
+from models.student import StudentProfile
+from services.safety_service import check_text, check_text_input
 
-可选智能体（名称: 描述 — 必须严格返回名称列的值）：
-{agent_list}
 
-对话历史：{history}
-用户消息：{message}
-
-只能返回上面列出的智能体名称本身（纯英文），不要任何其他文字、标点、解释。"""
+# 编译图（模块级单例，避免每次请求重复编译）
+_graph = compile_graph()
 
 
 async def route_to_agent(user_id: str, message: str, history: list[dict] | None = None):
@@ -23,6 +19,7 @@ async def route_to_agent(user_id: str, message: str, history: list[dict] | None 
     if not ok:
         async def deny():
             yield "抱歉，您的输入包含不当内容，请重新提问。"
+
         return StreamingResponse(
             sse_stream(deny()),
             media_type="text/event-stream; charset=utf-8",
@@ -33,40 +30,35 @@ async def route_to_agent(user_id: str, message: str, history: list[dict] | None 
             },
         )
 
-    agents = get_all_agents()
-    agent_desc = "\n".join([f"'{a.name}': {a.description}" for a in agents])
-    history_text = _format_history(history)
-
-    intent_resp = await chat_completion([
-        {"role": "system", "content": INTENT_PROMPT.format(
-            agent_list=agent_desc, history=history_text, message=message
-        )},
-        {"role": "user", "content": message}
-    ])
-    agent_name = _clean_agent_name(intent_resp.choices[0].message.content)
-    agent = _resolve_agent(agent_name, agents)
-
     profile = _load_profile(user_id)
 
-    state = AgentState(
-        user_id=user_id,
-        user_message=message,
-        profile=profile,
-        history=history or [],
-    )
-    result = agent.stream(state)
+    # 构建初始 state
+    initial_state: AgentGraphState = {
+        "user_id": user_id,
+        "user_message": safe_message,
+        "profile": profile,
+        "history": history or [],
+        "messages": [],
+        "response": "",
+        "agent_name": "",
+    }
 
-    async def safe_result():
-        collected = ""
-        async for chunk in result:
-            collected += chunk
-            yield chunk
-        safe_text, ok = await check_text(collected)
-        if not ok:
-            state["response"] = safe_text
+    # 通过 LangGraph 图执行：intent_classifier → agent_node → END
+    # 使用 astream 以 updates 模式获取每个节点的输出
+    async def event_stream():
+        async for chunk in _graph.astream(initial_state, stream_mode="updates"):
+            # chunk 格式: {node_name: state_update_dict}
+            for node_name, update in chunk.items():
+                if node_name == "intent_classifier":
+                    # 意图分类节点不产生用户可见输出
+                    continue
+                # Agent 节点的输出
+                response = update.get("response", "")
+                if response:
+                    yield response
 
     return StreamingResponse(
-        sse_stream(safe_result()),
+        sse_stream(event_stream()),
         media_type="text/event-stream; charset=utf-8",
         headers={
             "Cache-Control": "no-cache",
@@ -74,26 +66,6 @@ async def route_to_agent(user_id: str, message: str, history: list[dict] | None 
             "Connection": "keep-alive",
         },
     )
-
-
-def _clean_agent_name(raw: str) -> str:
-    name = raw.strip().strip('"').strip("'").strip("`").strip(".")
-    name = name.split("\n")[0].split(":")[0].split("：")[0].strip()
-    return name
-
-
-def _resolve_agent(name: str, agents):
-    name_lower = name.lower()
-
-    for a in agents:
-        if a.name.lower() == name_lower:
-            return a
-
-    for a in agents:
-        if a.name.lower() in name_lower or name_lower in a.name.lower():
-            return a
-
-    return get_agent("chat")
 
 
 def _load_profile(user_id: str):
@@ -104,15 +76,3 @@ def _load_profile(user_id: str):
         ).first()
     finally:
         db.close()
-
-
-def _format_history(history: list[dict] | None) -> str:
-    if not history:
-        return "（无历史对话）"
-    recent = history[-10:]
-    lines = []
-    for h in recent:
-        role = "用户" if h.get("role") == "user" else "助手"
-        content = h.get("content", "")[:200]
-        lines.append(f"{role}: {content}")
-    return "\n".join(lines)
