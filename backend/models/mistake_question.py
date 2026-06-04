@@ -17,4 +17,5 @@ class MistakeQuestion(Base):
     question = Column(JSON)
     user_answer = Column(String, default="")
     correct_answer = Column(String, default="")
+    analysis = Column(JSON)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

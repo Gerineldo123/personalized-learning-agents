@@ -10,6 +10,7 @@ from models.conversation import Conversation, ChatMessage
 from models.quiz_record import QuizRecord
 from models.mistake_question import MistakeQuestion
 from models.course_path import CoursePath
+from models.focus import FocusSession
 from models.user import User
 
 Base.metadata.create_all(bind=engine)
@@ -25,6 +26,34 @@ def _ensure_resource_pinned_column():
 
 
 _ensure_resource_pinned_column()
+
+
+def _ensure_focus_columns():
+    with engine.connect() as conn:
+        cols = {c[1] for c in conn.exec_driver_sql("PRAGMA table_info(student_profiles)").fetchall()}
+        for col, typedef in [
+            ("focus_stamina_score", "INTEGER"),
+            ("focus_peak_hours",    "JSON"),
+            ("focus_interrupt_rate","REAL"),
+            ("focus_weekly_avg_min","INTEGER"),
+        ]:
+            if col not in cols:
+                conn.exec_driver_sql(f"ALTER TABLE student_profiles ADD COLUMN {col} {typedef}")
+        conn.commit()
+
+
+_ensure_focus_columns()
+
+
+def _ensure_mistake_analysis_column():
+    with engine.connect() as conn:
+        cols = {c[1] for c in conn.exec_driver_sql("PRAGMA table_info(mistake_questions)").fetchall()}
+        if "analysis" not in cols:
+            conn.exec_driver_sql("ALTER TABLE mistake_questions ADD COLUMN analysis JSON")
+            conn.commit()
+
+
+_ensure_mistake_analysis_column()
 
 app = FastAPI(title="个性化学习智能体系统")
 
@@ -76,7 +105,7 @@ register(ChatAgent())
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -89,6 +118,7 @@ app.include_router(quiz.router)
 app.include_router(mistake.router)
 app.include_router(course_path.router)
 app.include_router(auth.router)
+app.include_router(focus.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

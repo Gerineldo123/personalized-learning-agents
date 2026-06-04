@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import api from '../../api'
 import { ElMessage } from 'element-plus'
+import { renderMathInline } from '../../utils/markdown'
 
 interface QuizQuestion {
   id: number
@@ -209,9 +210,7 @@ async function submitQuiz() {
     </div>
 
     <div v-for="q in content.questions" :key="q.id" class="quiz-question">
-      <div class="question-text">
-        <span class="q-num">{{ q.id }}.</span> {{ q.question }}
-      </div>
+      <div class="question-text" v-html="renderMathInline(`${q.id}. ${q.question}`)" />
 
       <el-radio-group
         v-model="answers[q.id]"
@@ -219,7 +218,7 @@ async function submitQuiz() {
         @change="(val: string) => selectAnswer(q.id, val)"
       >
         <el-radio v-for="opt in q.options" :key="opt" :value="opt.charAt(0)">
-          {{ opt }}
+          <span v-html="renderMathInline(opt)" />
         </el-radio>
       </el-radio-group>
 
@@ -227,7 +226,7 @@ async function submitQuiz() {
         <el-tag :type="isCorrect(q.id) ? 'success' : 'danger'" size="small">
           {{ isCorrect(q.id) ? '正确' : '错误' }}
         </el-tag>
-        <p class="explanation">{{ q.explanation }}</p>
+        <p class="explanation" v-html="renderMathInline(q.explanation)" />
         <el-button size="small" type="danger" text :disabled="markedSet[q.id]" @click="markToMistake(q)">
           {{ markedSet[q.id] ? '已加入错题本' : '加入错题本' }}
         </el-button>

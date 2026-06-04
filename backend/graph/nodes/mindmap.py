@@ -14,7 +14,13 @@ async def mindmap_node(state: AgentGraphState) -> dict:
     )
     result = await _mindmap_agent.process(agent_state)
     response = result.get("response", "")
+
+    completed = list(state.get("completed_tasks") or [])
+    completed.append({"agent": "mindmap", "result_summary": "思维导图生成完成"})
+
     return {
         "response": response,
+        "agent_feedback": {"task_completed": True, "all_tasks_done": True},
         "messages": [{"role": "assistant", "content": response}],
+        "completed_tasks": completed,
     }

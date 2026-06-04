@@ -6,55 +6,56 @@ from graph.nodes.chat import chat_node
 from graph.nodes.profile import profile_node
 from graph.nodes.content_gen import content_gen_node
 from graph.nodes.mindmap import mindmap_node
-from graph.nodes.evaluation import evaluation_node
+from graph.subgraphs.study import study_subgraph
+from graph.subgraphs.review import review_subgraph
+from graph.subgraphs.evaluation import evaluation_subgraph
 
-VALID_AGENTS = {"chat", "profile", "content_gen", "mindmap", "evaluation"}
+_SIMPLE = {"chat", "profile", "content_gen", "mindmap"}
+_WORKFLOWS = {"study", "review", "evaluation"}
 
 
-def route_by_agent(state: AgentGraphState) -> str:
-    """根据 intent_classifier 写入的 agent_name 进行条件路由"""
-    agent_name = state.get("agent_name", "").lower()
-    if agent_name in VALID_AGENTS:
-        return agent_name
-
-    # 模糊匹配
-    for name in VALID_AGENTS:
-        if name in agent_name or agent_name in name:
-            return name
-
+def _dispatch(state: AgentGraphState) -> str:
+    intent = state.get("agent_name", "chat")
+    if intent in _SIMPLE:
+        return intent
+    if intent in _WORKFLOWS:
+        return f"{intent}_subgraph"
     return "chat"
 
 
-def compile_graph():
-    """构建并编译 StateGraph"""
-    builder = StateGraph(AgentGraphState)
+def _build_graph(checkpointer=None):
+    b = StateGraph(AgentGraphState)
 
-    # 注册节点
-    builder.add_node("intent_classifier", classify_intent)
-    builder.add_node("chat", chat_node)
-    builder.add_node("profile", profile_node)
-    builder.add_node("content_gen", content_gen_node)
-    builder.add_node("mindmap", mindmap_node)
-    builder.add_node("evaluation", evaluation_node)
+    b.add_node("intent_classifier", classify_intent)
+    b.add_node("chat", chat_node)
+    b.add_node("profile", profile_node)
+    b.add_node("content_gen", content_gen_node)
+    b.add_node("mindmap", mindmap_node)
+    b.add_node("study_subgraph", study_subgraph)
+    b.add_node("review_subgraph", review_subgraph)
+    b.add_node("evaluation_subgraph", evaluation_subgraph)
 
-    # 入口边：START → intent_classifier
-    builder.add_edge(START, "intent_classifier")
-
-    # 条件边：intent_classifier → 各 Agent 节点
-    builder.add_conditional_edges(
+    b.add_edge(START, "intent_classifier")
+    b.add_conditional_edges(
         "intent_classifier",
-        route_by_agent,
+        _dispatch,
         {
             "chat": "chat",
             "profile": "profile",
             "content_gen": "content_gen",
             "mindmap": "mindmap",
-            "evaluation": "evaluation",
+            "study_subgraph": "study_subgraph",
+            "review_subgraph": "review_subgraph",
+            "evaluation_subgraph": "evaluation_subgraph",
         },
     )
+    for n in _SIMPLE:
+        b.add_edge(n, END)
+    for w in _WORKFLOWS:
+        b.add_edge(f"{w}_subgraph", END)
 
-    # 所有 Agent 节点执行完即结束
-    for name in VALID_AGENTS:
-        builder.add_edge(name, END)
+    return b.compile(checkpointer=checkpointer)
 
-    return builder.compile()
+
+def compile_graph(checkpointer=None):
+    return _build_graph(checkpointer=checkpointer)

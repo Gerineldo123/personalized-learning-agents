@@ -132,6 +132,9 @@ async def analyze_mistake(mistake_id: int, user_id: str, db: Session = Depends(g
     if not item:
         return {"ok": False, "error": "错题不存在"}
 
+    if item.analysis:
+        return {"ok": True, "analysis": item.analysis}
+
     question_text = item.question.get("question", "") if item.question else ""
     correct = item.correct_answer or ""
     student = item.user_answer or ""
@@ -159,6 +162,9 @@ async def analyze_mistake(mistake_id: int, user_id: str, db: Session = Depends(g
                 "weak_points": [],
                 "key_concepts": [],
             }
+
+    item.analysis = result
+    db.commit()
 
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
     if profile and result.get("weak_points"):

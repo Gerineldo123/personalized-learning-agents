@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { Markmap } from 'markmap-view'
 import { Toolbar } from 'markmap-toolbar'
@@ -6,7 +6,6 @@ import type { IPureNode } from 'markmap-common'
 
 const props = defineProps<{ markdown: string }>()
 
-const container = ref<HTMLDivElement>()
 const svg = ref<SVGElement>()
 let mm: Markmap | null = null
 

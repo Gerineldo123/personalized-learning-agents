@@ -1,6 +1,7 @@
+import json
 from fastapi import APIRouter
 from pydantic import BaseModel
-from services.chat_service import route_to_agent, _load_profile
+from services.chat_service import route_to_agent, resume_workflow, _load_profile
 from schemas.chat import ChatRequest
 from core.llm_client import chat_completion
 
@@ -27,14 +28,25 @@ EXPLAIN_PROMPT = """你是一位个性化学习导师。请根据学生的画像
 请直接给出解释，不要加「解释：」「回答：」等前缀，控制在 200 字以内。"""
 
 
-MARK_TERMS_PROMPT = """你是一个学术术语识别专家。分析以下文本，将其中所有学科专业术语用 [[术语]] 包裹。
+MARK_TERMS_PROMPT = """你是一个学术术语识别与解释专家。分析以下文本，完成两件事：
+
+1. 将其中所有学科专业术语用 [[术语]] 包裹
+2. 为每个被标记的术语生成一句简短通俗的中文解释（30-80字）
+
+只返回JSON，格式：
+{{
+  "marked_text": "标记后的完整文本",
+  "glossary": {{"术语1": "解释1", "术语2": "解释2"}}
+}}
 
 规则：
-1. 只标记教科书、论文中公认的学术专业术语（有明确定义、定理、公式的概念）
-2. 不要标记普通日常词汇（如"问题""方法""理解""例子"等）
-3. 不要标记已经用 [[ ]] 包裹过的术语
-4. 保持原文其他部分完全不变，包括格式、标点、换行、LaTeX 公式
-5. 直接返回标记后的完整文本，不要加任何解释或说明
+- 只标记教科书、论文中公认的学术专业术语（有明确定义、定理、公式的概念）
+- 不要标记普通日常词汇（如"问题""方法""理解""例子"等）
+- 不要标记已经用 [[ ]] 包裹过的术语
+- 保持原文其他部分完全不变，包括格式、标点、换行、LaTeX 公式、Markdown 语法
+- glossary 中只包含本次标记的术语及其解释
+- 解释要通俗易懂、结合上下文语境
+- 只返回JSON，不要其他内容
 
 文本：
 {text}"""
@@ -42,7 +54,17 @@ MARK_TERMS_PROMPT = """你是一个学术术语识别专家。分析以下文本
 
 @router.post("/stream")
 async def chat_stream(req: ChatRequest):
-    return await route_to_agent(req.user_id, req.message, req.history)
+    return await route_to_agent(req.user_id, req.message, req.history, req.session_id)
+
+
+class ResumeRequest(BaseModel):
+    session_id: str
+    decision: str  # "accept" or "retry"
+
+
+@router.post("/stream/resume")
+async def resume_stream(req: ResumeRequest):
+    return await resume_workflow(req.session_id, req.decision)
 
 
 @router.post("/explain-term")
@@ -66,15 +88,27 @@ class MarkTermsRequest(BaseModel):
 @router.post("/mark-terms")
 async def mark_terms(req: MarkTermsRequest):
     if not req.text.strip():
-        return {"marked_text": req.text}
+        return {"marked_text": req.text, "glossary": {}}
 
     messages = [
-        {"role": "system", "content": MARK_TERMS_PROMPT},
-        {"role": "user", "content": req.text},
+        {"role": "system", "content": MARK_TERMS_PROMPT.format(text=req.text)},
     ]
 
     resp = await chat_completion(messages, temperature=0.3)
-    return {"marked_text": resp.choices[0].message.content}
+    raw = resp.choices[0].message.content.strip()
+
+    try:
+        if raw.startswith("```"):
+            raw = raw.strip("`").strip()
+            if raw.startswith("json"):
+                raw = raw[4:].strip()
+        result = json.loads(raw)
+        return {
+            "marked_text": result.get("marked_text", req.text),
+            "glossary": result.get("glossary", {}),
+        }
+    except Exception:
+        return {"marked_text": req.text, "glossary": {}}
 
 
 def _build_profile_text(profile) -> str:

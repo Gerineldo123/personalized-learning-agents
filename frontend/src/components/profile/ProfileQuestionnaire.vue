@@ -52,13 +52,6 @@ const courseGoals = computed(() => config.value.course_goals || [])
 const difficultyTypes = computed(() => config.value.difficulty_types || [])
 const impacts = computed(() => config.value.impacts || [])
 
-const allMajorsInTree = computed(() => {
-  const result: string[] = []
-  for (const cat of majorTree.value) {
-    result.push(...(cat.majors || []))
-  }
-  return result
-})
 
 onMounted(async () => {
   try {

@@ -12,6 +12,7 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
 - 当前画像：{old_profile}
 - 对话历史摘要：{chat_summary}
 - 答题统计：{quiz_stats}
+- 专注行为数据：{focus_stats}
 
 {{
   "major": "专业名称",
@@ -20,12 +21,18 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
   "cognitive_style": "视觉型/听觉型/实践型",
   "weak_points": ["薄弱知识点"],
   "learning_goal": "学习目标描述",
-  "preferred_format": ["偏好资源格式"]
+  "preferred_format": ["偏好资源格式"],
+  "focus_stamina_score": 1-10,
+  "focus_peak_hours": [9, 10, 15],
+  "focus_interrupt_rate": 0.0-1.0
 }}
 
 规则：
 - knowledge_base 评分基于答题正确率：全对→0.9+，全错→0.1-，无数据保持原值
 - weak_points 根据答题错误和对话中的困惑抽取
+- focus_stamina_score: 周均>300分钟且中断率<10%→8-10；周均100-300分钟→5-7；周均<100分钟或中断率>30%→1-4；无数据不填
+- focus_peak_hours: 从专注数据的高效时段直接取值，无数据不填
+- focus_interrupt_rate: 从专注数据的中断率直接取值，无数据不填
 - 已有画像中非空字段保留，新分析仅在置信度高时覆盖
 - 只返回JSON，不要其他内容"""
 
@@ -45,12 +52,14 @@ class ProfileAgent(BaseAgent):
 
             quiz_stats = self._get_quiz_stats(db, user_id)
             chat_summary = self._get_chat_summary(db, user_id)
+            focus_stats = self._get_focus_stats(db, user_id)
 
             resp = await chat_completion([
                 {"role": "system", "content": EXTRACT_PROFILE_PROMPT.format(
                     old_profile=self._profile_json(old_profile),
                     chat_summary=chat_summary,
                     quiz_stats=quiz_stats,
+                    focus_stats=focus_stats,
                 )},
                 {"role": "user", "content": state.user_message}
             ], temperature=0.3)
@@ -66,7 +75,12 @@ class ProfileAgent(BaseAgent):
             if old_profile:
                 self._merge_profile(old_profile, extracted)
             else:
-                old_profile = StudentProfile(user_id=user_id, **extracted)
+                safe = {k: v for k, v in extracted.items() if k in (
+                    "major", "grade", "knowledge_base", "cognitive_style",
+                    "weak_points", "learning_goal", "preferred_format",
+                )}
+                old_profile = StudentProfile(user_id=user_id, **safe)
+                self._merge_profile(old_profile, extracted)
                 db.add(old_profile)
 
             db.commit()
@@ -113,6 +127,35 @@ class ProfileAgent(BaseAgent):
         avg_score = sum(r.score for r in records) / max(total, 1)
         return f"共{total}次答题，平均正确率{avg_score:.0%}"
 
+    def _get_focus_stats(self, db, user_id: str) -> str:
+        from models.focus import FocusSession
+        from collections import Counter
+
+        sessions = (
+            db.query(FocusSession)
+            .filter(FocusSession.user_id == user_id)
+            .order_by(FocusSession.started_at.desc())
+            .all()
+        )
+        if not sessions:
+            return "暂无专注记录"
+
+        total = len(sessions)
+        completed = sum(1 for s in sessions if s.completed)
+        total_min = sum(s.duration_min for s in sessions)
+        interrupt_rate = round((total - completed) / total * 100, 1)
+
+        hour_counts = Counter(s.started_at.hour for s in sessions if s.completed)
+        peak_hours = sorted([h for h, _ in hour_counts.most_common(3)])
+
+        return json.dumps({
+            "总专注次数": total,
+            "完成次数": completed,
+            "中断率": f"{interrupt_rate}%",
+            "累计专注分钟": total_min,
+            "高效时段(小时)": peak_hours,
+        }, ensure_ascii=False)
+
     def _profile_json(self, p: StudentProfile | None) -> str:
         if not p:
             return "{}"
@@ -127,6 +170,10 @@ class ProfileAgent(BaseAgent):
             "weak_points": p.weak_points or [],
             "learning_goal": p.learning_goal or "",
             "preferred_format": p.preferred_format or [],
+            "focus_stamina_score": p.focus_stamina_score,
+            "focus_peak_hours": p.focus_peak_hours or [],
+            "focus_interrupt_rate": p.focus_interrupt_rate,
+            "focus_weekly_avg_min": p.focus_weekly_avg_min,
         }
 
     def _merge_profile(self, profile: StudentProfile, extracted: dict):
@@ -147,6 +194,12 @@ class ProfileAgent(BaseAgent):
         if extracted.get("preferred_format"):
             pf = list(set((profile.preferred_format or []) + extracted["preferred_format"]))
             profile.preferred_format = pf
+        if extracted.get("focus_stamina_score") is not None:
+            profile.focus_stamina_score = extracted["focus_stamina_score"]
+        if extracted.get("focus_peak_hours"):
+            profile.focus_peak_hours = extracted["focus_peak_hours"]
+        if extracted.get("focus_interrupt_rate") is not None:
+            profile.focus_interrupt_rate = extracted["focus_interrupt_rate"]
 
 
 if __name__ == "__main__":

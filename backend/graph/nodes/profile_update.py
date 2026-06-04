@@ -5,23 +5,23 @@ from agents.base import AgentState
 _profile_agent = ProfileAgent()
 
 
-async def profile_node(state: AgentGraphState) -> dict:
+async def profile_update_node(state: AgentGraphState) -> dict:
+    report = state.get("evaluation_report", {})
+    summary = report.get("summary", "")
+    weaknesses = ", ".join(report.get("weaknesses", []))
+
     agent_state = AgentState(
         user_id=state["user_id"],
-        user_message=state["user_message"],
+        user_message=f"根据评估更新画像：{summary}。薄弱环节：{weaknesses}",
         profile=state.get("profile"),
-        history=state.get("history", []),
     )
     result = await _profile_agent.process(agent_state)
-    response = result.get("response", "")
 
     completed = list(state.get("completed_tasks") or [])
-    completed.append({"agent": "profile", "result_summary": "画像构建/更新完成"})
+    completed.append({"agent": "profile_update", "result_summary": "画像已更新"})
 
     return {
-        "response": response,
         "profile": result.get("profile"),
-        "agent_feedback": {"task_completed": True, "all_tasks_done": True},
-        "messages": [{"role": "assistant", "content": response}],
+        "agent_feedback": {"profile_updated": True, "task_completed": True},
         "completed_tasks": completed,
     }

@@ -1,19 +1,16 @@
 ﻿<script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import api from '../api'
 import ProfileRadar from '../components/profile/ProfileRadar.vue'
 import ProfileQuestionnaire from '../components/profile/ProfileQuestionnaire.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useAuthStore } from '../stores/auth'
+import { ElMessage } from 'element-plus'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
-const route = useRoute()
 const router = useRouter()
-const authStore = useAuthStore()
 
 const profile = ref<any>(null)
 const loading = ref(false)
@@ -86,6 +83,15 @@ function onQuestionnaireDone(p: any) {
   profile.value = p
   showQuestionnaire.value = false
   ElMessage.success('学习画像构建完成')
+  // 首次构建画像后，静默触发入门资源包生成
+  api.post('/resources/generate/starter', null, {
+    params: { user_id: userStore.userId, max_courses: 3 },
+    timeout: 180000,
+  }).then((r) => {
+    if ((r.data.generated || 0) > 0) {
+      ElMessage.success(`已根据画像自动生成 ${r.data.generated} 个入门资源，请前往学习资源查看`)
+    }
+  }).catch(() => {})
 }
 
 function onQuestionnaireCancel() {

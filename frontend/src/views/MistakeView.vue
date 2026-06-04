@@ -3,6 +3,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
 
 const userStore = useUserStore()
 const loading = ref(false)
@@ -333,6 +335,56 @@ function getOptionText(q: any, letter: string): string {
   }
   return letter
 }
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function renderMath(text: string): string {
+  if (!text) return ''
+  const mathBlocks: Array<{ formula: string; display: boolean }> = []
+
+  let processed = text
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_m: string, formula: string) => {
+      const idx = mathBlocks.length
+      mathBlocks.push({ formula: formula.trim(), display: true })
+      return `\uFFF0MB${idx}\uFFF1`
+    })
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_m: string, formula: string) => {
+      const idx = mathBlocks.length
+      mathBlocks.push({ formula: formula.trim(), display: true })
+      return `\uFFF0MB${idx}\uFFF1`
+    })
+    .replace(/\$([^$\n]+?)\$/g, (_m: string, formula: string) => {
+      const idx = mathBlocks.length
+      mathBlocks.push({ formula: formula.trim(), display: false })
+      return `\uFFF0MB${idx}\uFFF1`
+    })
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_m: string, formula: string) => {
+      const idx = mathBlocks.length
+      mathBlocks.push({ formula: formula.trim(), display: false })
+      return `\uFFF0MB${idx}\uFFF1`
+    })
+
+  processed = escapeHtml(processed)
+
+  processed = processed.replace(/\uFFF0MB(\d+)\uFFF1/g, (_m, idxStr) => {
+    const idx = +idxStr
+    const { formula, display } = mathBlocks[idx]
+    try {
+      const rendered = katex.renderToString(formula, { displayMode: display, throwOnError: false })
+      return display
+        ? `<div class="math-block">${rendered}</div>`
+        : `<span class="math-inline">${rendered}</span>`
+    } catch {
+      return display
+        ? `<div class="math-block">${escapeHtml(formula)}</div>`
+        : `<span class="math-inline">${escapeHtml(formula)}</span>`
+    }
+  })
+
+  return processed
+}
 </script>
 
 <template>
@@ -365,7 +417,7 @@ function getOptionText(q: any, letter: string): string {
             <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
               {{ isWrong(m) ? '答错' : '手动加入' }}
             </el-tag>
-            <span class="m-q-text">{{ m.question?.question || '题干缺失' }}</span>
+            <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
             <el-button size="small" text type="danger" @click="removeItem(m.id)">移除</el-button>
           </div>
 
@@ -374,19 +426,19 @@ function getOptionText(q: any, letter: string): string {
             <template v-else-if="analyses[m.id]">
               <div class="m-section" v-if="isWrong(m)">
                 <div class="m-label">错误分析</div>
-                <div class="m-text">{{ analyses[m.id].error_analysis || '无' }}</div>
+                <div class="m-text" v-html="renderMath(analyses[m.id].error_analysis || '无')"></div>
               </div>
               <div class="m-section">
                 <div class="m-label">你的选择</div>
-                <div class="m-answer wrong">{{ getOptionText(m.question, m.user_answer) }}</div>
+                <div class="m-answer wrong" v-html="renderMath(getOptionText(m.question, m.user_answer))"></div>
               </div>
               <div class="m-section">
                 <div class="m-label">正确答案</div>
-                <div class="m-answer correct">{{ getOptionText(m.question, m.correct_answer) }}</div>
+                <div class="m-answer correct" v-html="renderMath(getOptionText(m.question, m.correct_answer))"></div>
               </div>
               <div class="m-section" v-if="m.question?.explanation">
                 <div class="m-label">解析</div>
-                <div class="m-text">{{ m.question.explanation }}</div>
+                <div class="m-text" v-html="renderMath(m.question.explanation)"></div>
               </div>
               <div class="m-section" v-if="analyses[m.id].confused_points?.length">
                 <div class="m-label">混淆知识点</div>
@@ -416,7 +468,7 @@ function getOptionText(q: any, letter: string): string {
                 class="m-review-item"
               >
                 <div class="m-review-item-head">
-                  <span class="m-q-text">{{ ri + 1 }}. {{ r.question }}</span>
+                  <span class="m-q-text" v-html="renderMath(`${ri + 1}. ${r.question}`)"></span>
                   <el-button
                     v-if="reviewMastery(`${m.id}-r${ri}`)"
                     size="small"
@@ -437,7 +489,7 @@ function getOptionText(q: any, letter: string): string {
                     }]"
                     @click.stop="selectReviewOption(m.id, ri, opt.charAt(0), r)"
                   >
-                    {{ opt }}
+                    <span v-html="renderMath(opt)"></span>
                   </span>
                 </div>
 
@@ -445,17 +497,17 @@ function getOptionText(q: any, letter: string): string {
                   <div class="m-similar-answer">
                     <span class="m-similar-label">正确答案：</span><b>{{ r.correct }}</b>
                   </div>
-                  <div class="m-text" v-if="r.explanation">{{ r.explanation }}</div>
+                  <div class="m-text" v-if="r.explanation" v-html="renderMath(r.explanation)"></div>
 
                   <div class="m-opt-explanations" v-if="r.option_explanations">
                     <div v-for="(exp, letter) in r.option_explanations" :key="letter" class="m-opt-exp-item">
-                      <b :class="{ 'c-green': letter === r.correct, 'c-red': letter === reviewAnswers[`${m.id}-r${ri}`] && letter !== r.correct }">{{ letter }}</b>：{{ exp }}
+                      <b :class="{ 'c-green': letter === r.correct, 'c-red': letter === reviewAnswers[`${m.id}-r${ri}`] && letter !== r.correct }">{{ letter }}</b>：<span v-html="renderMath(exp)"></span>
                     </div>
                   </div>
 
                   <template v-if="reviewAnswers[`${m.id}-r${ri}`] !== r.correct && reviewAnalyses[`${m.id}-r${ri}`]">
                     <div class="m-text" v-if="reviewAnalyses[`${m.id}-r${ri}`].error_analysis && reviewAnalyses[`${m.id}-r${ri}`].error_analysis !== '无'">
-                      <span class="m-label">错误分析：</span>{{ reviewAnalyses[`${m.id}-r${ri}`].error_analysis }}
+                      <span class="m-label">错误分析：</span><span v-html="renderMath(reviewAnalyses[`${m.id}-r${ri}`].error_analysis)"></span>
                     </div>
                     <div class="m-tags" v-if="reviewAnalyses[`${m.id}-r${ri}`].confused_points?.length">
                       <span class="m-tag-label">混淆：</span>
@@ -494,7 +546,7 @@ function getOptionText(q: any, letter: string): string {
                 :key="pi"
                 class="m-similar-card"
               >
-                <div class="m-q-text">{{ pi + 1 }}. {{ p.question }}</div>
+                <div class="m-q-text" v-html="renderMath(`${pi + 1}. ${p.question}`)"></div>
                 <div class="m-options">
                   <span
                     v-for="opt in p.options"
@@ -506,24 +558,24 @@ function getOptionText(q: any, letter: string): string {
                     }]"
                     @click.stop="selectSimilarOption(m.id, pi, opt.charAt(0), p)"
                   >
-                    {{ opt }}
+                    <span v-html="renderMath(opt)"></span>
                   </span>
                 </div>
                 <div v-if="similarAnswers[`${m.id}-${pi}`]" class="m-similar-result">
                   <div class="m-similar-answer">
                     <span class="m-similar-label">正确答案：</span><b>{{ p.correct }}</b>
                   </div>
-                  <div class="m-text" v-if="p.explanation">{{ p.explanation }}</div>
+                  <div class="m-text" v-if="p.explanation" v-html="renderMath(p.explanation)"></div>
 
                   <div class="m-opt-explanations" v-if="p.option_explanations">
                     <div v-for="(exp, letter) in p.option_explanations" :key="letter" class="m-opt-exp-item">
-                      <b :class="{ 'c-green': letter === p.correct, 'c-red': letter === similarAnswers[`${m.id}-${pi}`] && letter !== p.correct }">{{ letter }}</b>：{{ exp }}
+                      <b :class="{ 'c-green': letter === p.correct, 'c-red': letter === similarAnswers[`${m.id}-${pi}`] && letter !== p.correct }">{{ letter }}</b>：<span v-html="renderMath(exp)"></span>
                     </div>
                   </div>
 
                   <template v-if="similarAnalyses[`${m.id}-${pi}`]">
                     <div class="m-text" v-if="similarAnalyses[`${m.id}-${pi}`].error_analysis && similarAnalyses[`${m.id}-${pi}`].error_analysis !== '无'">
-                      <span class="m-label">错误分析：</span>{{ similarAnalyses[`${m.id}-${pi}`].error_analysis }}
+                      <span class="m-label">错误分析：</span><span v-html="renderMath(similarAnalyses[`${m.id}-${pi}`].error_analysis)"></span>
                     </div>
                     <div class="m-tags" v-if="similarAnalyses[`${m.id}-${pi}`].confused_points?.length">
                       <span class="m-tag-label">混淆：</span>
@@ -554,7 +606,7 @@ function getOptionText(q: any, letter: string): string {
               <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
                 {{ isWrong(m) ? '答错' : '手动加入' }}
               </el-tag>
-              <span class="m-q-text">{{ m.question?.question || '题干缺失' }}</span>
+            <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
               <el-button size="small" text type="danger" @click.stop="removeItem(m.id)">移除</el-button>
             </div>
           </div>
@@ -726,4 +778,13 @@ function getOptionText(q: any, letter: string): string {
 .m-similar-card .m-text { text-align: left; }
 .m-similar-card .m-q-text { text-align: left; }
 .m-q-text { flex: 1; color: #303133; font-size: 14px; line-height: 1.5; text-align: left; }
+.m-q-text :deep(.math-block) { display: block; text-align: center; margin: 10px 0; overflow-x: auto; }
+.m-q-text :deep(.math-inline) { padding: 0 2px; }
+.m-text :deep(.math-block) { display: block; text-align: center; margin: 10px 0; overflow-x: auto; }
+.m-text :deep(.math-inline) { padding: 0 2px; }
+.m-answer :deep(.math-block) { display: block; text-align: center; margin: 6px 0; overflow-x: auto; }
+.m-answer :deep(.math-inline) { padding: 0 2px; }
+.m-opt-btn :deep(.math-inline) { padding: 0 2px; }
+.m-opt-exp-item :deep(.math-inline) { padding: 0 2px; }
+.m-opt-exp-item :deep(.math-block) { display: block; text-align: center; margin: 6px 0; overflow-x: auto; }
 </style>

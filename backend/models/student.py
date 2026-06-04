@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON
+from sqlalchemy import Column, Integer, String, DateTime, JSON, Float
 from core.database import Base
 from datetime import datetime, timezone
 
@@ -24,6 +24,11 @@ class StudentProfile(Base):
     ability_scores = Column(JSON)
     weak_courses = Column(JSON)
     ability_summary = Column(String)
+
+    focus_stamina_score = Column(Integer)
+    focus_peak_hours = Column(JSON)
+    focus_interrupt_rate = Column(Float)
+    focus_weekly_avg_min = Column(Integer)
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

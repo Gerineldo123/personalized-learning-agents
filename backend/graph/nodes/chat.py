@@ -18,7 +18,13 @@ async def chat_node(state: AgentGraphState) -> dict:
     async for chunk in _chat_agent.stream(agent_state):
         collected += chunk
     response = agent_state.get("response", collected)
+
+    completed = list(state.get("completed_tasks") or [])
+    completed.append({"agent": "chat", "result_summary": "对话回复完成"})
+
     return {
         "response": response,
+        "agent_feedback": {"task_completed": True, "all_tasks_done": True},
         "messages": [{"role": "assistant", "content": response}],
+        "completed_tasks": completed,
     }

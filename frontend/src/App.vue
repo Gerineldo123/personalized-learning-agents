@@ -3,11 +3,13 @@ import { computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
 import { useAuthStore } from './stores/auth'
+import { useFocusStore } from './stores/focus'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const authStore = useAuthStore()
+const focusStore = useFocusStore()
 
 const menuItems = [
   { path: '/', label: '首页', icon: 'HomeFilled' },
@@ -81,6 +83,32 @@ function logout() {
       <router-view />
     </el-main>
   </el-container>
+
+  <Teleport to="body">
+    <div v-if="focusStore.state === 'focusing'" class="focus-float">
+      <div class="ff-inner">
+        <template v-if="focusStore.timerView === 'hourglass'">
+          <span class="ff-icon">⏳</span>
+        </template>
+        <span class="ff-timer">
+          {{ String(focusStore.displayMinutes).padStart(2, '0') }}:{{ String(focusStore.displaySeconds).padStart(2, '0') }}
+        </span>
+        <div class="ff-bar">
+          <div class="ff-bar-fill" :style="{ width: focusStore.focusProgress + '%' }"></div>
+        </div>
+        <div class="ff-actions">
+          <button
+            class="ff-toggle"
+            @click="focusStore.timerView = focusStore.timerView === 'hourglass' ? 'digital' : 'hourglass'"
+            :title="focusStore.timerView === 'hourglass' ? '切换到数字' : '切换到沙漏'"
+          >
+            {{ focusStore.timerView === 'hourglass' ? '🕐' : '⏳' }}
+          </button>
+          <el-button type="danger" size="small" plain @click="focusStore.unlockFocus">解除专注</el-button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -145,3 +173,79 @@ function logout() {
 }
 </style>
 
+<style>
+.focus-float {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9998;
+  pointer-events: auto;
+}
+
+.ff-inner {
+  background: #1d1e2c;
+  border: 1px solid #2a2b3d;
+  border-radius: 12px;
+  padding: 14px 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  user-select: none;
+}
+
+.ff-icon {
+  font-size: 20px;
+}
+
+.ff-timer {
+  font-size: 26px;
+  font-weight: 200;
+  font-family: 'Menlo', 'Consolas', monospace;
+  color: #fff;
+  letter-spacing: 2px;
+}
+
+.ff-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ff-bar-fill {
+  height: 100%;
+  background: #67c23a;
+  border-radius: 2px;
+  transition: width 0.3s linear;
+}
+
+.ff-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ff-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.ff-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+</style>

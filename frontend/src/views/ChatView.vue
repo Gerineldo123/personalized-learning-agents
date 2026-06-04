@@ -1,8 +1,9 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { chatStream } from '../api/chat'
 import { useUserStore } from '../stores/user'
 import api from '../api'
+import { useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
@@ -10,6 +11,7 @@ import { ElMessage } from 'element-plus'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const userStore = useUserStore()
+const router = useRouter()
 
 onMounted(() => {
   if (!userStore.userId) {
@@ -31,6 +33,7 @@ interface Message {
   streaming?: boolean
   uid: number
   time: string
+  quizResourceId?: number  // quiz 资源 ID，有值时展示「前往答题」按鈕
 }
 
 interface ConvItem {
@@ -192,6 +195,8 @@ function formatMsgTime(iso: string): string {
 const codeBlocks = ref<Record<string, string>>({})
 let codeBlockSeq = 0
 
+const globalGlossary = ref<Record<string, string>>({})
+
 const popoverVisible = ref(false)
 const popoverTerm = ref('')
 const popoverExplanation = ref('')
@@ -213,12 +218,18 @@ async function explainTerm(term: string, x: number, y: number) {
   }
   popoverTerm.value = term
   popoverExplanation.value = ''
-  popoverLoading.value = true
   popoverX.value = x
   popoverY.value = y
   popoverLeft.value = x
   popoverTop.value = y
   popoverVisible.value = true
+
+  if (globalGlossary.value[term]) {
+    popoverExplanation.value = globalGlossary.value[term]
+    return
+  }
+
+  popoverLoading.value = true
   try {
     const r = await api.post('/chat/explain-term', {
       term,
@@ -402,8 +413,16 @@ function sendMessage() {
       try {
         const r = await api.post('/chat/mark-terms', { text: fullContent })
         const marked = r.data.marked_text
+        const glossary = r.data.glossary || {}
         if (marked && marked !== fullContent) {
           messages.value[msgIdx].content = marked
+        }
+        if (glossary && typeof glossary === 'object') {
+          for (const [term, expl] of Object.entries(glossary)) {
+            if (!globalGlossary.value[term]) {
+              globalGlossary.value[term] = expl as string
+            }
+          }
         }
       } catch {}
     },
@@ -412,6 +431,15 @@ function sendMessage() {
       messages.value[msgIdx].streaming = false
       isStreaming.value = false
       saveMessage('assistant', `[错误] ${err.message}`)
+    },
+    (stage, data) => {
+      // 检测到 quiz stage 事件，提取资源 ID 供「前往答题」按钮使用
+      if (stage === 'quiz' && data) {
+        try {
+          const resourceId = typeof data === 'object' ? data.resource_db_id : null
+          if (resourceId) messages.value[msgIdx].quizResourceId = resourceId
+        } catch {}
+      }
     },
   )
 }
@@ -471,8 +499,16 @@ function regenerateMessage(aiIndex: number) {
       try {
         const r = await api.post('/chat/mark-terms', { text: fullContent })
         const marked = r.data.marked_text
+        const glossary = r.data.glossary || {}
         if (marked && marked !== fullContent) {
           aiMsg.content = marked
+        }
+        if (glossary && typeof glossary === 'object') {
+          for (const [term, expl] of Object.entries(glossary)) {
+            if (!globalGlossary.value[term]) {
+              globalGlossary.value[term] = expl as string
+            }
+          }
         }
       } catch {}
     },
@@ -581,6 +617,11 @@ function regenerateMessage(aiIndex: number) {
             </template>
             <template v-else>
               <span class="action-btn" :class="{ disabled: isStreaming }" @click="regenerateMessage(i)" title="重新生成">刷新</span>
+              <span
+                v-if="msg.quizResourceId"
+                class="action-btn quiz-btn"
+                @click="router.push({ path: '/resources', query: { open: String(msg.quizResourceId) } })"
+              >📝 前往答题</span>
             </template>
           </div>
         </div>
@@ -883,8 +924,13 @@ function regenerateMessage(aiIndex: number) {
 .action-btn.disabled {
   color: #c0c4cc;
   cursor: not-allowed;
-  pointer-events: none;
 }
+
+.action-btn.quiz-btn {
+  color: #e6a23c;
+  background: rgba(230, 162, 60, 0.08);
+}
+
 
 .message.user .message-content {
   background: #409eff;

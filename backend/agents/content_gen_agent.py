@@ -1,10 +1,41 @@
 ﻿import json
+import re
 from agents.base import BaseAgent, AgentState
 from core.llm_client import chat_completion
 from core.database import SessionLocal
 from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
+
+
+def _safe_json_loads(raw: str) -> dict:
+    """解析 LLM 返回的 JSON，自动处理 LaTeX 反斜杠转义问题"""
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    # 始终预处理：将 $...$ / $$...$$ 公式内的 \指令 转义为合法 JSON
+    preprocessed = _escape_math_backslashes(cleaned)
+    return json.loads(preprocessed)
+
+
+_MATH_DISPLAY = re.compile(r'\$\$([^$]+)\$\$')
+_MATH_INLINE = re.compile(r'\$([^$]+)\$')
+
+
+def _escape_math_backslashes(text: str) -> str:
+    """将 $...$ / $$...$$ 公式内的 \指令 转义为 \\指令，避免 JSON 将 \f \t \b 等误解为控制字符"""
+
+    def _fix(m: re.Match) -> str:
+        formula = m.group(1)
+        delim = '$$' if m.group(0).startswith('$$') else '$'
+        # 只修复未被转义的单反斜杠（LLM 已输出的 \\ 不处理）
+        escaped = re.sub(r'(?<!\\)\\([a-zA-Z]+|[{}#_^&%$~])', r'\\\\\1', formula)
+        return delim + escaped + delim
+    # 先处理 $$...$$（display），再处理 $...$（inline）
+    step1 = _MATH_DISPLAY.sub(_fix, text)
+    return _MATH_INLINE.sub(_fix, step1)
 
 ARTICLE_PROMPT = """你是一个知识讲解专家。根据学生画像和需求，生成一篇结构清晰的学习文章。
 
@@ -127,11 +158,7 @@ class ContentGenAgent(BaseAgent):
             )}
         ], temperature=0.5)
         raw = resp.choices[0].message.content.strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`").strip()
-            if raw.startswith("json"):
-                raw = raw[4:].strip()
-        quiz_data = json.loads(raw)
+        quiz_data = _safe_json_loads(raw)
         safe_quiz, _ = await check_text(json.dumps(quiz_data, ensure_ascii=False))
         if safe_quiz != json.dumps(quiz_data, ensure_ascii=False):
             quiz_data = {"title": "内容已过滤", "questions": []}
@@ -169,11 +196,7 @@ class ContentGenAgent(BaseAgent):
             {"role": "user", "content": PPT_PROMPT.format(profile=profile, topic=message, hallu=hallu_rules())}
         ], temperature=0.5)
         raw = resp.choices[0].message.content.strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`").strip()
-            if raw.startswith("json"):
-                raw = raw[4:].strip()
-        ppt_data = json.loads(raw)
+        ppt_data = _safe_json_loads(raw)
         safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
         if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
             ppt_data = {"title": "内容已过滤", "slides": []}

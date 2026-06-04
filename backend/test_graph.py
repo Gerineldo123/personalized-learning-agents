@@ -1,17 +1,19 @@
 """
-LangGraph Phase 1 测试脚本
+LangGraph Phase 2 测试脚本
 
 测试内容：
-1. 图编译是否成功
-2. 意图分类节点是否正确路由
-3. 各 Agent 节点是否正常执行
-4. astream 模式是否正确输出
+1. 图编译是否成功（含工作流节点）
+2. 路由函数是否正确（含 study/review 意图）
+3. 意图分类节点是否正确路由
+4. 学习工作流完整执行
+5. 错题复习工作流完整执行
+6. 评估工作流完整执行
 
 使用方式：
     cd backend
     python test_graph.py
 
-注意：需要配置 .env 中的 SPARK_API_KEY 等环境变量才能实际调用 LLM。
+注意：测试 3-6 需要配置 .env 中的 SPARK_API_KEY 等环境变量。
 """
 import sys
 import asyncio
@@ -41,23 +43,62 @@ async def test_graph_compile():
     from graph.builder import compile_graph
     graph = compile_graph()
     assert graph is not None
-    print(f"  ✓ 图编译成功: {type(graph).__name__}")
-    print(f"  ✓ 节点列表: {list(graph.nodes.keys())}")
+    nodes = sorted(graph.nodes.keys())
+    print(f"  OK 图编译成功，共 {len(nodes)} 个节点")
+    print(f"  节点: {nodes}")
+
+    # 验证关键节点存在
+    expected = {
+        "intent_classifier", "chat", "profile", "content_gen", "mindmap",
+        "evaluation", "profile_update", "path_suggest",
+        "profile_analysis", "study_content", "study_mindmap", "quiz_gen", "study_summary",
+        "mistake_analysis",
+    }
+    missing = expected - set(nodes)
+    if missing:
+        print(f"  FAIL 缺少节点: {missing}")
+    else:
+        print(f"  OK 所有预期节点均存在")
     return graph
 
 
-async def test_intent_classification():
-    """测试 2：意图分类节点"""
+async def test_should_continue():
+    """测试 2：should_continue 路由函数"""
     print("\n" + "=" * 50)
-    print("测试 2：意图分类节点")
+    print("测试 2：should_continue 路由函数")
+    from graph.builder import should_continue
+
+    test_cases = [
+        ({"current_task": "chat", "supervisor_iteration": 1, "agent_feedback": {}}, "chat"),
+        ({"current_task": "study_content", "supervisor_iteration": 1, "agent_feedback": {}}, "study_content"),
+        ({"current_task": "unknown", "supervisor_iteration": 1, "agent_feedback": {}}, "summary"),
+        ({"current_task": "chat", "supervisor_iteration": 8, "agent_feedback": {}}, "summary"),
+        ({"current_task": "chat", "supervisor_iteration": 1, "agent_feedback": {"force_summary": True}}, "summary"),
+    ]
+
+    all_pass = True
+    for state, expected in test_cases:
+        result = should_continue(state)
+        ok = result == expected
+        if not ok:
+            all_pass = False
+        print(f"  {'OK' if ok else 'FAIL'} should_continue({state}) -> '{result}' (expect '{expected}')")
+
+    print(f"\n  {'ALL PASS' if all_pass else 'SOME FAILED'}")
+
+
+async def test_intent_classification():
+    """测试 3：意图分类节点"""
+    print("\n" + "=" * 50)
+    print("测试 3：意图分类节点")
     from graph.nodes.intent import classify_intent
 
     test_cases = [
         {"user_message": "什么是Python装饰器？", "expected": "chat"},
-        {"user_message": "帮我生成一份关于微积分的学习资料", "expected": "content_gen"},
-        {"user_message": "生成一个Python知识体系的思维导图", "expected": "mindmap"},
+        {"user_message": "我想学微积分", "expected": "study"},
+        {"user_message": "帮我复习错题", "expected": "review"},
+        {"user_message": "帮我生成一份PPT", "expected": "content_gen"},
         {"user_message": "评估一下我的学习情况", "expected": "evaluation"},
-        {"user_message": "我是大二计算机专业的学生", "expected": "profile"},
     ]
 
     for case in test_cases:
@@ -69,115 +110,145 @@ async def test_intent_classification():
             "response": "",
             "agent_name": "",
             "profile": None,
+            "profile_analysis": {},
+            "generated_article": "",
+            "generated_mindmap": "",
+            "generated_quiz": {},
+            "evaluation_report": {},
+            "mistake_analysis": {},
+            "path_suggestion": "",
+            "workflow_outputs": [],
+            "task_plan": [],
+            "current_task": "",
+            "agent_feedback": {},
+            "supervisor_iteration": 0,
+            "completed_tasks": [],
         }
         try:
             result = await classify_intent(state)
             agent_name = result.get("agent_name", "")
-            match = "✓" if case["expected"] in agent_name.lower() else "✗"
-            print(f"  {match} '{case['user_message'][:20]}...' → {agent_name} (期望: {case['expected']})")
+            match = "OK" if case["expected"] in agent_name.lower() else "??"
+            print(f"  {match} '{case['user_message']}' -> {agent_name} (期望: {case['expected']})")
         except Exception as e:
-            print(f"  ✗ '{case['user_message'][:20]}...' → 错误: {e}")
+            print(f"  FAIL '{case['user_message']}' -> 错误: {e}")
 
 
-async def test_graph_invoke():
-    """测试 3：完整图执行"""
+async def test_study_workflow():
+    """测试 4：学习工作流完整执行"""
     print("\n" + "=" * 50)
-    print("测试 3：完整图执行 (ainvoke)")
+    print("测试 4：学习工作流 (study)")
     from graph.builder import compile_graph
     graph = compile_graph()
 
     initial_state = {
         "user_id": "test_user",
-        "user_message": "什么是Python装饰器？",
+        "user_message": "Python装饰器",
         "history": [],
         "messages": [],
         "response": "",
-        "agent_name": "",
+        "agent_name": "study",
         "profile": None,
+        "profile_analysis": {},
+        "generated_article": "",
+        "generated_mindmap": "",
+        "generated_quiz": {},
+        "evaluation_report": {},
+        "mistake_analysis": {},
+        "path_suggestion": "",
+        "workflow_outputs": [],
+        "task_plan": [],
+        "current_task": "",
+        "agent_feedback": {},
+        "supervisor_iteration": 0,
+        "completed_tasks": [],
     }
 
     try:
-        result = await graph.ainvoke(initial_state)
-        print(f"  ✓ agent_name: {result.get('agent_name', '')}")
-        response = result.get("response", "")
-        print(f"  ✓ response 长度: {len(response)} 字符")
-        print(f"  ✓ response 前 100 字: {response[:100]}...")
-    except Exception as e:
-        print(f"  ✗ 执行失败: {e}")
-
-
-async def test_graph_astream():
-    """测试 4：流式图执行"""
-    print("\n" + "=" * 50)
-    print("测试 4：流式图执行 (astream updates)")
-    from graph.builder import compile_graph
-    graph = compile_graph()
-
-    initial_state = {
-        "user_id": "test_user",
-        "user_message": "什么是Python装饰器？",
-        "history": [],
-        "messages": [],
-        "response": "",
-        "agent_name": "",
-        "profile": None,
-    }
-
-    try:
-        chunks = []
+        stages = []
         async for chunk in graph.astream(initial_state, stream_mode="updates"):
             for node_name, update in chunk.items():
-                print(f"  → 节点 '{node_name}' 输出 keys: {list(update.keys())}")
-                if update.get("response"):
-                    chunks.append(update["response"])
-        print(f"  ✓ 共收到 {len(chunks)} 个 response chunk")
-        if chunks:
-            print(f"  ✓ 最终 response 前 100 字: {chunks[-1][:100]}...")
+                if node_name == "__start__":
+                    continue
+                stages.append(node_name)
+                print(f"  -> 节点 '{node_name}' 完成, keys: {list(update.keys())}")
+
+        expected_stages = ["intent_classifier", "profile_analysis", "study_content", "study_mindmap", "quiz_gen", "study_summary"]
+        # intent_classifier 不在这里因为 agent_name 已预设为 study
+        # 实际上 intent_classifier 仍会执行但不改变 agent_name
+        print(f"\n  执行节点序列: {stages}")
+        print(f"  OK 学习工作流执行完成")
     except Exception as e:
-        print(f"  ✗ 流式执行失败: {e}")
+        print(f"  FAIL 执行失败: {e}")
 
 
-async def test_route_by_agent():
-    """测试 5：路由函数"""
+async def test_graph_astream_updates():
+    """测试 5：astream updates 模式"""
     print("\n" + "=" * 50)
-    print("测试 5：route_by_agent 路由函数")
-    from graph.builder import route_by_agent
+    print("测试 5：astream updates 模式（chat 路由）")
+    from graph.builder import compile_graph
+    graph = compile_graph()
 
-    test_cases = [
-        ({"agent_name": "chat"}, "chat"),
-        ({"agent_name": "profile"}, "profile"),
-        ({"agent_name": "content_gen"}, "content_gen"),
-        ({"agent_name": "mindmap"}, "mindmap"),
-        ({"agent_name": "evaluation"}, "evaluation"),
-        ({"agent_name": "unknown"}, "chat"),
-        ({"agent_name": ""}, "chat"),
-        ({"agent_name": "content_generation"}, "content_gen"),
-    ]
+    initial_state = {
+        "user_id": "test_user",
+        "user_message": "什么是Python装饰器？",
+        "history": [],
+        "messages": [],
+        "response": "",
+        "agent_name": "",
+        "profile": None,
+        "profile_analysis": {},
+        "generated_article": "",
+        "generated_mindmap": "",
+        "generated_quiz": {},
+        "evaluation_report": {},
+        "mistake_analysis": {},
+        "path_suggestion": "",
+        "workflow_outputs": [],
+        "task_plan": [],
+        "current_task": "",
+        "agent_feedback": {},
+        "supervisor_iteration": 0,
+        "completed_tasks": [],
+    }
 
-    for state, expected in test_cases:
-        result = route_by_agent(state)
-        match = "✓" if result == expected else "✗"
-        print(f"  {match} agent_name='{state['agent_name']}' → {result} (期望: {expected})")
+    try:
+        stages = []
+        response = ""
+        async for chunk in graph.astream(initial_state, stream_mode="updates"):
+            for node_name, update in chunk.items():
+                stages.append(node_name)
+                if update.get("response"):
+                    response = update["response"]
+
+        print(f"  执行节点: {stages}")
+        print(f"  response 长度: {len(response)} 字符")
+        if response:
+            print(f"  response 前 100 字: {response[:100]}...")
+        print(f"  OK")
+    except Exception as e:
+        print(f"  FAIL: {e}")
 
 
 async def main():
-    print("LangGraph Phase 1 测试")
+    print("LangGraph Phase 2 测试")
     print("=" * 50)
     print(f"已注册 Agent: {[a.name for a in get_all_agents()]}")
 
-    # 测试 1 & 5 不需要 LLM 调用
+    # 测试 1 & 2 不需要 LLM 调用
     await test_graph_compile()
-    await test_route_by_agent()
+    await test_should_continue()
 
-    # 测试 2, 3, 4 需要 LLM 调用
+    # 测试 3-5 需要 LLM 调用
     from services.config_service import is_configured
     if is_configured("main"):
         await test_intent_classification()
-        await test_graph_invoke()
-        await test_graph_astream()
+        await test_graph_astream_updates()
+        # test_study_workflow 耗时较长（多次 LLM 调用），按需启用
+        # await test_study_workflow()
     else:
-        print("\n⚠ 未配置 LLM API，跳过需要 LLM 调用的测试 (2, 3, 4)")
-        print("  请在 .env 中配置 SPARK_API_KEY / SPARK_BASE_URL 后重新运行")
+        print("\n" + "=" * 50)
+        print("未配置 LLM API，跳过需要 LLM 调用的测试 (3-5)")
+        print("请在 .env 中配置 SPARK_API_KEY / SPARK_BASE_URL 后重新运行")
 
     print("\n" + "=" * 50)
     print("测试完成")

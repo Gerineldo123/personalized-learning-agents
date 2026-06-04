@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+﻿import { ref } from 'vue'
 import { chatStream } from '../api/chat'
 
 export function useSSE() {
@@ -13,10 +13,11 @@ export function useSSE() {
     controller = chatStream(
       userId,
       message,
-      (chunk) => { text.value += chunk },
+      [],
+      (chunk: string) => { text.value += chunk },
       () => { isStreaming.value = false },
-      (err) => {
-        text.value = `[错误] ${err.message}`
+      (err: Error) => {
+        text.value = '[错误] ' + err.message
         isStreaming.value = false
       },
     )

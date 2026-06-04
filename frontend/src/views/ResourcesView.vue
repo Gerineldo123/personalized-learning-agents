@@ -20,6 +20,7 @@ const page = ref(1)
 const pageSize = ref(12)
 const profile = ref<any>(null)
 const recommendedSeeds = ref<any[]>([])
+const weakPoints = ref<string[]>([])
 const typeFilter = ref('')
 const loading = ref(false)
 const selected = ref<any>(null)
@@ -110,9 +111,11 @@ async function loadProfileAndSeeds() {
       topic: c.knowledge_points || c.name || '核心概念',
       goal: c.goal || '扎实基础',
     }))
+    weakPoints.value = profile.value?.weak_points || []
   } catch {
     profile.value = null
     recommendedSeeds.value = []
+    weakPoints.value = []
   }
 }
 
@@ -290,6 +293,32 @@ function typeTag(t: string) {
       <el-button type="primary" @click="showGenDialog = true" style="margin-left: auto">+ 手动生成</el-button>
     </div>
 
+    <!-- 常驻智能推荐区：有 weak_points 时始终展示 -->
+    <div v-if="weakPoints.length > 0 && !selected" class="weak-banner">
+      <div class="weak-banner-head">
+        <span class="weak-banner-title">薄弱知识点专项推荐</span>
+        <span class="weak-banner-hint">基于你的学习画像和答题记录自动生成</span>
+      </div>
+      <div class="weak-tags">
+        <el-tag
+          v-for="pt in weakPoints.slice(0, 8)"
+          :key="pt"
+          type="warning"
+          size="small"
+          class="weak-tag"
+          @click="generateQuick({ course: pt, topic: pt }, 'article')"
+        >{{ pt }} → 生成讲解</el-tag>
+        <el-tag
+          v-for="pt in weakPoints.slice(0, 4)"
+          :key="'q_' + pt"
+          type="danger"
+          size="small"
+          class="weak-tag"
+          @click="generateQuick({ course: pt, topic: pt }, 'quiz')"
+        >{{ pt }} → 生成题库</el-tag>
+      </div>
+    </div>
+
     <div v-if="(!loading && resources.length === 0)" class="starter-panel">
       <div class="starter-head">
         <h3>根据你的学习画像推荐</h3>
@@ -438,6 +467,20 @@ function typeTag(t: string) {
 .card-title { margin: 0; color: #303133; font-size: 15px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .pagination-box { display: flex; justify-content: center; margin-top: 24px; }
+
+.weak-banner {
+  background: #fffbf0;
+  border: 1px solid #ffe58f;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.weak-banner-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.weak-banner-title { font-weight: 600; color: #d48806; font-size: 14px; }
+.weak-banner-hint { font-size: 12px; color: #ad8b00; }
+.weak-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.weak-tag { cursor: pointer; }
+.weak-tag:hover { opacity: 0.8; }
 
 .text-content { background: #fff; border-radius: 8px; border: 1px solid #e4e7ed; padding: 20px; }
 .text-content :deep(h1),

@@ -155,4 +155,13 @@ async def submit_quiz(
         "score": req.score,
     })
 
+    # 异步更新画像：根据最新答题情况重新分析知识水平和薄弱点
+    import asyncio as _asyncio
+    from agents.profile_agent import ProfileAgent
+    from agents.base import AgentState as _AgentState
+    _asyncio.create_task(ProfileAgent().process(_AgentState(
+        user_id=req.user_id,
+        user_message=f"根据最新答题更新画像（本次得分：{req.score:.0%}）",
+    )))
+
     return {"ok": True, "id": record.id}
