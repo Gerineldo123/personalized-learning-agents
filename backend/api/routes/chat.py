@@ -1,7 +1,7 @@
 import json
 from fastapi import APIRouter
 from pydantic import BaseModel
-from services.chat_service import route_to_agent, resume_workflow, _load_profile
+from services.chat_service import route_to_agent, _load_profile
 from schemas.chat import ChatRequest
 from core.llm_client import chat_completion
 
@@ -55,16 +55,6 @@ MARK_TERMS_PROMPT = """你是一个学术术语识别与解释专家。分析以
 @router.post("/stream")
 async def chat_stream(req: ChatRequest):
     return await route_to_agent(req.user_id, req.message, req.history, req.session_id)
-
-
-class ResumeRequest(BaseModel):
-    session_id: str
-    decision: str  # "accept" or "retry"
-
-
-@router.post("/stream/resume")
-async def resume_stream(req: ResumeRequest):
-    return await resume_workflow(req.session_id, req.decision)
 
 
 @router.post("/explain-term")

@@ -24,6 +24,7 @@ _INTENT_PLANS = {
     "profile": [{"agent": "profile", "task": "构建/更新学生画像", "priority": 5}],
     "content_gen": [{"agent": "content_gen", "task": "生成学习资源", "priority": 5}],
     "mindmap": [{"agent": "mindmap", "task": "生成思维导图", "priority": 5}],
+    "video": [{"agent": "video", "task": "搜索教学视频", "priority": 5}],
 }
 
 INTENT_PROMPT = """根据对话历史和用户消息，判断应调用哪个智能体。
@@ -43,6 +44,7 @@ INTENT_PROMPT = """根据对话历史和用户消息，判断应调用哪个智�
 - 如果用户要求生成思维导图/知识图谱 → mindmap
 - 如果用户要求评估/测评学习效果 → evaluation
 - 如果用户描述自己的信息（专业/年级/目标）用于构建画像 → profile
+- 如果用户要求搜索/推荐视频/教学视频/找视频资源 → video
 - 其他对话/问答 → chat
 
 只能返回上面列出的智能体名称本身（纯英文），不要任何其他文字、标点、解释。"""

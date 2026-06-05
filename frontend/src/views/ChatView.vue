@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { chatStream } from '../api/chat'
+import { workflowStream, type WorkflowType } from '../api/workflow'
 import { useUserStore } from '../stores/user'
 import api from '../api'
 import { useRouter } from 'vue-router'
@@ -33,7 +34,8 @@ interface Message {
   streaming?: boolean
   uid: number
   time: string
-  quizResourceId?: number  // quiz 资源 ID，有值时展示「前往答题」按鈕
+  quizResourceId?: number
+  suggestions?: Array<{ text: string; action: WorkflowType | null; topic: string }>
 }
 
 interface ConvItem {
@@ -55,6 +57,7 @@ const inputText = ref('')
 const isStreaming = ref(false)
 const chatContainer = ref<HTMLElement | null>(null)
 const showConvList = ref(false)
+const workflowPanel = ref<{ type: WorkflowType; topic: string; visible: boolean; stages: string[]; done: boolean } | null>(null)
 
 const questionHistory = ref<QuestionItem[]>([])
 const panelOpen = ref(false)
@@ -86,6 +89,22 @@ function scrollToMessage(index: number) {
 }
 
 function renderProcessedContent(content: string): string {
+  // 检测视频搜索结果，渲染为卡片
+  try {
+    const data = JSON.parse(content)
+    if (data.agent === 'video' && Array.isArray(data.videos)) {
+      const cards = data.videos.map((v: any) => `
+        <div class="video-card">
+          <div class="video-card-title">📺 ${escapeHtml(v.title || '')}</div>
+          <div class="video-card-meta">${escapeHtml(v.source || '')}${v.duration ? ' · ' + escapeHtml(v.duration) : ''}</div>
+          <div class="video-card-reason">${escapeHtml(v.reason || '')}</div>
+          ${v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">▶ 观看</a>` : ''}
+        </div>`).join('')
+      const summary = data.search_summary ? `<div class="video-summary">${escapeHtml(data.search_summary)}</div>` : ''
+      return `<div class="video-results"><div class="video-results-header">🎬 为你推荐的教学视频</div>${summary}${cards}</div>`
+    }
+  } catch {}
+
   const codeBlockList: Array<{ lang: string; code: string }> = []
   const mathBlocks: Array<{ formula: string; display: boolean }> = []
 
@@ -149,6 +168,20 @@ function renderProcessedContent(content: string): string {
   html = html.replace(/\[\[(.+?)\]\]/g, (_m: string, term: string) => {
     const safe = escapeHtml(term)
     return `<span class="term-highlight" data-term="${safe}">${safe}</span>`
+  })
+
+  // 将 [建议] 文本原地替换为可点击按钮
+  html = html.replace(/\[建议\]\s*(.+?)(?=\n|$|<br|<p|<\/p|<div|<\/div|$)/g, (_m: string, text: string) => {
+    const safe = escapeHtml(text.trim())
+    let action = ''
+    let topic = safe
+    const tm = text.match(/【(.+?)】/)
+    if (tm) topic = tm[1]
+    if (text.includes('分析错题')) action = 'review'
+    else if (text.includes('学习评估')) action = 'evaluation'
+    else if (text.includes('搜索视频')) action = 'video'
+    else if (text.includes('系统学习')) action = 'study'
+    return `<button class="suggestion-btn" data-suggestion-action="${action}" data-suggestion-topic="${escapeHtml(topic)}">${safe}</button>`
   })
 
   return html
@@ -277,6 +310,17 @@ function handleContentClick(e: MouseEvent) {
         copyBtn.textContent = '已复制'
         setTimeout(() => { copyBtn.textContent = '复制' }, 1500)
       }).catch(() => {})
+    }
+    return
+  }
+
+  const suggBtn = (e.target as HTMLElement).closest('.suggestion-btn') as HTMLElement | null
+  if (suggBtn) {
+    e.stopPropagation()
+    const action = suggBtn.dataset.suggestionAction
+    const topic = suggBtn.dataset.suggestionTopic
+    if (action && topic && !isStreaming.value) {
+      triggerWorkflow(action as WorkflowType, topic)
     }
     return
   }
@@ -425,6 +469,23 @@ function sendMessage() {
           }
         }
       } catch {}
+
+      // 解析 [建议] 标签 — 从原始内容（mark-terms 前）解析，避免 [[建议]] 破坏匹配
+      const suggestions: Message['suggestions'] = []
+      const suggRe = /\[建议\]\s*(.+)/g
+      let suggMatch
+      while ((suggMatch = suggRe.exec(fullContent)) !== null) {
+        const text = suggMatch[1].trim()
+        const topicMatch = text.match(/【(.+?)】/)
+        const topic = topicMatch ? topicMatch[1] : text
+        const action: WorkflowType | null = text.includes('分析错题') ? 'review'
+          : text.includes('学习评估') ? 'evaluation'
+          : text.includes('搜索视频') ? 'video'
+          : text.includes('系统学习') ? 'study'
+          : null
+        suggestions.push({ text, action, topic })
+      }
+      if (suggestions.length > 0) messages.value[msgIdx].suggestions = suggestions
     },
     (err) => {
       messages.value[msgIdx].content = `[错误] ${err.message}`
@@ -449,6 +510,33 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     sendMessage()
   }
+}
+
+function triggerWorkflow(action: WorkflowType, topic: string) {
+  if (isStreaming.value) return
+  const history = messages.value.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }))
+  const msgIdx = messages.value.length
+  messages.value.push({ role: 'assistant', content: '', streaming: true, uid: msgUid++, time: new Date().toISOString() })
+  isStreaming.value = true
+  workflowPanel.value = { type: action, topic, visible: true, stages: [], done: false }
+  let fullContent = ''
+  workflowStream(
+    action, userStore.userId, topic, history,
+    (chunk) => { fullContent += chunk; messages.value[msgIdx].content = fullContent; scrollToBottom() },
+    (stage) => { workflowPanel.value?.stages.push(stage) },
+    async () => {
+      messages.value[msgIdx].streaming = false
+      isStreaming.value = false
+      if (workflowPanel.value) workflowPanel.value.done = true
+      await saveMessage('assistant', fullContent)
+      await loadConversations()
+    },
+    (err) => {
+      messages.value[msgIdx].content = `[错误] ${err.message}`
+      messages.value[msgIdx].streaming = false
+      isStreaming.value = false
+    },
+  )
 }
 
 async function copyMessage(text: string) {
@@ -623,6 +711,16 @@ function regenerateMessage(aiIndex: number) {
                 @click="router.push({ path: '/resources', query: { open: String(msg.quizResourceId) } })"
               >📝 前往答题</span>
             </template>
+          </div>
+
+          <div v-if="msg.role === 'assistant' && msg.suggestions?.length && !msg.streaming" class="msg-suggestions">
+            <button
+              v-for="(s, si) in msg.suggestions"
+              :key="si"
+              class="suggestion-btn"
+              :disabled="isStreaming || !s.action"
+              @click="s.action && triggerWorkflow(s.action, s.topic)"
+            >{{ s.text }}</button>
           </div>
         </div>
       </div>
@@ -1080,13 +1178,37 @@ function regenerateMessage(aiIndex: number) {
   51%, 100% { opacity: 0; }
 }
 
-.chat-input {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-}
+.chat-input { display: flex; gap: 12px; align-items: flex-end; }
 
 .chat-input .el-textarea { flex: 1; }
+
+.msg-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.suggestion-btn {
+  font-size: 12px;
+  color: #409eff;
+  background: #ecf5ff;
+  border: 1px solid #b3d8ff;
+  border-radius: 14px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.suggestion-btn:hover:not(:disabled) {
+  background: #409eff;
+  color: #fff;
+}
+
+.suggestion-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .message-content :deep(.term-highlight) {
   color: #409eff;
@@ -1111,6 +1233,58 @@ function regenerateMessage(aiIndex: number) {
 
 .message-content :deep(.math-inline) {
   padding: 0 2px;
+}
+
+.message-content :deep(.video-results) {
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.message-content :deep(.video-results-header) {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.message-content :deep(.video-summary) {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 10px;
+}
+.message-content :deep(.video-card) {
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.message-content :deep(.video-card-title) {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 4px;
+}
+.message-content :deep(.video-card-meta) {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+}
+.message-content :deep(.video-card-reason) {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+.message-content :deep(.video-card-link) {
+  display: inline-block;
+  font-size: 12px;
+  color: #409eff;
+  text-decoration: none;
+  border: 1px solid #409eff;
+  border-radius: 4px;
+  padding: 2px 10px;
+}
+.message-content :deep(.video-card-link:hover) {
+  background: #ecf5ff;
 }
 </style>
 

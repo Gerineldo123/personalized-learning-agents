@@ -96,16 +96,18 @@ from agents.content_gen_agent import ContentGenAgent
 from agents.mindmap_agent import MindMapAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.chat_agent import ChatAgent
+from agents.video_agent import VideoAgent
 
 register(ProfileAgent())
 register(ContentGenAgent())
 register(MindMapAgent())
 register(EvaluationAgent())
 register(ChatAgent())
+register(VideoAgent())
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -119,6 +121,7 @@ app.include_router(mistake.router)
 app.include_router(course_path.router)
 app.include_router(auth.router)
 app.include_router(focus.router)
+app.include_router(workflow.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

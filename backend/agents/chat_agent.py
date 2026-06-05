@@ -42,6 +42,14 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 - **扩展思考**：与本知识点相关的进阶话题或跨学科联系
 - 进一步学习的建议，引导学生继续探索
 
+【主动建议规则】
+如果检测到以下情况，在回答最末尾（换行后）附加建议，格式严格为：[建议] 内容
+- 学生多次询问同类主题或表达困惑/不理解 → [建议] 系统学习【{{topic}}】（用具体主题替换{{topic}}）
+- 学生提到做错题、不会做题、想巩固 → [建议] 分析错题
+- 学生问到学习方向或评估水平 → [建议] 学习评估
+- 学生明确询问视频/教学视频/视频推荐 → [建议] 搜索视频【{{topic}}】（用具体主题替换{{topic}}）
+每次最多给出1条建议，没有合适情况则不写建议。
+
 {hallu}
 
 学生画像信息：{profile}
@@ -83,14 +91,57 @@ class ChatAgent(BaseAgent):
 
     def _profile_text(self, state: AgentState) -> str:
         p = state.get("profile")
+        user_id = state.get("user_id", "")
+
+        # 读取最近错题
+        mistake_text = "无"
+        try:
+            from core.database import SessionLocal
+            from models.mistake_question import MistakeQuestion
+            db = SessionLocal()
+            try:
+                mistakes = db.query(MistakeQuestion).filter(
+                    MistakeQuestion.user_id == user_id
+                ).order_by(MistakeQuestion.created_at.desc()).limit(5).all()
+                if mistakes:
+                    mistake_text = "、".join([
+                        (m.question.get("question", "")[:30] if m.question else "") for m in mistakes
+                    ])
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+        # 读取专注数据
+        focus_text = "无专注记录"
+        try:
+            from core.database import SessionLocal as SL2
+            from models.focus import FocusSession
+            db2 = SL2()
+            try:
+                sessions = db2.query(FocusSession).filter(
+                    FocusSession.user_id == user_id
+                ).order_by(FocusSession.started_at.desc()).limit(20).all()
+                if sessions:
+                    total = sum(s.duration_min for s in sessions)
+                    done = sum(1 for s in sessions if s.completed)
+                    focus_text = f"累计专注{total}分钟，完成{done}/{len(sessions)}次"
+            finally:
+                db2.close()
+        except Exception:
+            pass
+
         if not p:
-            return "暂无学生画像"
+            return json.dumps({"最近错题": mistake_text, "专注情况": focus_text}, ensure_ascii=False)
+
         return json.dumps({
-            "major": p.major,
-            "grade": p.grade,
-            "knowledge_base": p.knowledge_base,
-            "weak_points": p.weak_points,
-            "learning_goal": p.learning_goal,
+            "专业": p.major,
+            "年级": p.grade,
+            "知识基础": p.knowledge_base,
+            "薄弱知识点": p.weak_points,
+            "学习目标": p.learning_goal,
+            "最近错题": mistake_text,
+            "专注情况": focus_text,
         }, ensure_ascii=False)
 
     def _build_rag_context(self, state: AgentState) -> str:
