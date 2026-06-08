@@ -31,7 +31,6 @@ const genQuestionCount = ref(5)
 const genDifficulty = ref('中等')
 const genLoading = ref(false)
 const starterLoading = ref(false)
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
 function markdownSource(content: any): string {
@@ -71,19 +70,13 @@ const genTypeOptions = [
 ]
 const difficultyOptions = ['简单', '中等', '较难', '挑战']
 
-function startPoll() {
-  loadResources()
-  pollTimer = setInterval(loadResources, 30000)
-}
-
 onMounted(() => {
-  if (userStore.userId) startPoll()
+  if (userStore.userId) loadResources()
   eventStore.connect(userStore.userId || 'user_default')
   loadProfileAndSeeds()
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
@@ -92,11 +85,8 @@ watch(() => eventStore.lastEvent, (evt) => {
 
 watch(() => userStore.userId, (newId) => {
   if (newId) {
-    startPoll()
+    loadResources()
     loadProfileAndSeeds()
-  } else if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
   }
 })
 

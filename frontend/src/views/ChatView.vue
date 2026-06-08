@@ -1,7 +1,8 @@
 ﻿<script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, reactive } from 'vue'
 import { chatStream } from '../api/chat'
 import { workflowStream, type WorkflowType } from '../api/workflow'
+import type { ResourceEvent } from '../api/workflow'
 import { useUserStore } from '../stores/user'
 import api from '../api'
 import { useRouter } from 'vue-router'
@@ -34,7 +35,10 @@ interface Message {
   streaming?: boolean
   uid: number
   time: string
+  thinking?: string
+  thinkingEnd?: boolean
   quizResourceId?: number
+  resources?: ResourceEvent[]
   suggestions?: Array<{ text: string; action: WorkflowType | null; topic: string }>
 }
 
@@ -62,6 +66,11 @@ const workflowPanel = ref<{ type: WorkflowType; topic: string; visible: boolean;
 const questionHistory = ref<QuestionItem[]>([])
 const panelOpen = ref(false)
 const highlightIndex = ref(-1)
+const thinkingExpanded = reactive<Record<number, boolean>>({})
+
+function toggleThinking(uid: number) {
+  thinkingExpanded[uid] = !thinkingExpanded[uid]
+}
 
 function generateSummary(text: string): string {
   const cleaned = text.replace(/\s+/g, ' ').trim()
@@ -494,12 +503,22 @@ function sendMessage() {
       saveMessage('assistant', `[错误] ${err.message}`)
     },
     (stage, data) => {
-      // 检测到 quiz stage 事件，提取资源 ID 供「前往答题」按钮使用
       if (stage === 'quiz' && data) {
         try {
           const resourceId = typeof data === 'object' ? data.resource_db_id : null
           if (resourceId) messages.value[msgIdx].quizResourceId = resourceId
         } catch {}
+      }
+    },
+    (thinkingType, thinkingText) => {
+      if (thinkingType === 'start') {
+        messages.value[msgIdx].thinking = ''
+      } else if (thinkingType === 'end') {
+        messages.value[msgIdx].thinkingEnd = true
+      } else if (thinkingType === 'chunk' && thinkingText) {
+        if (!messages.value[msgIdx].thinking) messages.value[msgIdx].thinking = ''
+        messages.value[msgIdx].thinking += thinkingText
+        scrollToBottom()
       }
     },
   )
@@ -535,6 +554,13 @@ function triggerWorkflow(action: WorkflowType, topic: string) {
       messages.value[msgIdx].content = `[错误] ${err.message}`
       messages.value[msgIdx].streaming = false
       isStreaming.value = false
+    },
+    (resource) => {
+      const resources = messages.value[msgIdx].resources || []
+      if (!resources.some(r => r.resource_id === resource.resource_id)) {
+        resources.push(resource)
+        messages.value[msgIdx].resources = resources
+      }
     },
   )
 }
@@ -605,6 +631,18 @@ function regenerateMessage(aiIndex: number) {
       aiMsg.streaming = false
       isStreaming.value = false
       saveMessage('assistant', `[错误] ${err.message}`)
+    },
+    undefined,
+    (thinkingType, thinkingText) => {
+      if (thinkingType === 'start') {
+        aiMsg.thinking = ''
+      } else if (thinkingType === 'end') {
+        aiMsg.thinkingEnd = true
+      } else if (thinkingType === 'chunk' && thinkingText) {
+        if (!aiMsg.thinking) aiMsg.thinking = ''
+        aiMsg.thinking += thinkingText
+        scrollToBottom()
+      }
     },
   )
 }
@@ -688,6 +726,17 @@ function regenerateMessage(aiIndex: number) {
           :class="['message', msg.role, { highlight: i === highlightIndex }]"
         >
           <div v-if="msg.role === 'user' && msg.time" class="msg-time">{{ formatMsgTime(msg.time) }}</div>
+          <div v-if="msg.role === 'assistant' && msg.thinking" class="thinking-area">
+            <span
+              class="thinking-toggle"
+              @click="toggleThinking(msg.uid)"
+            >
+              {{ thinkingExpanded[msg.uid] ? '📖 收起思路 ▾' : '📖 查看思路 ▸' }}
+            </span>
+            <div v-if="thinkingExpanded[msg.uid]" class="thinking-content">
+              {{ msg.thinking }}
+            </div>
+          </div>
           <div
             class="message-content"
             v-if="msg.role === 'assistant' && !msg.streaming"
@@ -696,6 +745,17 @@ function regenerateMessage(aiIndex: number) {
           <div class="message-content" v-else>
             {{ msg.content }}
             <span v-if="msg.streaming" class="cursor">|</span>
+          </div>
+
+          <div v-if="msg.role === 'assistant' && msg.resources?.length && !msg.streaming" class="msg-resources">
+            <div v-for="r in msg.resources" :key="r.resource_id" class="resource-card-inline">
+              <span class="resource-badge">{{ r.resource_type === 'mindmap' ? '🧠' : r.resource_type === 'quiz' ? '📝' : '📄' }} {{ r.title || '学习资源' }}</span>
+              <span class="resource-type-tag">{{ r.resource_type === 'mindmap' ? '思维导图' : r.resource_type === 'quiz' ? '题库' : r.resource_type === 'article' ? '文章' : r.resource_type }}</span>
+              <span
+                class="resource-jump-btn"
+                @click="router.push({ path: '/resources', query: { open: String(r.resource_id) } })"
+              >查看 →</span>
+            </div>
           </div>
 
           <div class="message-actions" v-if="!msg.streaming">
@@ -1392,5 +1452,90 @@ function regenerateMessage(aiIndex: number) {
 .popover-text :deep(strong) {
   font-weight: 700;
   color: #303133;
+}
+
+.thinking-area {
+  margin-bottom: 6px;
+}
+
+.thinking-toggle {
+  display: inline-block;
+  font-size: 12px;
+  color: #909399;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.thinking-toggle:hover {
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.06);
+}
+
+.thinking-content {
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: #fafbfc;
+  border-left: 3px solid #d0d7de;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #656d76;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.msg-resources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.resource-card-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #f0f9eb;
+  border: 1px solid #c2e7b0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.resource-badge {
+  color: #303133;
+  font-weight: 500;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-type-tag {
+  font-size: 11px;
+  color: #909399;
+  background: #f4f4f5;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.resource-jump-btn {
+  color: #409eff;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  transition: all 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.resource-jump-btn:hover {
+  background: rgba(64, 158, 255, 0.1);
 }
 </style>

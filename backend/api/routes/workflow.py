@@ -41,6 +41,7 @@ def _make_state(user_id: str, topic: str, history: list) -> AgentGraphState:
 
 
 async def _stream_subgraph(subgraph, state: AgentGraphState):
+    yielded_resources = set()
     async for chunk in subgraph.astream(state, stream_mode="updates"):
         for node_name, update in chunk.items():
             if "workflow_outputs" in update:
@@ -51,6 +52,15 @@ async def _stream_subgraph(subgraph, state: AgentGraphState):
                     "stage": latest.get("stage", node_name),
                     "data": latest.get("data", ""),
                 }, ensure_ascii=False)
+                rid = latest.get("resource_db_id")
+                if rid and rid not in yielded_resources:
+                    yielded_resources.add(rid)
+                    yield json.dumps({
+                        "type": "resource",
+                        "resource_id": rid,
+                        "resource_type": latest.get("resource_type", ""),
+                        "title": latest.get("title", ""),
+                    }, ensure_ascii=False)
             if "response" in update and update["response"]:
                 yield update["response"]
 

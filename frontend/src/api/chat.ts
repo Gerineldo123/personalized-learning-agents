@@ -6,6 +6,7 @@ export function chatStream(
   onDone: () => void,
   onError: (err: Error) => void,
   onStage?: (stage: string, data: any) => void,
+  onThinking?: (type: 'start' | 'chunk' | 'end', text?: string) => void,
   sessionId?: string,
 ) {
   const controller = new AbortController()
@@ -40,9 +41,20 @@ export function chatStream(
 
           if (dataLines.length > 0) {
             const raw = dataLines.join('\n')
-            // 尝试解析 stage 事件
             try {
               const parsed = JSON.parse(raw)
+              if (parsed.type === 'thinking_start' && onThinking) {
+                onThinking('start')
+                continue
+              }
+              if (parsed.type === 'thinking_end' && onThinking) {
+                onThinking('end')
+                continue
+              }
+              if (parsed.type === 'thinking' && onThinking) {
+                onThinking('chunk', parsed.text || '')
+                continue
+              }
               if (parsed.type === 'stage' && onStage) {
                 onStage(parsed.stage, parsed.data)
                 continue

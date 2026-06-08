@@ -1,4 +1,4 @@
-﻿import json
+import json
 from agents.base import BaseAgent, AgentState
 from core.llm_client import chat_completion
 from core.database import SessionLocal
@@ -6,19 +6,42 @@ from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
 
-MINDMAP_PROMPT = """你是一个知识体系整理专家。根据主题生成一个层级化的Markdown思维导图结构。
+MINDMAP_PROMPT = """你是一位知识体系整理专家兼学科教师。请根据主题生成一份**知识点详尽的层级思维导图**，而非目录大纲。
 
 主题：{topic}
 学生画像：{profile}
 
-规则：
-- 使用 # ## ### #### 构建层级树，最低到 4 级
-- # 是根节点（主题名称），## 是一级分支，### 是二级分支，#### 是三级细节
-- 尽量覆盖该知识点的完整体系
-- 每个分支节点简洁明了（5-15字）
-- 适配学生当前的知识水平
-- {hallu}
-- 只返回Markdown，不要其他说明"""
+【核心原则】
+- 思维导图的每个节点必须承载**具体知识内容**，而非空洞的章节标题
+- 禁止出现仅有名词而无解释的节点（如只写"定义""特点""应用"而不写具体内容）
+- 叶节点（#### 三级细节）必须包含：概念精要、公式、定理陈述、关键参数含义、或一句话示例
+
+【结构规范】
+- 使用 Markdown 标题层级：# 根 → ## 一级 → ### 二级 → #### 三级（最多4级）
+- # 根节点：主题名称（5-15字）
+- ## 一级分支：知识大类，附带概括说明（15-25字）
+- ### 二级分支：具体知识点名称及精炼定义（15-40字）
+- #### 三级细节：公式/定理/参数/示例/易错点等具体内容（20-60字），必须有实质信息
+
+【内容要求】
+- 覆盖该主题的完整知识链路：概念 → 原理 → 方法 → 应用 → 易错/对比
+- 涉及理科（数学/物理等）时，必须包含核心公式或定理
+- 涉及编程时，必须包含关键语法描述或代码逻辑
+- 针对学生薄弱点 {weak_points} 的部分，节点数量应更密集，并在对应节点中标注易错警告
+- 对照学生画像的知识基础，避免超出当前阶段过多的内容
+
+【格式示例 — 好的节点 vs 坏的节点】
+坏节点（空洞）：
+  ### 基本概念
+  #### 定义
+
+好节点（有知识）：
+  ### 装饰器本质：接受函数参数并返回新函数的高阶函数
+  #### @语法糖：@decorator 等价于 func = decorator(func)，在定义时立即执行
+  #### 常见内置装饰器：@staticmethod（无self/cls参数）、@property（方法变属性访问）
+
+{hallu}
+只返回 Markdown，不要任何开头结尾的闲聊说明。"""
 
 
 class MindMapAgent(BaseAgent):
@@ -27,10 +50,10 @@ class MindMapAgent(BaseAgent):
 
     async def process(self, state: AgentState) -> AgentState:
         topic = state.user_message
-        profile_text = self._profile_text(state)
+        profile_text, weak_points_text = self._profile_text(state)
         resp = await chat_completion([
-            {"role": "user", "content": MINDMAP_PROMPT.format(topic=topic, profile=profile_text, hallu=hallu_rules())}
-        ], temperature=0.4)
+            {"role": "user", "content": MINDMAP_PROMPT.format(topic=topic, profile=profile_text, weak_points=weak_points_text, hallu=hallu_rules())}
+        ], temperature=0.55)
         markdown = resp.choices[0].message.content.strip()
         if markdown.startswith("```"):
             markdown = markdown.strip("`").strip()
@@ -45,22 +68,38 @@ class MindMapAgent(BaseAgent):
         self._save_to_db(state, title, safe_markdown)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "mindmap", "title": title, "content": safe_markdown,
+            "resource_db_id": state.get("resource_db_id"),
         }, ensure_ascii=False)
         return state
 
-    def _profile_text(self, state: AgentState) -> str:
+    def _profile_text(self, state: AgentState) -> tuple[str, str]:
         p = state.get("profile")
         if not p:
-            return "暂无学生画像"
-        return f"专业：{p.major or '未知'}，年级：{p.grade or '未知'}，知识基础：{json.dumps(p.knowledge_base or {}, ensure_ascii=False)}"
+            return "暂无学生画像", "无记录"
+        profile_parts = [
+            f"专业：{p.major or '未知'}",
+            f"年级/阶段：{p.grade or '未知'}/{p.education_level or '未知'}",
+            f"已掌握基础：{json.dumps(p.knowledge_base or {}, ensure_ascii=False)}",
+            f"学习目标：{p.learning_goal or '未设定'}",
+        ]
+        weak_text = "无记录"
+        if p.weak_points:
+            if isinstance(p.weak_points, list):
+                weak_text = "、".join(str(w) for w in p.weak_points)
+            else:
+                weak_text = str(p.weak_points)
+        return "；".join(profile_parts), weak_text
 
     def _save_to_db(self, state: AgentState, title: str, markdown: str):
+        prev_id = state.get("resource_db_id")
         db = SessionLocal()
         try:
             resource = LearningResource(user_id=state.user_id, resource_type="mindmap", title=title, content={"markdown": markdown}, tags=["mindmap"])
             db.add(resource)
             db.commit()
             index_resource(resource.id, state.user_id or "", markdown[:4000], "mindmap")
+            if not prev_id:
+                state["resource_db_id"] = resource.id
         finally:
             db.close()
 

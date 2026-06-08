@@ -14,7 +14,6 @@ const router = useRouter()
 
 const profile = ref<any>(null)
 const loading = ref(false)
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const quizStats = ref({
   total: 0,
   avg_score_percent: 0,
@@ -28,18 +27,12 @@ const selectedCourse = ref<any>(null)
 
 const abilityDims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
 
-function startPoll() {
-  loadProfile()
-  pollTimer = setInterval(loadProfile, 30000)
-}
-
 onMounted(() => {
-  if (userStore.userId) startPoll()
+  if (userStore.userId) loadProfile()
   eventStore.connect(userStore.userId || 'user_default')
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
@@ -48,8 +41,7 @@ watch(() => eventStore.lastEvent, (evt) => {
 })
 
 watch(() => userStore.userId, (newId) => {
-  if (newId) startPoll()
-  else if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (newId) loadProfile()
 })
 
 async function loadProfile() {

@@ -8,9 +8,12 @@ from core.database import SessionLocal
 from core.sse import sse_stream
 from models.student import StudentProfile
 from services.safety_service import check_text_input
+from agents.chat_agent import ChatAgent
+from agents.base import AgentState
 
 _CHECKPOINT_DB = "checkpoints.db"
 _graph_no_cp = compile_graph()
+_chat_agent = ChatAgent()
 
 
 async def route_to_agent(
@@ -31,31 +34,16 @@ async def route_to_agent(
 
     profile = _load_profile(user_id)
 
-    initial_state: AgentGraphState = {
-        "user_id": user_id,
-        "user_message": safe_message,
-        "profile": profile,
-        "history": history or [],
-        "messages": [],
-        "response": "",
-        "agent_name": "",
-    }
+    agent_state = AgentState(
+        user_id=user_id,
+        user_message=safe_message,
+        profile=profile,
+        history=history or [],
+    )
 
     async def event_stream():
-        if session_id:
-            async with aiosqlite.connect(_CHECKPOINT_DB) as conn:
-                checkpointer = AsyncSqliteSaver(conn)
-                graph = compile_graph(checkpointer=checkpointer)
-                config = {"configurable": {"thread_id": session_id}}
-                async for chunk in graph.astream(initial_state, config, stream_mode="updates"):
-                    for node_name, update in chunk.items():
-                        if "response" in update and update["response"]:
-                            yield update["response"]
-        else:
-            async for chunk in _graph_no_cp.astream(initial_state, stream_mode="updates"):
-                for node_name, update in chunk.items():
-                    if "response" in update and update["response"]:
-                        yield update["response"]
+        async for chunk in _chat_agent.stream(agent_state):
+            yield chunk
 
     return StreamingResponse(
         sse_stream(event_stream()),
