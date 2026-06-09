@@ -187,8 +187,9 @@ class ProfileAgent(BaseAgent):
         if extracted.get("cognitive_style"):
             profile.cognitive_style = extracted["cognitive_style"]
         if extracted.get("weak_points"):
-            wp = list(set((profile.weak_points or []) + extracted["weak_points"]))
-            profile.weak_points = wp
+            from services.recommendation_service import upsert_weak_points_batch
+            upsert_weak_points_batch(profile.user_id, extracted["weak_points"])
+            profile.weak_points = list(set((profile.weak_points or []) + extracted["weak_points"]))[-15:]
         if extracted.get("learning_goal"):
             profile.learning_goal = extracted["learning_goal"]
         if extracted.get("preferred_format"):

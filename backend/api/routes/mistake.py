@@ -168,6 +168,8 @@ async def analyze_mistake(mistake_id: int, user_id: str, db: Session = Depends(g
 
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
     if profile and result.get("weak_points"):
+        from services.recommendation_service import upsert_weak_points_batch
+        upsert_weak_points_batch(user_id, result["weak_points"])
         existing = list(profile.weak_points or [])
         for pt in result["weak_points"]:
             if pt not in existing:
@@ -255,6 +257,8 @@ async def analyze_similar_mistake(req: SimilarAnalyzeRequest, db: Session = Depe
 
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == req.user_id).first()
     if profile and result.get("weak_points"):
+        from services.recommendation_service import upsert_weak_points_batch
+        upsert_weak_points_batch(req.user_id, result["weak_points"])
         existing = list(profile.weak_points or [])
         for pt in result["weak_points"]:
             if pt not in existing:

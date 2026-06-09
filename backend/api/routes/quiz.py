@@ -113,6 +113,9 @@ async def submit_quiz(
     except Exception:
         questions = []
 
+    resource_title = resource.title if resource else None
+    from services.recommendation_service import record_quiz_result
+
     submitted_answers = record.answers or {}
     for q in questions:
         qid = q.get('id')
@@ -121,7 +124,13 @@ async def submit_quiz(
         qid_str = str(qid)
         user_ans = str(submitted_answers.get(qid_str, submitted_answers.get(qid, '')))
         correct_ans = str(q.get('answer', ''))
-        if not user_ans or user_ans == correct_ans:
+        if not user_ans:
+            continue
+        # 用题目 topic 字段，降级到资源标题
+        kp_name = q.get('topic') or q.get('knowledge_point') or resource_title
+        if kp_name:
+            record_quiz_result(req.user_id, kp_name, user_ans == correct_ans)
+        if user_ans == correct_ans:
             continue
         exists = (
             db.query(MistakeQuestion)

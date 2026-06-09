@@ -61,9 +61,9 @@ async def profile_analysis_node(state: AgentGraphState) -> dict:
                 StudentProfile.user_id == state["user_id"]
             ).first()
             if p:
-                existing = set(p.weak_points or [])
-                existing.update(gaps)
-                p.weak_points = list(existing)
+                from services.recommendation_service import upsert_weak_points_batch
+                upsert_weak_points_batch(state["user_id"], gaps)
+                p.weak_points = list(set(p.weak_points or []) | set(gaps))[-15:]
                 db.commit()
         finally:
             db.close()

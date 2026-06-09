@@ -2,11 +2,13 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
+import { weakPointApi } from '../api/weakPoint'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
 import MindMapViewer from '../components/resource/MindMapViewer.vue'
 import QuizCard from '../components/resource/QuizCard.vue'
 import PptViewer from '../components/resource/PptViewer.vue'
+import WeakPointDashboard from '../components/WeakPointDashboard.vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdownEnhanced as renderMdCommon, codeBlockStore } from '../utils/markdown'
 
@@ -21,6 +23,8 @@ const pageSize = ref(12)
 const profile = ref<any>(null)
 const recommendedSeeds = ref<any[]>([])
 const weakPoints = ref<string[]>([])
+const weakPointRecs = ref<any[]>([])
+const showWeakDashboard = ref(false)
 const typeFilter = ref('')
 const loading = ref(false)
 const selected = ref<any>(null)
@@ -80,6 +84,7 @@ onMounted(() => {
   if (userStore.userId) startPoll()
   eventStore.connect(userStore.userId || 'user_default')
   loadProfileAndSeeds()
+  loadWeakPointRecs()
 })
 
 onUnmounted(() => {
@@ -94,6 +99,7 @@ watch(() => userStore.userId, (newId) => {
   if (newId) {
     startPoll()
     loadProfileAndSeeds()
+    loadWeakPointRecs()
   } else if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
@@ -117,6 +123,21 @@ async function loadProfileAndSeeds() {
     recommendedSeeds.value = []
     weakPoints.value = []
   }
+}
+
+async function loadWeakPointRecs() {
+  if (!userStore.userId) return
+  try {
+    const r = await weakPointApi.getRecommendations(userStore.userId, 10)
+    weakPointRecs.value = r.data
+  } catch {
+    weakPointRecs.value = []
+  }
+}
+
+async function archiveWeakPoint(wp: any) {
+  await weakPointApi.updateStatus(wp.id, 'archived', userStore.userId!)
+  await loadWeakPointRecs()
 }
 
 async function loadResources() {
@@ -293,31 +314,30 @@ function typeTag(t: string) {
       <el-button type="primary" @click="showGenDialog = true" style="margin-left: auto">+ 手动生成</el-button>
     </div>
 
-    <!-- 常驻智能推荐区：有 weak_points 时始终展示 -->
-    <div v-if="weakPoints.length > 0 && !selected" class="weak-banner">
+    <!-- 薄弱知识点专项推荐（新：基于 SM-2 推荐引擎） -->
+    <div v-if="weakPointRecs.length > 0 && !selected" class="weak-banner">
       <div class="weak-banner-head">
         <span class="weak-banner-title">薄弱知识点专项推荐</span>
-        <span class="weak-banner-hint">基于你的学习画像和答题记录自动生成</span>
+        <span class="weak-banner-hint">{{ weakPointRecs.length }} 个待攻克 · 按复习优先级排序</span>
+        <el-button link size="small" style="margin-left: auto" @click="showWeakDashboard = true">管理全部</el-button>
       </div>
       <div class="weak-tags">
-        <el-tag
-          v-for="pt in weakPoints.slice(0, 8)"
-          :key="pt"
-          type="warning"
-          size="small"
-          class="weak-tag"
-          @click="generateQuick({ course: pt, topic: pt }, 'article')"
-        >{{ pt }} → 生成讲解</el-tag>
-        <el-tag
-          v-for="pt in weakPoints.slice(0, 4)"
-          :key="'q_' + pt"
-          type="danger"
-          size="small"
-          class="weak-tag"
-          @click="generateQuick({ course: pt, topic: pt }, 'quiz')"
-        >{{ pt }} → 生成题库</el-tag>
+        <div v-for="wp in weakPointRecs.slice(0, 8)" :key="wp.id" class="weak-tag-item">
+          <el-tag
+            :type="wp.status === 'reviewing' ? 'success' : 'warning'"
+            size="small"
+            class="weak-tag"
+            @click="generateQuick({ course: wp.name, topic: wp.name }, 'article')"
+          >{{ wp.name }} → 生成讲解</el-tag>
+          <span class="tag-close" @click.stop="archiveWeakPoint(wp)">×</span>
+        </div>
       </div>
     </div>
+
+    <WeakPointDashboard
+      v-model:visible="showWeakDashboard"
+      :userId="userStore.userId || ''"
+    />
 
     <div v-if="(!loading && resources.length === 0)" class="starter-panel">
       <div class="starter-head">
@@ -479,8 +499,11 @@ function typeTag(t: string) {
 .weak-banner-title { font-weight: 600; color: #d48806; font-size: 14px; }
 .weak-banner-hint { font-size: 12px; color: #ad8b00; }
 .weak-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.weak-tag-item { display: flex; align-items: center; gap: 2px; }
 .weak-tag { cursor: pointer; }
 .weak-tag:hover { opacity: 0.8; }
+.tag-close { cursor: pointer; color: #aaa; font-size: 14px; padding: 0 2px; line-height: 1; }
+.tag-close:hover { color: #f56c6c; }
 
 .text-content { background: #fff; border-radius: 8px; border: 1px solid #e4e7ed; padding: 20px; }
 .text-content :deep(h1),

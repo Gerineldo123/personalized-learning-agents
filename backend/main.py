@@ -12,6 +12,7 @@ from models.mistake_question import MistakeQuestion
 from models.course_path import CoursePath
 from models.focus import FocusSession
 from models.user import User
+from models.weak_point import WeakPoint
 
 Base.metadata.create_all(bind=engine)
 
@@ -107,7 +108,7 @@ register(VideoAgent())
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -122,6 +123,7 @@ app.include_router(course_path.router)
 app.include_router(auth.router)
 app.include_router(focus.router)
 app.include_router(workflow.router)
+app.include_router(weak_point.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 
