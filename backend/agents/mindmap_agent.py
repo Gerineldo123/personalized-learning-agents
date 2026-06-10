@@ -60,7 +60,7 @@ class MindMapAgent(BaseAgent):
             resource = LearningResource(user_id=state.user_id, resource_type="mindmap", title=title, content={"markdown": markdown}, tags=["mindmap"])
             db.add(resource)
             db.commit()
-            index_resource(resource.id, state.user_id or "", markdown[:4000], "mindmap")
+            index_resource(resource.id, state.user_id or "", markdown, "mindmap")
         finally:
             db.close()
 

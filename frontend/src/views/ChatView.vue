@@ -1178,7 +1178,12 @@ function regenerateMessage(aiIndex: number) {
   51%, 100% { opacity: 0; }
 }
 
-.chat-input { display: flex; gap: 12px; align-items: flex-end; }
+.chat-input { display: flex; gap: 12px; align-items: flex-end; position: relative; z-index: 10; }
+
+.panel-area.open ~ .chat-input {
+  z-index: 5;
+  margin-right: 360px;
+}
 
 .chat-input .el-textarea { flex: 1; }
 

@@ -4,9 +4,10 @@ import { useRouter } from 'vue-router'
 import api from '../api'
 import ProfileRadar from '../components/profile/ProfileRadar.vue'
 import ProfileQuestionnaire from '../components/profile/ProfileQuestionnaire.vue'
+import { ElMessage } from 'element-plus'
+import { CircleCheck, ChatDotRound, EditPen, Timer, WarningFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
-import { ElMessage } from 'element-plus'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -27,6 +28,14 @@ const rebuildLoading = ref(false)
 const selectedCourse = ref<any>(null)
 
 const abilityDims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
+
+function getTagType(text: string): string {
+  if (text.includes('记不住')) return 'warning'
+  if (text.includes('没思路') || text.includes('解题')) return 'danger'
+  if (text.includes('实验') || text.includes('代码')) return 'primary'
+  if (text.includes('太杂') || text.includes('抓不住')) return 'info'
+  return 'info'
+}
 
 function startPoll() {
   loadProfile()
@@ -76,14 +85,65 @@ const quizAnalysis = computed(() => {
   if (!total) return '你还没有答题记录，建议先完成一套题库，系统会基于结果分析你的薄弱点。'
   if (avg >= 85) return '你的整体掌握度较高，可以增加综合题与迁移题训练，重点提升解题速度和稳定性。'
   if (avg >= 60) return '你的基础已建立，但存在不稳定点。建议优先复盘错题并按知识点做专项巩固。'
-  return '当前正确率偏低，建议先回到基础概念与核心例题，采用“小步快练+即时复盘”的节奏。'
+  return '当前正确率偏低，建议先回到基础概念与核心例题，采用"小步快练+即时复盘"的节奏。'
+})
+
+const focusStaminaLabel = computed(() => {
+  const score = profile.value?.focus_stamina_score
+  if (score == null) return '暂无数据'
+  if (score >= 8) return '优秀'
+  if (score >= 6) return '良好'
+  if (score >= 4) return '一般'
+  return '较低'
+})
+
+const focusStaminaType = computed(() => {
+  const score = profile.value?.focus_stamina_score
+  if (score == null) return 'info'
+  if (score >= 8) return 'success'
+  if (score >= 6) return 'primary'
+  if (score >= 4) return 'warning'
+  return 'danger'
+})
+
+const focusTips = computed(() => {
+  const tips: string[] = []
+  const weekly = profile.value?.focus_weekly_avg_min || 0
+  const interrupt = profile.value?.focus_interrupt_rate
+  const score = profile.value?.focus_stamina_score
+  const peak = profile.value?.focus_peak_hours || []
+
+  if (weekly < 60) {
+    tips.push('尝试每天固定时段专注 25 分钟（番茄工作法），逐步建立学习节奏')
+    tips.push('把手机放远、关闭通知，减少外部干扰源')
+  } else if (weekly < 150) {
+    tips.push('你已有一定专注习惯，尝试将单次时长延长到 45-60 分钟以进入深度心流')
+    tips.push('在高效率时段（如上午）安排最难的任务，低效率时段做复习类轻任务')
+  }
+  if (interrupt != null && interrupt > 0.2) {
+    tips.push('中断率偏高，建议关闭社交媒体通知、使用全屏沉浸模式')
+    tips.push('在开始前明确本次要完成的具体目标，增强任务牵引力')
+  }
+  if (score != null && score < 5) {
+    tips.push('耐力较低可通过"短时多次"逐步提升：先坚持 3 天每天 25 分钟，再逐步加量')
+  }
+  if (peak.length > 0) {
+    const hours = peak.map((h: number) => `${h}:00`).join('、')
+    tips.push(`你的高效时段是 ${hours}，尽量在这段时间安排难度大的学习任务`)
+  } else if (weekly > 0) {
+    tips.push('留意自己在一天中哪个时段最清醒，把重点学习安排在那个时段')
+  }
+  if (tips.length === 0) {
+    tips.push('专注表现不错！继续保持规律的学习节奏')
+    tips.push('可以尝试挑战更长时段（90 分钟）的深度专注')
+  }
+  return tips
 })
 
 function onQuestionnaireDone(p: any) {
   profile.value = p
   showQuestionnaire.value = false
   ElMessage.success('学习画像构建完成')
-  // 首次构建画像后，静默触发入门资源包生成
   api.post('/resources/generate/starter', null, {
     params: { user_id: userStore.userId, max_courses: 3 },
     timeout: 180000,
@@ -102,7 +162,7 @@ async function doRebuildProfile() {
   rebuildLoading.value = true
   try {
     const r = await api.post('/profile/rebuild', null, { params: { user_id: userStore.userId } })
-    ElMessage.success(`画像已重新构建（分析 ${r.data.data_sources?.conversations_analyzed || 0} 个对话、${r.data.data_sources?.quiz_records_analyzed || 0} 条答题记录）`)
+    ElMessage.success(`画像已重新构建（分析 ${r.data.data_sources?.conversations_analyzed || 0} 个对话、${r.data.data_sources?.quiz_records_analyzed || 0} 条答题记录、${r.data.data_sources?.focus_sessions_analyzed || 0} 个专注时段）`)
     showRebuildDialog.value = false
     loadProfile()
   } catch { ElMessage.error('智能重建失败，请手动构建') }
@@ -120,10 +180,13 @@ const abilityRadarData = computed(() => {
 
 const courseRadarData = computed(() => {
   if (!selectedCourse.value) return {}
-  const scores = selectedCourse.value.course_ability_scores || {}
+  const c = selectedCourse.value
+  const scores = c.course_ability_scores || {}
+  const prefix = c.name ? c.name.slice(0, 3) + '·' : ''
+
   const data: Record<string, number> = {}
   for (const d of abilityDims) {
-    data[d] = scores[d] || 0
+    data[prefix + d] = scores[d] || 0
   }
   return data
 })
@@ -254,6 +317,39 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
         <p class="quiz-analysis">{{ quizAnalysis }}</p>
       </div>
 
+      <div v-if="profile.focus_stamina_score || profile.focus_weekly_avg_min || profile.focus_interrupt_rate !== null" class="focus-summary">
+        <div class="focus-head">
+          <h3>学习专注度</h3>
+          <el-tag :type="focusStaminaType">
+            {{ focusStaminaLabel }}
+          </el-tag>
+        </div>
+        <div class="focus-meta">
+          <div class="focus-stat">
+            <span class="focus-stat-val">{{ profile.focus_weekly_avg_min || 0 }}</span>
+            <span class="focus-stat-label">周均分钟</span>
+          </div>
+          <div class="focus-stat">
+            <span class="focus-stat-val">{{ profile.focus_interrupt_rate != null ? Math.round(profile.focus_interrupt_rate * 100) + '%' : '-' }}</span>
+            <span class="focus-stat-label">中断率</span>
+          </div>
+          <div class="focus-stat">
+            <span class="focus-stat-val">{{ profile.focus_stamina_score || '-' }}</span>
+            <span class="focus-stat-label">耐力评分</span>
+          </div>
+          <div class="focus-stat" v-if="profile.focus_peak_hours?.length">
+            <span class="focus-stat-val">{{ profile.focus_peak_hours.map((h: number) => h + ':00').join(', ') }}</span>
+            <span class="focus-stat-label">高效时段</span>
+          </div>
+        </div>
+        <div class="focus-tips">
+          <div class="focus-tips-title">提升建议</div>
+          <ul class="focus-tips-list">
+            <li v-for="(tip, i) in focusTips" :key="i">{{ tip }}</li>
+          </ul>
+        </div>
+      </div>
+
       <div v-if="abilityRadarData && Object.keys(abilityRadarData).length" class="radar-section">
         <ProfileRadar
           :knowledgeBase="abilityRadarData"
@@ -271,13 +367,13 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
           >
             <div class="cc-header">
               <span class="cc-name">{{ c.name }}</span>
-              <el-tag size="small" :type="c.goal === '短期应试' ? 'danger' : c.goal === '长期应试' ? 'warning' : c.goal === '项目驱动' ? 'success' : ''">
+              <el-tag size="small" :type="c.goal === '短期应试' ? 'danger' : c.goal === '长期应试' ? 'warning' : c.goal === '项目驱动' ? 'success' : 'info'">
                 {{ c.goal }}
               </el-tag>
             </div>
             <div class="cc-points">{{ c.knowledge_points }}</div>
             <div class="cc-tags">
-              <el-tag v-for="t in c.difficulty_types" :key="t" size="small" type="info">{{ t }}</el-tag>
+              <el-tag v-for="t in c.difficulty_types" :key="t" size="small" :type="getTagType(t)" effect="plain">{{ t }}</el-tag>
             </div>
           </div>
         </div>
@@ -290,10 +386,12 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
         </h3>
         <div class="cd-grid">
           <div class="cd-left">
+            <div class="cd-radar-label">本课程能力分析</div>
             <ProfileRadar
               v-if="courseRadarData && Object.keys(courseRadarData).length"
               :knowledgeBase="courseRadarData"
               :title="selectedCourse.name + ' - 能力分布'"
+              color="#e6a23c"
             />
           </div>
           <div class="cd-right">
@@ -405,6 +503,7 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
       <ul class="rebuild-sources">
         <li><el-icon><component :is="'ChatDotRound'" /></el-icon> 历史对话记录</li>
         <li><el-icon><component :is="'EditPen'" /></el-icon> 答题记录与正确率</li>
+        <li><el-icon><component :is="'Timer'" /></el-icon> 学习专注时长</li>
       </ul>
       <p class="rebuild-warn">
         <el-icon><component :is="'WarningFilled'" /></el-icon>
@@ -481,6 +580,75 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   line-height: 1.8;
 }
 
+.focus-summary {
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+.focus-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.focus-head h3 {
+  margin: 0;
+  color: #303133;
+  font-size: 16px;
+}
+
+.focus-meta {
+  display: flex;
+  gap: 24px;
+}
+
+.focus-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.focus-stat-val {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.focus-stat-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.focus-tips {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #ebeef5;
+}
+
+.focus-tips-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #409eff;
+  margin-bottom: 8px;
+}
+
+.focus-tips-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.focus-tips-list li {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.8;
+  margin-bottom: 4px;
+}
+
 .radar-section { margin-bottom: 28px; }
 
 .courses-section { margin-bottom: 28px; }
@@ -499,14 +667,22 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   padding: 16px;
   cursor: pointer;
   transition: 0.2s;
+  text-align: left;
 }
 .course-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
 .course-card.active { border-color: #409eff; background: #ecf5ff; }
 
-.cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.cc-header { display: flex !important; justify-content: flex-start !important; align-items: center; gap: 8px; margin-bottom: 8px; text-align: left; }
+
+.cc-header > .el-tag,
+.cc-header :deep(.el-tag) { margin-left: 0 !important; }
 .cc-name { font-weight: 600; color: #303133; font-size: 15px; }
 .cc-points { color: #606266; font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
 .cc-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.cc-tags .el-tag {
+  border-width: 2px;
+  font-weight: 500;
+}
 
 .course-detail {
   background: #fff;
@@ -514,13 +690,31 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   border: 1px solid #e4e7ed;
   padding: 20px;
   margin-top: 8px;
+  text-align: left;
 }
-.course-detail h3 { color: #303133; margin-bottom: 16px; }
+.course-detail h3 { color: #303133; margin-bottom: 16px; text-align: center; }
 
-.cd-grid { display: grid; grid-template-columns: 360px 1fr; gap: 24px; }
+.cd-grid { display: flex; flex-direction: column; gap: 24px; }
 
-.cd-block { margin-bottom: 18px; }
-.cd-label { display: block; font-size: 12px; color: #909399; margin-bottom: 6px; }
+.cd-left {
+  max-width: 520px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.cd-left > :deep(.profile-radar) {
+  width: 100%;
+}
+
+.cd-radar-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 4px;
+  text-align: center;
+}
+
+.cd-block { margin-bottom: 18px; text-align: left; }
+.cd-label { display: block; font-size: 12px; color: #909399; margin-bottom: 6px; text-align: center; }
 .cd-block p { color: #303133; font-size: 14px; line-height: 1.6; margin: 0; }
 .cd-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 
@@ -623,10 +817,3 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
 .rebuild-sources li { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #409eff; }
 .rebuild-warn { display: flex; align-items: center; gap: 6px; color: #e6a23c; font-size: 13px; padding: 10px 12px; background: #fdf6ec; border-radius: 4px; }
 </style>
-
-
-
-
-
-
-

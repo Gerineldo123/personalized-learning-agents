@@ -26,6 +26,7 @@ const weakPoints = ref<string[]>([])
 const weakPointRecs = ref<any[]>([])
 const showWeakDashboard = ref(false)
 const typeFilter = ref('')
+const searchKeyword = ref('')
 const loading = ref(false)
 const selected = ref<any>(null)
 const showGenDialog = ref(false)
@@ -95,6 +96,7 @@ watch(() => eventStore.lastEvent, (evt) => {
   if (evt?.event === 'resource.created') loadResources()
 })
 
+watch(() => searchKeyword.value, () => { page.value = 1; loadResources() })
 watch(() => userStore.userId, (newId) => {
   if (newId) {
     startPoll()
@@ -147,6 +149,7 @@ async function loadResources() {
     const offset = (page.value - 1) * pageSize.value
     const params: any = { user_id: userStore.userId, limit: pageSize.value, offset }
     if (typeFilter.value) params.resource_type = typeFilter.value
+    if (searchKeyword.value.trim()) params.keyword = searchKeyword.value.trim()
     const r = await api.get('/resources', { params })
     resources.value = r.data.items || []
     totalResources.value = r.data.total || 0
@@ -293,8 +296,8 @@ function typeLabel(t: string) {
 }
 
 function typeTag(t: string) {
-  const map: Record<string, string> = { article: '', quiz: 'warning', code: 'success', mindmap: 'info', ppt: 'danger', video: '', evaluation: 'info' }
-  return map[t] || ''
+  const map: Record<string, string> = { article: 'primary', quiz: 'warning', code: 'success', mindmap: 'info', ppt: 'danger', video: 'info', evaluation: 'info' }
+  return map[t] || 'info'
 }
 </script>
 
@@ -306,6 +309,14 @@ function typeTag(t: string) {
       <el-select v-model="typeFilter" placeholder="全部类型" @change="page = 1; loadResources()" style="width: 160px">
         <el-option v-for="t in resourceTypes" :key="t" :label="t || '全部'" :value="t" />
       </el-select>
+      <el-input
+        v-model="searchKeyword"
+        placeholder="搜索资源标题..."
+        clearable
+        style="width: 220px; margin-left: 8px"
+        @clear="loadResources()"
+        @keyup.enter="loadResources()"
+      />
       <el-button @click="loadResources" style="margin-left: 8px">刷新</el-button>
       <el-button style="margin-left: 8px" @click="toggleManageMode">{{ manageMode ? '完成管理' : '管理资源' }}</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(1)">批量置顶</el-button>
@@ -368,7 +379,7 @@ function typeTag(t: string) {
       <el-button @click="selected = null" style="margin-bottom: 16px">返回列表</el-button>
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <MindMapViewer v-else-if="selected.resource_type === 'mindmap'" :markdown="selected.content?.markdown || ''" />
-      <PptViewer v-else-if="selected.resource_type === 'ppt'" :content="selected.content" />
+      <PptViewer v-else-if="selected.resource_type === 'ppt'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <div v-else class="text-content markdown-body" v-html="renderMarkdown(selected.content)" @click="handleDetailClick"></div>
     </div>
 

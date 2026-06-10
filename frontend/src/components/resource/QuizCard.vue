@@ -4,6 +4,13 @@ import api from '../../api'
 import { ElMessage } from 'element-plus'
 import { renderMathInline } from '../../utils/markdown'
 
+function formatExplanation(text: string): string {
+  if (!text) return ''
+  return text
+    .replace(/([A-D])[.、]/g, '\n$1. ')
+    .replace(/选项([A-D])/g, '\n选项$1')
+}
+
 interface QuizQuestion {
   id: number
   type: string
@@ -11,6 +18,7 @@ interface QuizQuestion {
   options: string[]
   answer: string
   explanation: string
+  option_explanations?: Record<string, string>
 }
 
 const props = defineProps<{ content: { title?: string; questions?: QuizQuestion[] }; resourceId?: number; userId?: string }>()
@@ -81,7 +89,6 @@ async function loadLatestRecord() {
       latestSubmittedAt.value = rec.created_at || ''
     }
   } catch {
-    // keep local cache fallback
   } finally {
     loadingLatest.value = false
   }
@@ -180,6 +187,27 @@ async function submitQuiz() {
     submitted.value = true
     latestScore.value = score
     latestSubmittedAt.value = new Date().toISOString()
+
+    for (const q of props.content.questions || []) {
+      const qid = Number(q.id)
+      if (answers.value[qid] !== q.answer && !markedSet.value[qid]) {
+        try {
+          await api.post('/mistakes/add', null, {
+            params: {
+              user_id: props.userId,
+              resource_id: props.resourceId,
+              question_id: qid,
+              reason: 'auto_wrong',
+              question: JSON.stringify(q),
+              user_answer: String(answers.value[qid] || ''),
+              correct_answer: String(q.answer || ''),
+            },
+          })
+          markedSet.value[qid] = true
+        } catch { /* skip */ }
+      }
+    }
+
     ElMessage.success(`正确率 ${Math.round(score * 100)}%`)
   } catch {
     ElMessage.error('提交失败')
@@ -187,6 +215,8 @@ async function submitQuiz() {
     submitting.value = false
   }
 }
+
+defineExpose({ submitted, submitting, submitQuiz, restartQuiz })
 </script>
 
 <template>
@@ -206,7 +236,7 @@ async function submitQuiz() {
 
     <div v-if="submitted && latestScorePct !== null" class="latest-meta">
       上次作答：正确率 {{ latestScorePct }}%
-      <template v-if="latestSubmittedAt">（{{ latestSubmittedAt.replace('T', ' ').slice(0, 19) }}）</template>
+      <template v-if="latestSubmittedAt">（{{ latestSubmittedAt.slice(0, 10) }}）</template>
     </div>
 
     <div v-for="q in content.questions" :key="q.id" class="quiz-question">
@@ -223,13 +253,19 @@ async function submitQuiz() {
       </el-radio-group>
 
       <div v-if="showExplanation[q.id]" class="quiz-result">
+        <el-button class="mistake-btn" size="small" text :disabled="markedSet[q.id]" @click="markToMistake(q)">
+          {{ markedSet[q.id] ? '已加错题本' : '+ 错题本' }}
+        </el-button>
         <el-tag :type="isCorrect(q.id) ? 'success' : 'danger'" size="small">
           {{ isCorrect(q.id) ? '正确' : '错误' }}
         </el-tag>
-        <p class="explanation" v-html="renderMathInline(q.explanation)" />
-        <el-button size="small" type="danger" text :disabled="markedSet[q.id]" @click="markToMistake(q)">
-          {{ markedSet[q.id] ? '已加入错题本' : '加入错题本' }}
-        </el-button>
+        <p class="explanation" v-html="renderMathInline(formatExplanation(q.explanation))" />
+        <div v-if="q.option_explanations" class="opt-explanations">
+          <div v-for="(exp, letter) in q.option_explanations" :key="letter" class="opt-exp-item">
+            <b :class="{ 'c-green': letter === q.answer, 'c-red': letter === answers[q.id] && letter !== q.answer }">{{ letter }}</b>
+            <span v-html="renderMathInline(exp)" />
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -241,18 +277,19 @@ async function submitQuiz() {
   border-radius: 8px;
   border: 1px solid #e4e7ed;
   padding: 20px;
+  text-align: left;
 }
 
 .quiz-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid #ebeef5;
 }
 
-.quiz-header h3 { margin: 0; color: #303133; }
+.quiz-header h3 { margin: 0; color: #303133; text-align: center; flex: 1; }
 
 .score {
   font-size: 18px;
@@ -279,23 +316,73 @@ async function submitQuiz() {
   margin-bottom: 12px;
   color: #303133;
   line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-.q-num {
-  font-weight: 700;
-  color: #409eff;
+.quiz-question :deep(.el-radio) {
+  display: flex;
+  white-space: normal;
+  word-break: break-word;
+  height: auto;
+  align-items: flex-start;
+  padding: 4px 0;
+  margin-right: 0;
+}
+
+.quiz-question :deep(.el-radio__label) {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.6;
 }
 
 .quiz-result {
+  position: relative;
   margin-top: 12px;
   padding: 12px;
   background: #f5f7fa;
   border-radius: 4px;
+  text-align: center;
+}
+
+.mistake-btn {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: #409eff !important;
+  font-weight: 700;
+  font-size: 12px;
 }
 
 .explanation {
   margin: 8px 0 0;
   color: #606266;
   font-size: 13px;
+  text-align: left;
+  white-space: pre-line;
 }
+
+.opt-explanations {
+  margin: 12px 0 0;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.opt-exp-item {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.8;
+  text-align: left;
+}
+
+.opt-exp-item b {
+  display: inline-block;
+  width: 20px;
+  font-weight: 700;
+}
+
+.c-green { color: #67c23a; }
+.c-red { color: #f56c6c; }
 </style>

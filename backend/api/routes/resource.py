@@ -1,4 +1,5 @@
-﻿from fastapi import APIRouter, Depends, Query
+﻿from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from api.deps import get_db
 from models.resource import LearningResource
@@ -7,7 +8,9 @@ from agents.base import AgentState
 from agents.content_gen_agent import ContentGenAgent
 from agents.mindmap_agent import MindMapAgent
 from services.event_service import emit
+from services.rag_service import delete_rag_resources
 import asyncio
+import os
 
 router = APIRouter(prefix="/api/resources", tags=["资源"])
 
@@ -190,8 +193,31 @@ async def batch_delete_resources(
     ).delete(synchronize_session=False)
     db.commit()
 
+    delete_rag_resources(id_list)
+
     await emit("resource.deleted", {
         "user_id": user_id,
         "ids": id_list,
     })
     return {"ok": True, "deleted": deleted}
+
+
+@router.get("/{resource_id}/download")
+def download_pptx(resource_id: int, user_id: str, db: Session = Depends(get_db)):
+    resource = db.query(LearningResource).filter(
+        LearningResource.id == resource_id,
+        LearningResource.user_id == user_id,
+    ).first()
+    if not resource:
+        raise HTTPException(404, "资源不存在")
+    path = ""
+    if isinstance(resource.content, dict):
+        path = resource.content.get("_pptx_path", "")
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, "课件文件不存在，可尝试重新生成")
+    filename = f"{resource.title}.pptx"
+    return FileResponse(
+        path,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )

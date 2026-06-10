@@ -136,7 +136,7 @@ watch(() => userStore.userId, (id) => { if (id) loadDashboard() }, { immediate: 
             class="res-chip"
             @click="router.push({ path: '/resources', query: { open: String(r.id) } })"
           >
-            <el-tag :type="r.resource_type === 'quiz' ? 'warning' : ''" size="small">{{ typeLabel(r.resource_type) }}</el-tag>
+            <el-tag :type="r.resource_type === 'quiz' ? 'warning' : 'info'" size="small">{{ typeLabel(r.resource_type) }}</el-tag>
             <span class="res-title">{{ r.title }}</span>
           </div>
         </div>

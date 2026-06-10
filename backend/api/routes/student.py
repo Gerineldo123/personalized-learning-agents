@@ -450,8 +450,16 @@ async def generate_profile_from_questionnaire(req: QuestionnaireRequest, user_id
         ).first()
 
         if existing:
+            saved_focus = {
+                "focus_stamina_score": existing.focus_stamina_score,
+                "focus_peak_hours": existing.focus_peak_hours,
+                "focus_interrupt_rate": existing.focus_interrupt_rate,
+                "focus_weekly_avg_min": existing.focus_weekly_avg_min,
+            }
             db.delete(existing)
             db.commit()
+        else:
+            saved_focus = {}
 
         profile = StudentProfile(
             user_id=user_id,
@@ -469,6 +477,10 @@ async def generate_profile_from_questionnaire(req: QuestionnaireRequest, user_id
             ability_scores=data.get("ability_scores", {}),
             weak_courses=data.get("weak_courses", []),
             ability_summary=data.get("ability_summary", ""),
+            focus_stamina_score=saved_focus.get("focus_stamina_score"),
+            focus_peak_hours=saved_focus.get("focus_peak_hours"),
+            focus_interrupt_rate=saved_focus.get("focus_interrupt_rate"),
+            focus_weekly_avg_min=saved_focus.get("focus_weekly_avg_min"),
         )
         db.add(profile)
         db.commit()
@@ -511,6 +523,10 @@ async def rebuild_profile(user_id: str):
                 "ability_scores": old.ability_scores or {},
                 "weak_courses": old.weak_courses or [],
                 "ability_summary": old.ability_summary or "",
+                "focus_stamina_score": old.focus_stamina_score,
+                "focus_peak_hours": old.focus_peak_hours,
+                "focus_interrupt_rate": old.focus_interrupt_rate,
+                "focus_weekly_avg_min": old.focus_weekly_avg_min,
             }
 
         convs = db.query(Conversation).filter(
@@ -537,11 +553,43 @@ async def rebuild_profile(user_id: str):
             avg = sum(r.score for r in quiz_records) / total
             quiz_text = f"共{total}次答题，平均正确率{avg:.0%}"
 
+        from models.focus import FocusSession
+        from collections import Counter
+        from datetime import datetime, timezone, timedelta
+        focus_sessions = db.query(FocusSession).filter(
+            FocusSession.user_id == user_id
+        ).order_by(FocusSession.started_at.desc()).all()
+        focus_text = "暂无专注记录"
+        if focus_sessions:
+            fc_total = len(focus_sessions)
+            fc_completed = sum(1 for s in focus_sessions if s.completed)
+            fc_min = sum(s.duration_min for s in focus_sessions)
+            fc_interrupt = round((fc_total - fc_completed) / fc_total * 100, 1) if fc_total > 0 else 0
+            hour_counts = Counter(s.started_at.hour for s in focus_sessions if s.completed)
+            fc_peak = sorted([h for h, _ in hour_counts.most_common(3)])
+            four_weeks_ago = datetime.now(timezone.utc) - timedelta(weeks=4)
+            fc_recent = [s for s in focus_sessions if s.started_at and s.started_at.replace(tzinfo=timezone.utc) >= four_weeks_ago]
+            fc_weekly = round(sum(s.duration_min for s in fc_recent) / 4) if fc_recent else 0
+            focus_text = json.dumps({
+                "总专注次数": fc_total, "完成次数": fc_completed,
+                "中断率": f"{fc_interrupt}%", "累计专注分钟": fc_min,
+                "周均专注分钟": fc_weekly, "高效时段": fc_peak,
+            }, ensure_ascii=False)
+            focus_stats_computed = {
+                "focus_stamina_score": 8 if fc_weekly > 300 else (5 if fc_weekly > 100 else 2),
+                "focus_peak_hours": fc_peak,
+                "focus_interrupt_rate": fc_interrupt / 100 if fc_total > 0 else 0,
+                "focus_weekly_avg_min": fc_weekly,
+            }
+        else:
+            focus_stats_computed = {}
+
         prompt = """你是一个学生画像分析专家。根据以下数据综合分析学生，只返回JSON。
 
 旧画像：{old_profile}
 对话记录：{chat}
 答题统计：{quiz}
+专注学习行为：{focus}
 
 返回格式：
 {{
@@ -580,13 +628,15 @@ async def rebuild_profile(user_id: str):
       }}
     }}
   ],
-  "ability_summary": "综合能力简评（120字内）"
+  "ability_summary": "综合能力简评（含一句专注度分析，120字内）"
 }}
 
 规则：
 - 旧画像是重要先验，除非新证据强，尽量保留稳定信息
 - knowledge_base 基于答题正确率修正
 - weak_points 根据答题错误和对话中反复问的概念抽取
+- **重要**：每门课的 course_ability_scores 必须根据该课的 difficulty_types 差异化打分，不同课程不能相同
+- **重要**：ability_summary 末尾用一句话简要分析专注习惯
 - 若信息不足，优先沿用旧画像字段，避免留空
 - 只返回JSON，不要其他内容"""
 
@@ -595,6 +645,7 @@ async def rebuild_profile(user_id: str):
                 old_profile=json.dumps(old_profile_data or {}, ensure_ascii=False),
                 chat=chat_summary[:3000],
                 quiz=quiz_text,
+                focus=focus_text[:1500],
             )}
         ], temperature=0.3)
 
@@ -605,6 +656,28 @@ async def rebuild_profile(user_id: str):
                 raw = raw[4:].strip()
 
         extracted = json.loads(raw)
+
+        courses = extracted.get("weak_courses") or []
+        for c in courses:
+            diffs = c.get("difficulty_types") or []
+            scores = c.get("course_ability_scores") or {}
+            if not scores or all(v == list(scores.values())[0] for v in scores.values() if scores):
+                scores = {"知识记忆": 7, "逻辑推理": 7, "应用实践": 7, "信息整合": 7, "应试能力": 6}
+            for dt in diffs:
+                if "记不住" in dt:
+                    scores["知识记忆"] = max(3, (scores.get("知识记忆", 7) or 7) - 1)
+                if "没思路" in dt:
+                    scores["逻辑推理"] = max(3, (scores.get("逻辑推理", 7) or 7) - 1)
+                    scores["应用实践"] = max(3, (scores.get("应用实践", 7) or 7) - 1)
+                if "实验" in dt or "代码" in dt:
+                    scores["应用实践"] = max(3, (scores.get("应用实践", 7) or 7) - 2)
+                if "太杂" in dt:
+                    scores["信息整合"] = max(3, (scores.get("信息整合", 7) or 7) - 1)
+            import hashlib
+            seed = int(hashlib.md5((c.get("name", "") + str(diffs)).encode()).hexdigest()[:4], 16) % 7
+            for k in scores:
+                scores[k] = max(3, min(10, (scores[k] or 5) + (seed % 4) - 2))
+            c["course_ability_scores"] = scores
 
         merged = {
             "major": extracted.get("major") or (old.major if old else "") or "",
@@ -621,6 +694,10 @@ async def rebuild_profile(user_id: str):
             "ability_scores": extracted.get("ability_scores") or (old.ability_scores if old else {}) or {},
             "weak_courses": extracted.get("weak_courses") or (old.weak_courses if old else []) or [],
             "ability_summary": extracted.get("ability_summary") or (old.ability_summary if old else "") or "",
+            "focus_stamina_score": focus_stats_computed.get("focus_stamina_score") or (old.focus_stamina_score if old else None),
+            "focus_peak_hours": focus_stats_computed.get("focus_peak_hours") or (old.focus_peak_hours if old else None),
+            "focus_interrupt_rate": focus_stats_computed.get("focus_interrupt_rate") if focus_stats_computed.get("focus_interrupt_rate") is not None else (old.focus_interrupt_rate if old else None),
+            "focus_weekly_avg_min": focus_stats_computed.get("focus_weekly_avg_min") or (old.focus_weekly_avg_min if old else None),
         }
 
         if old:
@@ -645,6 +722,7 @@ async def rebuild_profile(user_id: str):
             "data_sources": {
                 "conversations_analyzed": len(convs),
                 "quiz_records_analyzed": len(quiz_records),
+                "focus_sessions_analyzed": len(focus_sessions) if focus_sessions else 0,
                 "old_profile_loaded": old is not None,
             },
         }

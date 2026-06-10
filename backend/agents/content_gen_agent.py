@@ -66,7 +66,13 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
       "question": "题目内容",
       "options": ["A. xxx", "B. xxx", "C. xxx", "D. xxx"],
       "answer": "A",
-      "explanation": "解析"
+      "explanation": "解析",
+      "option_explanations": {{
+        "A": "为什么A正确",
+        "B": "为什么B不正确",
+        "C": "为什么C不正确",
+        "D": "为什么D不正确"
+      }}
     }}
   ]
 }}
@@ -77,6 +83,7 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
 - 题干要与知识点强相关，避免泛化空题。
 - 选项应具有区分度，干扰项要合理。
 - explanation 给出关键理由，而不是仅重复答案。
+- **option_explanations 必须为每个选项单独写解释**：A 写出正确原因，B C D 分别写出错误原因及其对应的概念混淆点
 - 若 topic 明确是“大学英语/学术英语”场景，也必须使用大学层次语境（学术阅读、语法辨析、语篇理解），不得出现低龄词汇释义题。
 
 生成 {question_count} 道题，整体难度按“{difficulty}”控制。{hallu}
@@ -200,6 +207,10 @@ class ContentGenAgent(BaseAgent):
         safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
         if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
             ppt_data = {"title": "内容已过滤", "slides": []}
+        from services.ppt_service import generate_pptx
+        result = await generate_pptx(ppt_data)
+        ppt_data["_pptx_path"] = result["pptx_path"]
+        ppt_data["_slide_html"] = result["slide_htmls"]
         self._save_resource(state, "ppt", ppt_data)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "ppt", "content": ppt_data
@@ -232,7 +243,7 @@ class ContentGenAgent(BaseAgent):
             db.commit()
 
             text = json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else str(content)
-            index_resource(resource.id, state.user_id or "", text[:4000], resource_type)
+            index_resource(resource.id, state.user_id or "", text, resource_type)
             if not prev_id:
                 state["resource_db_id"] = resource.id
         finally:
@@ -243,9 +254,16 @@ class ContentGenAgent(BaseAgent):
         if isinstance(content, dict):
             topic = content.get("title", "")
         elif isinstance(content, str):
-            text = content[:100]
-            if text.startswith("# "):
-                topic = text.split("\n")[0].replace("# ", "").strip()
+            text = content.strip()[:500]
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    topic = stripped.lstrip("#").strip()
+                    break
+                elif stripped.startswith("## ") and not topic:
+                    topic = stripped.lstrip("#").strip()
+            if not topic:
+                topic = text.split("\n")[0].strip().lstrip("#").strip()[:80]
         return topic or f"{resource_type}_resource"
 
 

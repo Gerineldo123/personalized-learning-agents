@@ -35,6 +35,7 @@ api_config.json
 *.swp
 *.swo
 *~
+backend/static/
 
 # === IDE（如需共享 .vscode 配置请删下面这行） ===
 .vscode/
