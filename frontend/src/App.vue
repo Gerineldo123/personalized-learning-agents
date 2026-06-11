@@ -19,6 +19,7 @@ const menuItems = [
   { path: '/mistakes', label: '错题本', icon: 'CollectionTag' },
   { path: '/path', label: '专注淀粉肠', icon: 'Food' },
   { path: '/config', label: 'API 配置', icon: 'Setting' },
+  { path: '/agent', label: 'Agent 面板', icon: 'Robot' },
 ]
 
 const isAuthPage = computed(() => route.path === '/auth')

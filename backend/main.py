@@ -107,7 +107,7 @@ register(VideoAgent())
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -122,6 +122,8 @@ app.include_router(course_path.router)
 app.include_router(auth.router)
 app.include_router(focus.router)
 app.include_router(workflow.router)
+app.include_router(weak_point.router)
+app.include_router(agent_panel.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

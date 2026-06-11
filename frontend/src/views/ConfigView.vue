@@ -11,18 +11,17 @@ interface ApiForm {
 }
 
 const mainForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
-const videoForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
+const tavilyForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
 const mainModels = ref<string[]>([])
-const videoModels = ref<string[]>([])
 const loadingMain = ref(false)
-const loadingVideo = ref(false)
 const savingMain = ref(false)
-const savingVideo = ref(false)
+const savingTavily = ref(false)
+const testingTavily = ref(false)
 const activeTab = ref('main')
 
 onMounted(() => {
   loadMainConfig()
-  loadVideoConfig()
+  loadTavilyConfig()
 })
 
 async function loadMainConfig() {
@@ -30,14 +29,6 @@ async function loadMainConfig() {
     const r = await api.get('/config/main')
     mainForm.value.base_url = r.data.base_url
     mainForm.value.model = r.data.model
-  } catch {}
-}
-
-async function loadVideoConfig() {
-  try {
-    const r = await api.get('/config/video')
-    videoForm.value.base_url = r.data.base_url
-    videoForm.value.model = r.data.model
   } catch {}
 }
 
@@ -53,15 +44,47 @@ async function saveMain() {
   }
 }
 
-async function saveVideo() {
-  savingVideo.value = true
+async function loadTavilyConfig() {
   try {
-    await api.post('/config/video', videoForm.value)
-    ElMessage.success('视频 API 配置已保存')
+    const r = await api.get('/config/tavily')
+    tavilyForm.value.api_key = ''
+  } catch {}
+}
+
+async function saveTavily() {
+  if (tavilyForm.value.api_key && !tavilyForm.value.api_key.startsWith('tvly-')) {
+    ElMessage.warning('Tavily API Key 应以 tvly- 开头，请检查是否填入了正确的密钥')
+    return
+  }
+  savingTavily.value = true
+  try {
+    await api.post('/config/tavily', tavilyForm.value)
+    ElMessage.success('Tavily API 配置已保存')
   } catch {
     ElMessage.error('保存失败')
   } finally {
-    savingVideo.value = false
+    savingTavily.value = false
+  }
+}
+
+async function testTavily() {
+  if (!tavilyForm.value.api_key) {
+    ElMessage.warning('请先填写 API Key')
+    return
+  }
+  testingTavily.value = true
+  try {
+    await saveTavily()
+    const r = await api.post('/config/tavily/test')
+    if (r.data.ok) {
+      ElMessage.success(`Tavily 连接成功，返回 ${r.data.result_count} 条结果`)
+    } else {
+      ElMessage.error(`Tavily 连接失败：${r.data.error || '未知错误'}`)
+    }
+  } catch {
+    ElMessage.error('Tavily 测试失败')
+  } finally {
+    testingTavily.value = false
   }
 }
 
@@ -87,31 +110,6 @@ async function fetchMainModels() {
     ElMessage.error('获取模型列表失败')
   } finally {
     loadingMain.value = false
-  }
-}
-
-async function fetchVideoModels() {
-  if (!videoForm.value.base_url || !videoForm.value.api_key) {
-    ElMessage.warning('请先填写 URL 和密钥')
-    return
-  }
-  loadingVideo.value = true
-  try {
-    await saveVideo()
-    const r = await api.get('/config/video/models')
-    if (r.data.error) {
-      ElMessage.error(`获取失败：${r.data.error}`)
-      videoModels.value = []
-    } else {
-      videoModels.value = r.data.models || []
-      if (r.data.message) {
-        ElMessage.success(r.data.message)
-      }
-    }
-  } catch {
-    ElMessage.error('获取模型列表失败')
-  } finally {
-    loadingVideo.value = false
   }
 }
 </script>
@@ -152,32 +150,18 @@ async function fetchVideoModels() {
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="视频 API" name="video">
+      <el-tab-pane label="Tavily 搜索" name="tavily">
         <el-card class="config-card">
-          <p class="desc">用于生成教学视频资源的 API。讯飞 VMS 格式：BaseURL 填服务地址，API Key 填 Key，API Secret 填 Secret，模型填场景 ID</p>
+          <p class="desc">用于 Agent 任务执行面板的互联网搜索 API。<a href="https://app.tavily.com" target="_blank">获取 API Key</a></p>
 
           <el-form label-width="100px">
-            <el-form-item label="Base URL">
-              <el-input v-model="videoForm.base_url" placeholder="https://api.example.com/v1" />
-            </el-form-item>
             <el-form-item label="API Key">
-              <el-input v-model="videoForm.api_key" type="password" show-password placeholder="sk-..." />
-            </el-form-item>
-            <el-form-item label="API Secret">
-              <el-input v-model="videoForm.api_secret" type="password" show-password placeholder="可选" />
-            </el-form-item>
-
-            <el-form-item label="模型">
-              <el-select v-model="videoForm.model" placeholder="先获取列表或手动输入" style="width: 100%" allow-create filterable>
-                <el-option v-for="m in videoModels" :key="m" :label="m" :value="m" />
-              </el-select>
-              <el-button :loading="loadingVideo" @click="fetchVideoModels" style="margin-left: 8px">
-                获取模型
-              </el-button>
+              <el-input v-model="tavilyForm.api_key" type="password" show-password placeholder="tvly-..." />
             </el-form-item>
 
             <el-form-item>
-              <el-button type="primary" :loading="savingVideo" @click="saveVideo">保存配置</el-button>
+              <el-button type="primary" :loading="savingTavily" @click="saveTavily">保存配置</el-button>
+              <el-button :loading="testingTavily" @click="testTavily" style="margin-left: 8px">测试连接</el-button>
             </el-form-item>
           </el-form>
         </el-card>
