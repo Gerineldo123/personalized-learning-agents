@@ -49,14 +49,16 @@ ARTICLE_PROMPT = """你是一个知识讲解专家。根据学生画像和需求
 - 500-1000字
 - {hallu}"""
 
-QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像和知识点，生成一套适用于大学生的练习题。
+QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像和知识点，生成一套适用于大学生的混合题型练习题。
 
 学生画像：{profile}
 知识点：{topic}
 目标难度：{difficulty}
 题目数量：{question_count}
+题型要求：{question_types}
+编程语言：{code_lang}
 
-返回JSON格式：
+返回JSON格式（根据题型要求混合生成，每种题型示例如下）：
 {{
   "title": "题目集标题",
   "questions": [
@@ -67,28 +69,51 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
       "options": ["A. xxx", "B. xxx", "C. xxx", "D. xxx"],
       "answer": "A",
       "explanation": "解析"
+    }},
+    {{
+      "id": 2,
+      "type": "fill_blank",
+      "question": "在{{code_lang}}中，___关键字用于定义常量。",
+      "answer": "根据语言填写",
+      "explanation": "解析"
+    }},
+    {{
+      "id": 3,
+      "type": "coding",
+      "question": "实现一个函数，返回列表中第k大的元素。",
+      "function_signature": "根据{{code_lang}}语法提供函数签名",
+      "code_lang": "{{code_lang}}",
+      "test_cases": [
+        {{{{"input": "[3,2,1,5,6,4], 2", "expected": "5"}}}},
+        {{{{"input": "[3,2,3,1,2,4,5,5,6], 4", "expected": "4"}}}}
+      ],
+      "answer": "根据{{code_lang}}语法提供该语言的标准解法代码",
+      "explanation": "排序后取第k个元素"
     }}
   ]
 }}
 
 出题规则：
-- 题目必须符合“大学课程”层次，不得使用幼儿/小学级别常识题（如“apple是什么意思”）。
-- 优先考察概念理解、原理推导、应用分析、综合判断，不要只考词汇记忆。
+- 题目必须符合"大学课程"层次，不得使用幼儿/小学级别常识题。
+- 优先考察概念理解、原理推导、应用分析、综合判断。
 - 题干要与知识点强相关，避免泛化空题。
-- 选项应具有区分度，干扰项要合理。
+- single_choice：选项应具有区分度，干扰项要合理。
+- fill_blank：答案应为简短精确的词/短语/表达式，answer字段为标准答案。
+- coding：编程题使用{{code_lang}}语言，必须提供可直接运行的完整函数，test_cases至少2个，input格式为函数参数字符串（如"nums, k"），expected为str(返回值)。同时提供answer字段的标准解法。
 - explanation 给出关键理由，而不是仅重复答案。
-- 若 topic 明确是“大学英语/学术英语”场景，也必须使用大学层次语境（学术阅读、语法辨析、语篇理解），不得出现低龄词汇释义题。
+- 按照题型要求"{question_types}"分配题目，若包含多种题型则均衡分布。
 
-生成 {question_count} 道题，整体难度按“{difficulty}”控制。{hallu}
+生成 {question_count} 道题，整体难度按"{difficulty}"控制。{hallu}
 只返回JSON，不要其他内容。"""
 
 CODE_PROMPT = """你是一个编程教学专家。根据学生画像和知识点，生成代码教学案例。
 
 学生画像：{profile}
 知识点：{topic}
+编程语言：{code_lang}
 
 要求：
-- 包含完整的可运行代码示例
+- 使用{code_lang}语言编写完整的可运行代码示例
 - 逐行注释解释关键逻辑
 - 难度适配学生水平（{level}）
 - 使用Markdown代码块格式
@@ -148,12 +173,17 @@ class ContentGenAgent(BaseAgent):
         question_count = int(state.get("question_count", 5) or 5)
         question_count = max(3, min(question_count, 30))
         difficulty = str(state.get("difficulty", "中等") or "中等")
+        raw_types = state.get("question_types", "single_choice")
+        question_types = str(raw_types) if raw_types else "single_choice"
+        code_lang = str(state.get("code_language", "python") or "python")
         resp = await chat_completion([
             {"role": "user", "content": QUIZ_PROMPT.format(
                 profile=profile,
                 topic=message,
                 question_count=question_count,
                 difficulty=difficulty,
+                question_types=question_types,
+                code_lang=code_lang,
                 hallu=hallu_rules(),
             )}
         ], temperature=0.5)
@@ -172,6 +202,7 @@ class ContentGenAgent(BaseAgent):
     async def _generate_code_case(self, state: AgentState):
         message = state.user_message
         profile = self._profile_text(state)
+        code_lang = str(state.get("code_language", "python") or "python")
         kb = state.profile.knowledge_base if state.profile else {}
         level = "初级"
         for name, score in kb.items():
@@ -180,11 +211,11 @@ class ContentGenAgent(BaseAgent):
             elif score >= 0.4 and level == "初级":
                 level = "中级"
         resp = await chat_completion([
-            {"role": "user", "content": CODE_PROMPT.format(profile=profile, topic=message, level=level, hallu=hallu_rules())}
+            {"role": "user", "content": CODE_PROMPT.format(profile=profile, topic=message, code_lang=code_lang, level=level, hallu=hallu_rules())}
         ], temperature=0.5)
         content = resp.choices[0].message.content
         safe_content, _ = await check_text(content)
-        self._save_resource(state, "code", {"code": safe_content, "language": "python"})
+        self._save_resource(state, "code", {"code": safe_content, "language": code_lang})
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "code", "content": safe_content
         }, ensure_ascii=False)
@@ -192,6 +223,32 @@ class ContentGenAgent(BaseAgent):
     async def _generate_ppt(self, state: AgentState):
         message = state.user_message
         profile = self._profile_text(state)
+
+        # 优先使用 PptGenSkill（支持 .pptx 导出）
+        try:
+            from agents.skills import get_skill
+            from services.config_service import is_configured as _is_configured
+            skill = get_skill("ppt_gen")
+            if skill:
+                result = await skill.execute({
+                    "user_message": message,
+                    "user_id": state.user_id,
+                    "profile": state.get("profile"),
+                }, [])
+                if result.success and result.data.get("ppt_json"):
+                    ppt_data = result.data["ppt_json"]
+                    state["response"] = json.dumps({
+                        "agent": self.name,
+                        "resource_type": "ppt",
+                        "content": ppt_data,
+                        "pptx_url": result.data.get("pptx_url", ""),
+                        "skill_used": "ppt_gen",
+                    }, ensure_ascii=False)
+                    return
+        except Exception:
+            pass
+
+        # fallback：使用通用 LLM
         resp = await chat_completion([
             {"role": "user", "content": PPT_PROMPT.format(profile=profile, topic=message, hallu=hallu_rules())}
         ], temperature=0.5)

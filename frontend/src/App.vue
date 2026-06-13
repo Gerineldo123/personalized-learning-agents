@@ -13,16 +13,17 @@ const focusStore = useFocusStore()
 
 const menuItems = [
   { path: '/', label: '首页', icon: 'HomeFilled' },
-  { path: '/chat', label: 'AI 对话', icon: 'ChatDotRound' },
+  { path: '/agent', label: 'AI 智能助手', icon: 'ChatDotRound' },
   { path: '/profile', label: '学习画像', icon: 'UserFilled' },
   { path: '/resources', label: '学习资源', icon: 'Document' },
   { path: '/mistakes', label: '错题本', icon: 'CollectionTag' },
+  { path: '/learning-path', label: '学习路径', icon: 'Promotion' },
   { path: '/path', label: '专注淀粉肠', icon: 'Food' },
   { path: '/config', label: 'API 配置', icon: 'Setting' },
-  { path: '/agent', label: 'Agent 面板', icon: 'Robot' },
 ]
 
 const isAuthPage = computed(() => route.path === '/auth')
+const isFullscreen = computed(() => !!route.meta?.fullscreen)
 
 watch(
   () => route.path,
@@ -80,7 +81,7 @@ function logout() {
       </div>
     </el-aside>
 
-    <el-main class="app-main">
+    <el-main class="app-main" :class="{ 'app-main--fullscreen': isFullscreen }">
       <router-view />
     </el-main>
   </el-container>
@@ -169,8 +170,13 @@ function logout() {
 
 .app-main {
   background-color: #f5f7fa;
-  padding: 24px;
+  padding: 28px 32px;
   overflow-y: auto;
+}
+
+.app-main--fullscreen {
+  padding: 0;
+  overflow: hidden;
 }
 </style>
 

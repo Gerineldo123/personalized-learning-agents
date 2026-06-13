@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from core.database import engine, Base
 from core.exceptions import AppException, AgentNotFoundError
 from models.student import StudentProfile
@@ -65,6 +66,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 挂载静态文件目录，供下载 .pptx 等文件
+import os as _os
+_static_dir = _os.path.join(_os.path.dirname(__file__), "static")
+_os.makedirs(_os.path.join(_static_dir, "ppt"), exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
@@ -97,6 +104,7 @@ from agents.mindmap_agent import MindMapAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.chat_agent import ChatAgent
 from agents.video_agent import VideoAgent
+from agents.skills import init_skills
 
 register(ProfileAgent())
 register(ContentGenAgent())
@@ -104,6 +112,9 @@ register(MindMapAgent())
 register(EvaluationAgent())
 register(ChatAgent())
 register(VideoAgent())
+
+# 初始化 Skill 系统
+init_skills()
 
 from services.event_service import on
 

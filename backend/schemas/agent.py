@@ -36,6 +36,14 @@ class ScrapeData(BaseModel):
     content: str = ""
 
 
+class SkillData(BaseModel):
+    skill_name: str = ""
+    skill_icon: str = "🔧"
+    content: str = ""
+    sub_steps: list[str] = []
+    language: str = ""
+
+
 class ResultData(BaseModel):
     content: str = ""
 
@@ -53,6 +61,7 @@ class AgentExecuteRequest(BaseModel):
     user_id: str
     task_description: str
     conversation_id: Optional[int] = None
+    history: Optional[list[dict]] = None
     file_content: Optional[str] = None
     file_name: Optional[str] = None
 

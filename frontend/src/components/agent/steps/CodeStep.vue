@@ -6,28 +6,43 @@ const props = defineProps<{ step: AgentStep }>()
 
 const expanded = ref(props.step.status === 'running')
 const copied = ref(false)
-const data = props.step.data as CodeData
+const previewVisible = ref(false)
+const data = computed(() => props.step.data as CodeData)
+const isHtml = computed(() => ['html', 'htm'].includes((data.value.language || '').toLowerCase()))
 
 function toggleExpand() {
   expanded.value = !expanded.value
 }
 
 function copyCode() {
-  navigator.clipboard.writeText(data.code).then(() => {
+  navigator.clipboard.writeText(data.value.code).then(() => {
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
   })
 }
 
+const langLabel = computed(() => {
+  const map: Record<string, string> = {
+    python: 'Python',
+    javascript: 'JavaScript/Node.js',
+    js: 'JavaScript/Node.js',
+    cpp: 'C++',
+    'c++': 'C++',
+    c: 'C',
+    java: 'Java',
+  }
+  return map[data.value.language] || data.value.language
+})
+
 const statusText = computed(() => {
-  if (data.status === 'running') return 'Running'
-  if (data.status === 'error') return 'Error'
+  if (data.value.status === 'running') return 'Running'
+  if (data.value.status === 'error') return 'Error'
   return 'Completed'
 })
 
 const statusIcon = computed(() => {
-  if (data.status === 'running') return '⟳'
-  if (data.status === 'error') return '✗'
+  if (data.value.status === 'running') return '⟳'
+  if (data.value.status === 'error') return '✗'
   return '✓'
 })
 </script>
@@ -46,12 +61,21 @@ const statusIcon = computed(() => {
     </div>
     <div v-show="expanded" class="step-content">
       <div class="code-toolbar">
-        <span class="code-lang">{{ data.language === 'javascript' ? 'JavaScript/Node.js' : 'Python' }}</span>
+        <span class="code-lang">{{ langLabel }}</span>
+        <button v-if="isHtml" class="preview-btn" @click.stop="previewVisible = !previewVisible">
+          {{ previewVisible ? '📄 显示代码' : '▶ 运行预览' }}
+        </button>
         <button class="copy-btn" @click.stop="copyCode">
           {{ copied ? '已复制' : '复制代码' }}
         </button>
       </div>
-      <div class="code-editor">
+      <iframe
+        v-if="isHtml && previewVisible"
+        :srcdoc="data.code"
+        sandbox="allow-scripts"
+        class="html-preview"
+      />
+      <div v-else class="code-editor">
         <pre><code class="code-block">{{ data.code }}</code></pre>
       </div>
       <div v-if="data.output" class="output-section">
@@ -177,6 +201,31 @@ const statusIcon = computed(() => {
 .copy-btn:hover {
   border-color: #409eff;
   color: #409eff;
+}
+
+.preview-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid #67c23a;
+  border-radius: 4px;
+  background: #3d3d4f;
+  color: #67c23a;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-right: 6px;
+}
+
+.preview-btn:hover {
+  background: #67c23a;
+  color: #fff;
+}
+
+.html-preview {
+  width: 100%;
+  min-height: 400px;
+  border: none;
+  background: #fff;
+  display: block;
 }
 
 .code-editor {

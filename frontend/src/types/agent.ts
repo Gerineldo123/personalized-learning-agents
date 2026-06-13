@@ -1,4 +1,4 @@
-export type StepType = 'thinking' | 'search' | 'memory' | 'code' | 'scrape' | 'result'
+export type StepType = 'thinking' | 'search' | 'memory' | 'code' | 'scrape' | 'skill' | 'result'
 export type StepStatus = 'running' | 'completed' | 'error'
 
 export interface ThinkingData {
@@ -18,7 +18,7 @@ export interface MemoryData {
 }
 
 export interface CodeData {
-  language: 'javascript' | 'python'
+  language: 'javascript' | 'python' | 'cpp' | 'c' | 'java' | string
   code: string
   output: string
   status: 'running' | 'completed' | 'error'
@@ -27,6 +27,15 @@ export interface CodeData {
 export interface ScrapeData {
   url: string
   content: string
+}
+
+export interface SkillData {
+  skill_name: string
+  skill_icon: string
+  content: string
+  sub_steps: string[]
+  language?: string
+  render_type?: string
 }
 
 export interface ResultData {
@@ -38,7 +47,7 @@ export interface AgentStep {
   stepType: StepType
   status: StepStatus
   title: string
-  data: ThinkingData | SearchData | MemoryData | CodeData | ScrapeData | ResultData
+  data: ThinkingData | SearchData | MemoryData | CodeData | ScrapeData | SkillData | ResultData
   expanded: boolean
   timestamp: number
 }

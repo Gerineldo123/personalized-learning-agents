@@ -66,6 +66,8 @@ async def generate_resource(
     resource_types: str = "article",
     question_count: int = 5,
     difficulty: str = "中等",
+    question_types: str = "single_choice",
+    code_language: str = "python",
 ):
     types = [t.strip() for t in resource_types.split(",") if t.strip()]
     if not types:
@@ -78,6 +80,8 @@ async def generate_resource(
             resource_type=rtype,
             question_count=question_count,
             difficulty=difficulty,
+            question_types=question_types,
+            code_language=code_language,
         )
         if rtype == "mindmap":
             agent = MindMapAgent()

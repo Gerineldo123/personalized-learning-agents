@@ -1,4 +1,5 @@
 ﻿from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from api.deps import get_db
 from models.quiz_record import QuizRecord
@@ -6,7 +7,22 @@ from models.mistake_question import MistakeQuestion
 from schemas.chat import QuizSubmitRequest
 from services.event_service import emit
 
+
+class CodeJudgeRequest(BaseModel):
+    question_id: int
+    code: str
+    test_cases: list[dict]
+    code_lang: str = "python"
+
 router = APIRouter(prefix="/api/quiz", tags=["答题"])
+
+
+@router.post("/judge")
+async def judge_code(req: CodeJudgeRequest):
+    """执行编程题代码，返回测试用例通过情况"""
+    from utils.code_runner import run_code_against_tests
+    result = run_code_against_tests(req.code, req.test_cases, req.code_lang)
+    return result
 
 
 @router.get("/records")
@@ -121,7 +137,19 @@ async def submit_quiz(
         qid_str = str(qid)
         user_ans = str(submitted_answers.get(qid_str, submitted_answers.get(qid, '')))
         correct_ans = str(q.get('answer', ''))
-        if not user_ans or user_ans == correct_ans:
+        q_type = q.get('type', 'single_choice')
+        # fill_blank: case-insensitive strip comparison
+        if q_type == 'fill_blank':
+            is_wrong = user_ans.strip().lower() != correct_ans.strip().lower()
+        elif q_type == 'coding':
+            # coding answers stored as score ratio string like "0.5"; treat <1.0 as wrong
+            try:
+                is_wrong = float(user_ans) < 1.0
+            except ValueError:
+                is_wrong = True
+        else:
+            is_wrong = user_ans != correct_ans
+        if not user_ans or not is_wrong:
             continue
         exists = (
             db.query(MistakeQuestion)

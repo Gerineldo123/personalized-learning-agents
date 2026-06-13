@@ -1,16 +1,51 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { AgentTask, AgentStep } from '../types/agent'
 
+const STORAGE_KEY = 'agent_tasks'
+const STORAGE_CURRENT_KEY = 'agent_current_task_id'
+
+function loadTasks(): AgentTask[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return []
+}
+
+function saveTasks(tasks: AgentTask[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+  } catch {}
+}
+
+function loadCurrentTaskId(): number | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_CURRENT_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return null
+}
+
+function saveCurrentTaskId(id: number | null) {
+  try {
+    localStorage.setItem(STORAGE_CURRENT_KEY, JSON.stringify(id))
+  } catch {}
+}
+
 export const useAgentStore = defineStore('agent', () => {
-  const tasks = ref<AgentTask[]>([])
-  const currentTaskId = ref<number | null>(null)
+  const tasks = ref<AgentTask[]>(loadTasks())
+  const currentTaskId = ref<number | null>(loadCurrentTaskId())
   const isExecuting = ref(false)
   const abortController = ref<AbortController | null>(null)
 
   const currentTask = computed(() =>
     tasks.value.find((t) => t.id === currentTaskId.value) || null,
   )
+
+  // 持久化：监听 tasks 和 currentTaskId 变化自动保存
+  watch(tasks, (val) => saveTasks(val), { deep: true })
+  watch(currentTaskId, (val) => saveCurrentTaskId(val))
 
   function createTask(title: string): AgentTask {
     const task: AgentTask = {

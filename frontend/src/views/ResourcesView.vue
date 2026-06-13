@@ -29,6 +29,8 @@ const genTopic = ref('')
 const genTypes = ref<string[]>(['article'])
 const genQuestionCount = ref(5)
 const genDifficulty = ref('中等')
+const genQuestionTypes = ref<string[]>(['single_choice'])
+const genCodeLanguage = ref('python')
 const genLoading = ref(false)
 const starterLoading = ref(false)
 const manageMode = ref(false)
@@ -38,7 +40,10 @@ function markdownSource(content: any): string {
   if (content && typeof content === 'object') {
     if (typeof content.text === 'string') return content.text
     if (typeof content.markdown === 'string') return content.markdown
-    if (typeof content.code === 'string') return '```python\n' + content.code + '\n```'
+    if (typeof content.code === 'string') {
+      const lang = content.language || 'python'
+      return '```' + lang + '\n' + content.code + '\n```'
+    }
   }
   return JSON.stringify(content, null, 2)
 }
@@ -69,6 +74,13 @@ const genTypeOptions = [
   { value: 'ppt', label: 'PPT课件' },
 ]
 const difficultyOptions = ['简单', '中等', '较难', '挑战']
+const codeLangOptions = [
+  { value: 'python', label: 'Python' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'java', label: 'Java' },
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'c', label: 'C' },
+]
 
 onMounted(() => {
   if (userStore.userId) loadResources()
@@ -146,6 +158,8 @@ async function startGenerate() {
         resource_types: genTypes.value.join(','),
         question_count: genQuestionCount.value,
         difficulty: genDifficulty.value,
+        question_types: genQuestionTypes.value.join(','),
+        code_language: genCodeLanguage.value,
       }
     })
     ElMessage.success('资源生成完成')
@@ -154,6 +168,8 @@ async function startGenerate() {
     genTypes.value = ['article']
     genQuestionCount.value = 5
     genDifficulty.value = '中等'
+    genQuestionTypes.value = ['single_choice']
+    genCodeLanguage.value = 'python'
     page.value = 1
     loadResources()
   } catch { ElMessage.error('生成失败') }
@@ -376,12 +392,17 @@ function typeTag(t: string) {
     <el-dialog v-model="showGenDialog" title="生成学习资源" width="480px">
       <el-form label-width="80px">
         <el-form-item label="主题">
-          <el-input v-model="genTopic" placeholder="例如：Python装饰器" />
+          <el-input v-model="genTopic" placeholder="例如：排序算法" />
         </el-form-item>
         <el-form-item label="资源类型">
           <el-checkbox-group v-model="genTypes">
             <el-checkbox v-for="o in genTypeOptions" :key="o.value" :value="o.value">{{ o.label }}</el-checkbox>
           </el-checkbox-group>
+        </el-form-item>
+        <el-form-item v-if="genTypes.includes('code') || genTypes.includes('quiz')" label="编程语言">
+          <el-select v-model="genCodeLanguage" placeholder="选择语言" style="width: 160px">
+            <el-option v-for="l in codeLangOptions" :key="l.value" :label="l.label" :value="l.value" />
+          </el-select>
         </el-form-item>
         <template v-if="genTypes.includes('quiz')">
           <el-form-item label="题目数量">
@@ -392,6 +413,13 @@ function typeTag(t: string) {
             <el-radio-group v-model="genDifficulty">
               <el-radio v-for="d in difficultyOptions" :key="d" :value="d">{{ d }}</el-radio>
             </el-radio-group>
+          </el-form-item>
+          <el-form-item label="题目类型">
+            <el-checkbox-group v-model="genQuestionTypes">
+              <el-checkbox value="single_choice">选择题</el-checkbox>
+              <el-checkbox value="fill_blank">填空题</el-checkbox>
+              <el-checkbox value="coding">编程题</el-checkbox>
+            </el-checkbox-group>
           </el-form-item>
         </template>
       </el-form>

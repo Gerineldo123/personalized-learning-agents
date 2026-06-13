@@ -4,6 +4,7 @@ from services.config_service import (
     ApiConfig,
     get_main_config, set_main_config,
     get_tavily_config, set_tavily_config,
+    get_ppt_config, set_ppt_config,
     build_client_kwargs,
     get_model,
 )
@@ -135,3 +136,26 @@ async def test_tavily():
         return {"ok": True, "result_count": len(result.get("results", [])), "has_answer": bool(result.get("answer"))}
     except Exception as e:
         return {"ok": False, "error": str(e)[:200]}
+
+
+@router.get("/ppt")
+def get_ppt():
+    cfg = get_ppt_config()
+    return {
+        "base_url": cfg.base_url,
+        "api_key": _mask_key(cfg.api_key),
+        "api_secret": _mask_key(cfg.api_secret),
+        "model": cfg.model,
+        "has_key": bool(cfg.api_key),
+    }
+
+
+@router.post("/ppt")
+def update_ppt(body: ApiConfig):
+    set_ppt_config(body)
+    return {"ok": True}
+
+
+@router.get("/ppt/models")
+def list_ppt_models():
+    return _list_models("ppt")

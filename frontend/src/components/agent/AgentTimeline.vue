@@ -5,12 +5,15 @@ import SearchStep from './steps/SearchStep.vue'
 import MemoryStep from './steps/MemoryStep.vue'
 import CodeStep from './steps/CodeStep.vue'
 import ScrapeStep from './steps/ScrapeStep.vue'
+import SkillStep from './steps/SkillStep.vue'
 import ResultStep from './steps/ResultStep.vue'
 
 defineProps<{
   steps: AgentStep[]
   isExecuting: boolean
 }>()
+
+const emit = defineEmits<{ (e: 'rerun'): void }>()
 
 function getStepIcon(stepType: string): string {
   const icons: Record<string, string> = {
@@ -19,6 +22,7 @@ function getStepIcon(stepType: string): string {
     code: '💻',
     memory: '📝',
     scrape: '🌐',
+    skill: '⚡',
     result: '✅',
   }
   return icons[stepType] || '📌'
@@ -60,9 +64,14 @@ function getStepIcon(stepType: string): string {
           v-else-if="step.stepType === 'scrape'"
           :step="step"
         />
+        <SkillStep
+          v-else-if="step.stepType === 'skill'"
+          :step="step"
+        />
         <ResultStep
           v-else-if="step.stepType === 'result'"
           :step="step"
+          @rerun="emit('rerun')"
         />
       </div>
     </div>

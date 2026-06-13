@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { AgentStep, SearchData } from '../../../types/agent'
 
 const props = defineProps<{ step: AgentStep }>()
 
 const expanded = ref(props.step.status === 'running')
-const data = props.step.data as SearchData
+const data = computed(() => props.step.data as SearchData)
 
 function toggleExpand() {
   expanded.value = !expanded.value

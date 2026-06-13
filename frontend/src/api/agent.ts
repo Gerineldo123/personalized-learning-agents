@@ -15,6 +15,7 @@ export function agentExecuteStream(
   onError: (err: Error) => void,
   fileContent?: string,
   fileName?: string,
+  history?: { role: string; content: string }[],
 ): AbortController {
   const controller = new AbortController()
 
@@ -26,6 +27,7 @@ export function agentExecuteStream(
       task_description: taskDescription,
       file_content: fileContent || null,
       file_name: fileName || null,
+      history: history || [],
     }),
     signal: controller.signal,
   })

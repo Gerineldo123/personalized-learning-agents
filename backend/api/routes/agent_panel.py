@@ -63,16 +63,56 @@ async def upload_file(file: UploadFile = File(...)):
     return UploadResponse(file_name=file.filename, content=result["content"], size=len(content)).model_dump()
 
 
-async def _make_state(task_description: str, user_id: str, file_content: str = "", file_name: str = "") -> dict:
+async def _make_state(task_description: str, user_id: str, file_content: str = "", file_name: str = "", history: list | None = None) -> dict:
     user_message = task_description
     if file_content and file_name:
         user_message = f"文件: {file_name}\n内容:\n```\n{file_content[:3000]}\n```\n\n任务: {task_description}"
 
+    profile = None
+    profile_text = "暂无学生画像"
+    try:
+        from core.database import SessionLocal
+        from models.student import StudentProfile
+        from models.mistake_question import MistakeQuestion
+        from models.focus import FocusSession
+        import json as _json
+        db = SessionLocal()
+        try:
+            profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+            mistakes = db.query(MistakeQuestion).filter(
+                MistakeQuestion.user_id == user_id
+            ).order_by(MistakeQuestion.created_at.desc()).limit(5).all()
+            mistake_text = "、".join([
+                (m.question.get("question", "")[:30] if m.question else "") for m in mistakes
+            ]) or "无"
+            sessions = db.query(FocusSession).filter(
+                FocusSession.user_id == user_id
+            ).order_by(FocusSession.started_at.desc()).limit(20).all()
+            focus_text = "无专注记录"
+            if sessions:
+                total = sum(s.duration_min for s in sessions)
+                done = sum(1 for s in sessions if s.completed)
+                focus_text = f"累计专注{total}分钟，完成{done}/{len(sessions)}次"
+            profile_data = {"最近错题": mistake_text, "专注情况": focus_text}
+            if profile:
+                profile_data = {
+                    "专业": profile.major, "年级": profile.grade,
+                    "知识基础": profile.knowledge_base, "薄弱知识点": profile.weak_points,
+                    "学习目标": profile.learning_goal,
+                    "最近错题": mistake_text, "专注情况": focus_text,
+                }
+            profile_text = _json.dumps(profile_data, ensure_ascii=False)
+        finally:
+            db.close()
+    except Exception:
+        pass
+
     return {
         "user_id": user_id,
         "user_message": user_message,
-        "profile": None,
-        "history": [],
+        "profile": profile,
+        "profile_text": profile_text,
+        "history": (history or [])[-20:],
         "messages": [],
         "response": "",
         "agent_name": "",
@@ -84,8 +124,8 @@ async def _make_state(task_description: str, user_id: str, file_content: str = "
     }
 
 
-async def _agent_stream(task_description: str, user_id: str, file_content: str = "", file_name: str = ""):
-    state = await _make_state(task_description, user_id, file_content, file_name)
+async def _agent_stream(task_description: str, user_id: str, file_content: str = "", file_name: str = "", history: list | None = None):
+    state = await _make_state(task_description, user_id, file_content, file_name, history)
     graph = agent_execute_graph
     yielded = 0
 
@@ -105,7 +145,7 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
 @router.post("/execute/stream")
 async def execute_stream(req: AgentExecuteRequest):
     return StreamingResponse(
-        sse_stream(_agent_stream(req.task_description, req.user_id, req.file_content or "", req.file_name or "")),
+        sse_stream(_agent_stream(req.task_description, req.user_id, req.file_content or "", req.file_name or "", req.history or [])),
         media_type="text/event-stream; charset=utf-8",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

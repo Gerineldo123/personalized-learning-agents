@@ -86,7 +86,7 @@ watch(() => userStore.userId, (id) => { if (id) loadDashboard() }, { immediate: 
           <div class="stat-value" style="color: #f56c6c">{{ weakPoints.length }}</div>
           <div class="stat-sub">{{ weakCourses.length }} 门薄弱课程</div>
         </div>
-        <div class="stat-card action-card" @click="router.push('/chat')">
+        <div class="stat-card action-card" @click="router.push('/agent')">
           <div class="stat-label">开始学习</div>
           <div class="stat-value" style="font-size: 32px">💬</div>
           <div class="stat-sub">与 AI 对话，生成专属内容</div>
@@ -105,7 +105,7 @@ watch(() => userStore.userId, (id) => { if (id) loadDashboard() }, { immediate: 
             :key="pt"
             type="warning"
             class="weak-tag"
-            @click="router.push({ path: '/chat' })"
+            @click="router.push({ path: '/agent' })"
           >{{ pt }}</el-tag>
         </div>
       </div>
@@ -146,8 +146,8 @@ watch(() => userStore.userId, (id) => { if (id) loadDashboard() }, { immediate: 
       <div class="section">
         <h3>快捷操作</h3>
         <div class="quick-actions">
-          <el-button @click="router.push({ path: '/chat', query: { prompt: '我想学习今天的薄弱知识点' } })">📚 针对薄弱点学习</el-button>
-          <el-button @click="router.push({ path: '/chat', query: { prompt: '帮我复习错题' } })">🔁 复习错题</el-button>
+          <el-button @click="router.push('/agent')">📚 针对薄弱点学习</el-button>
+          <el-button @click="router.push('/agent')">🔁 复习错题</el-button>
           <el-button @click="router.push('/mistakes')">📋 查看错题本</el-button>
           <el-button @click="router.push('/path')">🌭 专注淀粉肠</el-button>
         </div>

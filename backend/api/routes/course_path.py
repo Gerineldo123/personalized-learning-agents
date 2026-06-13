@@ -46,6 +46,25 @@ COURSE_PATH_PROMPT = """你是一个学习路径规划专家。根据学生在�
 只返回JSON，不要其他内容。"""
 
 
+@router.get("/list")
+def list_course_paths(user_id: str):
+    db = SessionLocal()
+    try:
+        paths = db.query(CoursePath).filter(
+            CoursePath.user_id == user_id,
+            CoursePath.status.in_(["active", "completed"]),
+        ).order_by(CoursePath.updated_at.desc()).all()
+        return {"items": [
+            {"id": p.id, "course_name": p.course_name, "steps": p.steps,
+             "total_steps": p.total_steps, "done_steps": p.done_steps,
+             "progress": p.progress, "status": p.status,
+             "created_at": p.created_at.isoformat() if p.created_at else None}
+            for p in paths
+        ]}
+    finally:
+        db.close()
+
+
 @router.get("")
 def get_course_path(user_id: str, course_name: str):
     db = SessionLocal()

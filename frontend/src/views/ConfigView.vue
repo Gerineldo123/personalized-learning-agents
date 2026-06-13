@@ -12,16 +12,19 @@ interface ApiForm {
 
 const mainForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
 const tavilyForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
+const pptForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
 const mainModels = ref<string[]>([])
 const loadingMain = ref(false)
 const savingMain = ref(false)
 const savingTavily = ref(false)
 const testingTavily = ref(false)
+const savingPpt = ref(false)
 const activeTab = ref('main')
 
 onMounted(() => {
   loadMainConfig()
   loadTavilyConfig()
+  loadPptConfig()
 })
 
 async function loadMainConfig() {
@@ -49,6 +52,26 @@ async function loadTavilyConfig() {
     const r = await api.get('/config/tavily')
     tavilyForm.value.api_key = ''
   } catch {}
+}
+
+async function loadPptConfig() {
+  try {
+    const r = await api.get('/config/ppt')
+    pptForm.value.base_url = r.data.base_url
+    pptForm.value.model = r.data.model
+  } catch {}
+}
+
+async function savePpt() {
+  savingPpt.value = true
+  try {
+    await api.post('/config/ppt', pptForm.value)
+    ElMessage.success('PPT 模型配置已保存')
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    savingPpt.value = false
+  }
 }
 
 async function saveTavily() {
@@ -162,6 +185,33 @@ async function fetchMainModels() {
             <el-form-item>
               <el-button type="primary" :loading="savingTavily" @click="saveTavily">保存配置</el-button>
               <el-button :loading="testingTavily" @click="testTavily" style="margin-left: 8px">测试连接</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="PPT 模型" name="ppt">
+        <el-card class="config-card">
+          <p class="desc">PPT 课件生成的专用大模型 API（可选）。不配置则使用主 API 生成 PPT。</p>
+
+          <el-form label-width="100px">
+            <el-form-item label="Base URL">
+              <el-input v-model="pptForm.base_url" placeholder="https://api.openai.com/v1" />
+            </el-form-item>
+            <el-form-item label="API Key">
+              <el-input v-model="pptForm.api_key" type="password" show-password placeholder="sk-..." />
+            </el-form-item>
+            <el-form-item label="API Secret">
+              <el-input v-model="pptForm.api_secret" type="password" show-password placeholder="如不需要可留空" />
+            </el-form-item>
+            <el-form-item label="模型">
+              <el-select v-model="pptForm.model" placeholder="手动输入或选择" style="width: 100%" allow-create filterable>
+                <el-option v-for="m in mainModels" :key="m" :label="m" :value="m" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item>
+              <el-button type="primary" :loading="savingPpt" @click="savePpt">保存配置</el-button>
             </el-form-item>
           </el-form>
         </el-card>

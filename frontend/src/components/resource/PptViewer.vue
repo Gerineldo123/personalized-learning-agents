@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 interface Slide {
   title: string
@@ -7,7 +7,7 @@ interface Slide {
   notes?: string
 }
 
-const props = defineProps<{ content: { title?: string; slides?: Slide[] } }>()
+const props = defineProps<{ content: { title?: string; slides?: Slide[]; pptx_file?: string; pptx_url?: string } }>()
 const currentSlide = ref(0)
 
 function prev() {
@@ -20,13 +20,37 @@ function next() {
 
 const totalSlides = () => props.content.slides?.length || 0
 const slide = () => props.content.slides?.[currentSlide.value]
+
+const downloadUrl = computed(() => {
+  const file = props.content.pptx_file || props.content.pptx_url || ''
+  if (!file) return ''
+  if (file.startsWith('/static/') || file.startsWith('http')) return file
+  return `/static/ppt/${file}`
+})
+
+function fullDownloadUrl(): string {
+  const url = downloadUrl.value
+  if (!url) return ''
+  if (url.startsWith('http')) return url
+  return `${window.location.protocol}//${window.location.host}${url}`
+}
 </script>
 
 <template>
   <div class="ppt-viewer">
     <div class="ppt-header">
       <h3>{{ content.title || '课件' }}</h3>
-      <span class="slide-count">{{ currentSlide + 1 }} / {{ totalSlides() }}</span>
+      <div class="ppt-header-right">
+        <span class="slide-count">{{ currentSlide + 1 }} / {{ totalSlides() }}</span>
+        <a
+          v-if="downloadUrl"
+          :href="fullDownloadUrl()"
+          class="download-btn"
+          download
+        >
+          ⬇ 下载PPT
+        </a>
+      </div>
     </div>
 
     <div class="slide-area">
@@ -67,9 +91,32 @@ const slide = () => props.content.slides?.[currentSlide.value]
 
 .ppt-header h3 { margin: 0; color: #303133; }
 
+.ppt-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 .slide-count {
   font-size: 14px;
   color: #909399;
+}
+
+.download-btn {
+  font-size: 13px;
+  font-weight: 500;
+  color: #67c23a;
+  text-decoration: none;
+  padding: 4px 12px;
+  border: 1px solid #67c23a;
+  border-radius: 4px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.download-btn:hover {
+  background: #67c23a;
+  color: #fff;
 }
 
 .slide-area {
