@@ -73,87 +73,17 @@ function fullDownloadUrl(): string {
 </template>
 
 <style scoped>
-.ppt-viewer {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  overflow: hidden;
-}
-
-.ppt-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 24px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #ebeef5;
-}
-
-.ppt-header h3 { margin: 0; color: #303133; }
-
-.ppt-header-right {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.slide-count {
-  font-size: 14px;
-  color: #909399;
-}
-
-.download-btn {
-  font-size: 13px;
-  font-weight: 500;
-  color: #67c23a;
-  text-decoration: none;
-  padding: 4px 12px;
-  border: 1px solid #67c23a;
-  border-radius: 4px;
-  transition: all 0.2s;
-  white-space: nowrap;
-}
-
-.download-btn:hover {
-  background: #67c23a;
-  color: #fff;
-}
-
-.slide-area {
-  min-height: 300px;
-  padding: 32px 40px;
-}
-
-.slide-title {
-  font-size: 20px;
-  color: #303133;
-  margin-bottom: 24px;
-}
-
-.slide-points {
-  padding-left: 20px;
-}
-
-.slide-points li {
-  margin-bottom: 12px;
-  line-height: 1.8;
-  color: #606266;
-}
-
-.slide-notes {
-  margin-top: 24px;
-  padding: 12px 16px;
-  background: #ecf5ff;
-  border-left: 3px solid #409eff;
-  color: #606266;
-  font-size: 13px;
-}
-
-.ppt-controls {
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-  padding: 16px;
-  border-top: 1px solid #ebeef5;
-}
+.ppt-viewer { background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--border-light); overflow: hidden; }
+.ppt-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; background: var(--bg-overlay); border-bottom: 1px solid var(--border-light); }
+.ppt-header h3 { margin: 0; }
+.ppt-header-right { display: flex; align-items: center; gap: 16px; }
+.slide-count { font-size: 14px; color: var(--text-secondary); }
+.download-btn { font-size: 13px; font-weight: 500; color: var(--color-success); text-decoration: none; padding: 4px 14px; border: 1px solid var(--color-success); border-radius: var(--radius-sm); transition: all var(--transition-fast); white-space: nowrap; }
+.download-btn:hover { background: var(--color-success); color: #fff; }
+.slide-area { min-height: 300px; padding: 32px 40px; }
+.slide-title { font-size: 20px; color: var(--text-primary); margin-bottom: 24px; font-weight: 700; }
+.slide-points { padding-left: 20px; }
+.slide-points li { margin-bottom: 12px; line-height: 1.8; color: var(--text-regular); }
+.slide-notes { margin-top: 24px; padding: 12px 16px; background: var(--color-primary-bg); border-left: 3px solid var(--color-primary); color: var(--text-regular); font-size: 13px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.ppt-controls { display: flex; justify-content: center; gap: 16px; padding: 16px; border-top: 1px solid var(--border-light); }
 </style>

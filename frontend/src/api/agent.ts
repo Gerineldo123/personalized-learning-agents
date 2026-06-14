@@ -16,6 +16,7 @@ export function agentExecuteStream(
   fileContent?: string,
   fileName?: string,
   history?: { role: string; content: string }[],
+  onToken?: (stepId: string, delta: string) => void,
 ): AbortController {
   const controller = new AbortController()
 
@@ -53,7 +54,9 @@ export function agentExecuteStream(
             const raw = dataLines.join('\n')
             try {
               const parsed = JSON.parse(raw)
-              if (parsed.type === 'step') {
+              if (parsed.type === 'token' && onToken) {
+                onToken(parsed.step_id, parsed.delta)
+              } else if (parsed.type === 'step') {
                 onStep(parsed as StepEvent)
               }
             } catch {

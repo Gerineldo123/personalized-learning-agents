@@ -13,6 +13,7 @@ from models.mistake_question import MistakeQuestion
 from models.course_path import CoursePath
 from models.focus import FocusSession
 from models.user import User
+from models.profile_history import ProfileHistory
 
 Base.metadata.create_all(bind=engine)
 

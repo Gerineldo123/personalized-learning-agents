@@ -3,10 +3,20 @@ import asyncio
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import StreamingResponse, JSONResponse
 from core.sse import sse_stream
+from core import sse_registry
 from schemas.agent import AgentExecuteRequest, UploadResponse
 from graph.subgraphs.agent_execute import agent_execute_graph
 
 router = APIRouter(prefix="/api/agent", tags=["Agent面板"])
+
+def _group_tokens(wf: list) -> dict:
+    """按 step_id 分组归集 token 事件，保持顺序"""
+    groups: dict = {}
+    for e in wf:
+        if e.get("type") == "token":
+            sid = e.get("step_id", "")
+            groups.setdefault(sid, []).append(e)
+    return groups
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 TEXT_EXTS = {".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml",
@@ -126,20 +136,61 @@ async def _make_state(task_description: str, user_id: str, file_content: str = "
 
 async def _agent_stream(task_description: str, user_id: str, file_content: str = "", file_name: str = "", history: list | None = None):
     state = await _make_state(task_description, user_id, file_content, file_name, history)
+
+    session_id = str(id(state))
+    sse_queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+    sse_registry.register(session_id, sse_queue)
+    state["_session_id"] = session_id
+    _DONE = object()
+
+    live_pushed: set = set()
+    token_counts: dict = {}  # step_id -> 已推送的 token 数量
+    step_pushed: set = set()  # (step_id, status) -> 已推送的 step 事件
+
+    async def run_graph():
+        try:
+            async for chunk in graph.astream(state, stream_mode="updates"):
+                for node_name, node_update in chunk.items():
+                    wf = node_update.get("workflow_outputs", None)
+                    if wf is None:
+                        continue
+                    # token 增量去重
+                    for sid, tokens in _group_tokens(wf).items():
+                        already = token_counts.get(sid, 0)
+                        for te in tokens[already:]:
+                            await sse_queue.put(te)
+                        token_counts[sid] = len(tokens)
+                    # 非 token 事件去重
+                    for event in wf:
+                        if event.get("type") == "token":
+                            continue
+                        step_type = event.get("step_type")
+                        key = (event.get("step_id"), event.get("status"), step_type)
+                        if key in step_pushed:
+                            continue
+                        step_pushed.add(key)
+                        if step_type == "skill":
+                            live_pushed.add((event.get("step_id"), event.get("status")))
+                        await sse_queue.put(event)
+        except Exception as e:
+            await sse_queue.put({"type": "error", "message": str(e)})
+        finally:
+            await sse_queue.put(_DONE)
+
     graph = agent_execute_graph
-    yielded = 0
+    graph_task = asyncio.create_task(run_graph())
 
     try:
-        async for chunk in graph.astream(state, stream_mode="updates"):
-            for node_name, node_update in chunk.items():
-                wf = node_update.get("workflow_outputs", None)
-                if wf is None:
-                    continue
-                for i in range(yielded, len(wf)):
-                    yield json.dumps(wf[i], ensure_ascii=False) + "\n"
-                    yielded = i + 1
-    except Exception as e:
-        yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+        while True:
+            item = await sse_queue.get()
+            if item is _DONE:
+                break
+            if isinstance(item, dict) and item.get("step_type") == "skill":
+                live_pushed.add((item.get("step_id"), item.get("status")))
+            yield json.dumps(item, ensure_ascii=False) + "\n"
+    finally:
+        graph_task.cancel()
+        sse_registry.unregister(session_id)
 
 
 @router.post("/execute/stream")

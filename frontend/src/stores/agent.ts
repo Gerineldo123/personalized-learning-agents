@@ -90,6 +90,15 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  function appendStepContent(taskId: number, stepId: string, delta: string) {
+    const task = tasks.value.find((t) => t.id === taskId)
+    if (!task) return
+    const step = task.steps.find((s) => s.stepId === stepId)
+    if (step) {
+      (step.data as any).content = ((step.data as any).content || '') + delta
+    }
+  }
+
   function cancelExecution() {
     if (abortController.value) {
       abortController.value.abort()
@@ -112,6 +121,7 @@ export const useAgentStore = defineStore('agent', () => {
     addStep,
     upsertStep,
     updateStep,
+    appendStepContent,
     cancelExecution,
     setAbortController,
   }

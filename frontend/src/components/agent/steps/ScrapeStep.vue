@@ -55,105 +55,25 @@ function toggleFullContent() {
 
 <style scoped>
 .step-card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   overflow: hidden;
-  transition: box-shadow 0.2s;
+  transition: all var(--transition-fast);
 }
-
-.step-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.step-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  gap: 8px;
-  user-select: none;
-}
-
-.step-header:hover {
-  background: #fafafa;
-}
-
-.step-icon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.step-title {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.step-arrow {
-  font-size: 12px;
-  color: #909399;
-  flex-shrink: 0;
-}
-
-.step-content {
-  padding: 0 14px 14px;
-  border-top: 1px solid #f0f0f0;
-}
-
-.scrape-url {
-  padding-top: 10px;
-  font-size: 13px;
-}
-
-.scrape-url a {
-  color: #409eff;
-  text-decoration: none;
-  word-break: break-all;
-}
-
-.scrape-url a:hover {
-  text-decoration: underline;
-}
-
-.scrape-preview {
-  margin-top: 10px;
-}
-
-.preview-label {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 6px;
-}
-
-.preview-text {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #333;
-  background: #fafafa;
-  padding: 10px;
-  border-radius: 6px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.toggle-btn {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #409eff;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0;
-}
-
-.toggle-btn:hover {
-  text-decoration: underline;
-}
+.step-card:hover { box-shadow: var(--shadow-sm); }
+.step-header { display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 8px; user-select: none; transition: background var(--transition-fast); }
+.step-header:hover { background: var(--bg-card-hover); }
+.step-icon { font-size: 18px; flex-shrink: 0; }
+.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-arrow { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+.step-content { padding: 0 14px 14px; border-top: 1px solid var(--border-light); }
+.scrape-url { padding-top: 10px; font-size: 13px; }
+.scrape-url a { color: var(--color-primary); text-decoration: none; word-break: break-all; }
+.scrape-url a:hover { text-decoration: underline; }
+.scrape-preview { margin-top: 10px; }
+.preview-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+.preview-text { font-size: 13px; line-height: 1.6; color: var(--text-regular); background: var(--bg-overlay); padding: 10px; border-radius: var(--radius-sm); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+.toggle-btn { margin-top: 6px; font-size: 12px; color: var(--color-primary); background: none; border: none; cursor: pointer; padding: 0; }
+.toggle-btn:hover { text-decoration: underline; }
 </style>

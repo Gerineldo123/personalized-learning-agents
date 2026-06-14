@@ -224,6 +224,15 @@ const isHtmlCode = computed(() =>
   ['html', 'htm'].includes((data.value.language || '').toLowerCase()) && !!data.value.content
 )
 const previewVisible = ref(false)
+const iframeHeight = ref(500)
+
+function onIframeLoad(e: Event) {
+  const iframe = e.target as HTMLIFrameElement
+  try {
+    const h = iframe.contentDocument?.documentElement?.scrollHeight
+    if (h && h > 100) iframeHeight.value = h
+  } catch {}
+}
 
 function toggleExpand() {
   expanded.value = !expanded.value
@@ -248,9 +257,17 @@ function toggleExpand() {
 
       <!-- 子步骤列表 -->
       <div v-if="data.sub_steps && data.sub_steps.length > 0" class="sub-steps">
-        <div v-for="(sub, i) in data.sub_steps" :key="i" class="sub-step-item">
-          {{ sub }}
-        </div>
+        <div
+          v-for="(sub, i) in data.sub_steps"
+          :key="i"
+          class="sub-step-item"
+          :class="{
+            'sub-step-running': sub.startsWith('⏳'),
+            'sub-step-success': sub.startsWith('✅'),
+            'sub-step-error': sub.startsWith('❌'),
+            'sub-step-warn': sub.startsWith('⚠️'),
+          }"
+        >{{ sub }}</div>
       </div>
 
       <!-- 视频卡片列表 -->
@@ -265,7 +282,7 @@ function toggleExpand() {
             class="video-card"
           >
             <div class="video-cover">
-              <img v-if="video.cover" :src="video.cover" :alt="video.title" loading="lazy" />
+              <img v-if="video.cover" :src="video.cover" :alt="video.title" loading="lazy" referrerpolicy="no-referrer" />
               <div v-else class="cover-placeholder">
                 <span>🎬</span>
               </div>
@@ -330,7 +347,7 @@ function toggleExpand() {
             {{ previewVisible ? '📄 显示代码' : '▶ 运行预览' }}
           </button>
         </div>
-        <iframe v-if="isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" />
+        <iframe v-if="isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" :style="{ height: iframeHeight + 'px' }" @load="onIframeLoad" />
         <pre v-else class="code-block"><code>{{ data.content }}</code></pre>
       </div>
 
@@ -354,467 +371,76 @@ function toggleExpand() {
 
 <style scoped>
 .step-card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   overflow: hidden;
-  transition: box-shadow 0.2s;
+  transition: all var(--transition-fast);
 }
-
-.step-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.step-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  gap: 8px;
-  user-select: none;
-}
-
-.step-header:hover {
-  background: #fafafa;
-}
-
-.step-icon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.step-title {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.step-arrow {
-  font-size: 12px;
-  color: #909399;
-  flex-shrink: 0;
-}
-
-.step-content {
-  padding: 0 14px 14px;
-  border-top: 1px solid #f0f0f0;
-}
-
-.skill-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  margin-top: 10px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  font-size: 12px;
-  color: #fff;
-}
-
-.badge-icon {
-  font-size: 14px;
-}
-
-.badge-name {
-  font-weight: 500;
-}
-
-.sub-steps {
-  margin-top: 10px;
-  padding: 8px 12px;
-  background: #f5f7fa;
-  border-radius: 6px;
-}
-
-.sub-step-item {
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.8;
-  padding: 2px 0;
-}
-
-.skill-content {
-  margin-top: 10px;
-}
-
-/* 视频卡片网格 */
-.video-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.video-card {
-  display: block;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 10px;
-  overflow: hidden;
-  text-decoration: none;
-  color: inherit;
-  transition: all 0.25s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-}
-
-.video-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  border-color: #409eff;
-}
-
-.video-cover {
-  position: relative;
-  width: 100%;
-  padding-top: 56.25%; /* 16:9 */
-  background: #f0f2f5;
-  overflow: hidden;
-}
-
-.video-cover img {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 0.3s ease;
-}
-
-.video-card:hover .video-cover img {
-  transform: scale(1.05);
-}
-
-.cover-placeholder {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  font-size: 36px;
-}
-
-.video-duration {
-  position: absolute;
-  bottom: 6px;
-  right: 6px;
-  background: rgba(0, 0, 0, 0.78);
-  color: #fff;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Menlo', 'Consolas', monospace;
-  letter-spacing: 0.5px;
-}
-
-.video-info {
-  padding: 10px 12px 12px;
-}
-
-.video-title {
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: #303133;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 8px;
-}
-
-.video-card:hover .video-title {
-  color: #409eff;
-}
-
-.video-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: #909399;
-  flex-wrap: wrap;
-}
-
-.meta-author {
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-  color: #606266;
-}
-
-.meta-play,
-.meta-danmaku {
-  white-space: nowrap;
-}
-
-.mindmap-chart {
-  width: 100%;
-  height: 500px;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  background: #fafbfc;
-}
-
-.text-content {
-  font-size: 13px;
-  line-height: 1.6;
-  color: #333;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.code-block {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.code-block code {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-}
-
-.code-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  background: #2d2d3f;
-  border-radius: 6px 6px 0 0;
-}
-
-.code-lang-tag {
-  font-size: 11px;
-  color: #888;
-}
-
-.preview-btn {
-  font-size: 12px;
-  padding: 3px 10px;
-  border: 1px solid #67c23a;
-  border-radius: 4px;
-  background: transparent;
-  color: #67c23a;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.preview-btn:hover {
-  background: #67c23a;
-  color: #fff;
-}
-
-.html-preview {
-  width: 100%;
-  height: 520px;
-  border: 1px solid #e4e7ed;
-  border-top: none;
-  background: #fff;
-  display: block;
-  border-radius: 0 0 6px 6px;
-}
-
-.json-block {
-  background: #f8f9fa;
-  color: #333;
-  padding: 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  overflow-x: auto;
-  max-height: 400px;
-  overflow-y: auto;
-  border: 1px solid #e4e7ed;
-}
-
-.json-block code {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-}
-
-/* Markdown 渲染样式 */
-.markdown-body {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #333;
-  max-height: 500px;
-  overflow-y: auto;
-}
-
-.markdown-body :deep(h1) {
-  font-size: 20px;
-  margin: 16px 0 10px;
-  padding-bottom: 6px;
-  border-bottom: 2px solid #409eff;
-  color: #303133;
-}
-
-.markdown-body :deep(h2) {
-  font-size: 17px;
-  margin: 14px 0 8px;
-  padding-left: 10px;
-  border-left: 3px solid #409eff;
-  color: #303133;
-}
-
-.markdown-body :deep(h3) {
-  font-size: 15px;
-  margin: 10px 0 6px;
-  color: #606266;
-}
-
-.markdown-body :deep(h4) {
-  font-size: 13px;
-  margin: 8px 0 4px;
-  color: #909399;
-  font-weight: 500;
-}
-
-.markdown-body :deep(p) {
-  margin: 4px 0;
-}
-
-.markdown-body :deep(ul), .markdown-body :deep(ol) {
-  padding-left: 20px;
-  margin: 6px 0;
-}
-
-.markdown-body :deep(li) {
-  margin: 2px 0;
-}
-
-.markdown-body :deep(code) {
-  background: #f5f7fa;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: 'Menlo', 'Consolas', monospace;
-  font-size: 12px;
-}
-
-.markdown-body :deep(pre) {
-  background: #1e1e2e;
-  padding: 12px;
-  border-radius: 6px;
-  overflow-x: auto;
-}
-
-.markdown-body :deep(pre code) {
-  background: none;
-  color: #cdd6f4;
-  padding: 0;
-}
-
-@media (max-width: 600px) {
-  .video-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* PPT 预览样式 */
-.ppt-preview {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #fff;
-}
-
-.ppt-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: #f5f7fa;
-  border-bottom: 1px solid #ebeef5;
-  gap: 12px;
-}
-
-.ppt-page-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #303133;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ppt-page-count {
-  font-size: 13px;
-  color: #909399;
-  white-space: nowrap;
-}
-
-.ppt-download-btn {
-  font-size: 13px;
-  font-weight: 500;
-  color: #409eff;
-  text-decoration: none;
-  white-space: nowrap;
-  padding: 4px 12px;
-  border: 1px solid #409eff;
-  border-radius: 4px;
-  transition: all 0.2s;
-}
-
-.ppt-download-btn:hover {
-  background: #409eff;
-  color: #fff;
-}
-
-.ppt-slide-area {
-  min-height: 250px;
-  padding: 28px 36px;
-  background: #fff;
-}
-
-.ppt-slide-inner {
-  max-width: 800px;
-}
-
-.ppt-slide-title {
-  font-size: 20px;
-  color: #1A365D;
-  margin: 0 0 20px 0;
-  padding-bottom: 12px;
-  border-bottom: 2px solid #409eff;
-}
-
-.ppt-slide-points {
-  padding-left: 20px;
-  margin: 0;
-}
-
-.ppt-slide-points li {
-  margin-bottom: 10px;
-  line-height: 1.7;
-  color: #333;
-  font-size: 15px;
-}
-
-.ppt-nav {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  padding: 12px;
-  border-top: 1px solid #ebeef5;
-  background: #fafafa;
-}
+.step-card:hover { box-shadow: var(--shadow-sm); }
+.step-header { display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 8px; user-select: none; transition: background var(--transition-fast); }
+.step-header:hover { background: var(--bg-card-hover); }
+.step-icon { font-size: 18px; flex-shrink: 0; }
+.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-arrow { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+.step-content { padding: 0 14px 14px; border-top: 1px solid var(--border-light); }
+.skill-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; margin-top: 10px; background: linear-gradient(135deg, var(--color-primary) 0%, #a78bfa 100%); border-radius: var(--radius-full); font-size: 12px; color: #fff; }
+.badge-icon { font-size: 14px; }
+.badge-name { font-weight: 500; }
+.sub-steps { margin-top: 10px; padding: 8px 12px; background: var(--bg-overlay); border-radius: var(--radius-sm); }
+.sub-step-item { font-size: 13px; color: var(--text-regular); line-height: 1.8; padding: 2px 0; }
+.sub-step-running { color: var(--color-warning, #e6a23c); font-style: italic; }
+.sub-step-success { color: var(--color-success, #67c23a); }
+.sub-step-error { color: var(--color-danger, #f56c6c); }
+.sub-step-warn { color: var(--color-warning, #e6a23c); }
+.skill-content { margin-top: 10px; }
+.video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.video-card { display: block; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; text-decoration: none; color: inherit; transition: all 0.25s ease; box-shadow: var(--shadow-xs); }
+.video-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--color-primary); }
+.video-cover { position: relative; width: 100%; padding-top: 56.25%; background: var(--bg-overlay); overflow: hidden; }
+.video-cover img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s ease; }
+.video-card:hover .video-cover img { transform: scale(1.05); }
+.cover-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--color-primary) 0%, #a78bfa 100%); font-size: 36px; }
+.video-duration { position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,0.78); color: #fff; font-size: 11px; padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); }
+.video-info { padding: 10px 12px 12px; }
+.video-title { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text-primary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; }
+.video-card:hover .video-title { color: var(--color-primary); }
+.video-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.meta-author { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text-regular); }
+.meta-play, .meta-danmaku { white-space: nowrap; }
+.mindmap-chart { width: 100%; height: 500px; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--bg-card); }
+.text-content { font-size: 13px; line-height: 1.6; color: var(--text-regular); white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; }
+.code-block { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.5; overflow-x: auto; max-height: 400px; overflow-y: auto; }
+.code-block code { font-family: var(--font-mono); }
+.code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #2d2d3f; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.code-lang-tag { font-size: 11px; color: #888; }
+.preview-btn { font-size: 12px; padding: 3px 10px; border: 1px solid var(--color-success); border-radius: var(--radius-sm); background: transparent; color: var(--color-success); cursor: pointer; transition: all var(--transition-fast); }
+.preview-btn:hover { background: var(--color-success); color: #fff; }
+.html-preview { width: 100%; min-height: 500px; border: 1px solid var(--border-light); border-top: none; background: #fff; display: block; border-radius: 0 0 var(--radius-sm) var(--radius-sm); transition: height 0.2s; }
+.json-block { background: var(--bg-overlay); color: var(--text-regular); padding: 12px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.5; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid var(--border-light); font-family: var(--font-mono); }
+.json-block code { font-family: var(--font-mono); }
+.markdown-body { font-size: 14px; line-height: 1.7; color: var(--text-regular); max-height: 500px; overflow-y: auto; }
+.markdown-body :deep(h1) { font-size: 20px; margin: 16px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--color-primary); color: var(--text-primary); }
+.markdown-body :deep(h2) { font-size: 17px; margin: 14px 0 8px; padding-left: 10px; border-left: 3px solid var(--color-primary); color: var(--text-primary); }
+.markdown-body :deep(h3) { font-size: 15px; margin: 10px 0 6px; color: var(--text-regular); }
+.markdown-body :deep(h4) { font-size: 13px; margin: 8px 0 4px; color: var(--text-secondary); font-weight: 500; }
+.markdown-body :deep(p) { margin: 4px 0; }
+.markdown-body :deep(ul), .markdown-body :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.markdown-body :deep(li) { margin: 2px 0; }
+.markdown-body :deep(code) { background: var(--bg-overlay); padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12px; }
+.markdown-body :deep(pre) { background: #1e1e2e; padding: 12px; border-radius: var(--radius-sm); overflow-x: auto; }
+.markdown-body :deep(pre code) { background: none; color: #cdd6f4; padding: 0; }
+.ppt-preview { border: 1px solid var(--border-light); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-card); }
+.ppt-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--bg-overlay); border-bottom: 1px solid var(--border-light); gap: 12px; }
+.ppt-page-title { font-size: 14px; font-weight: 500; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ppt-page-count { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+.ppt-download-btn { font-size: 13px; font-weight: 500; color: var(--color-primary); text-decoration: none; white-space: nowrap; padding: 4px 12px; border: 1px solid var(--color-primary); border-radius: var(--radius-sm); transition: all var(--transition-fast); }
+.ppt-download-btn:hover { background: var(--color-primary); color: #fff; }
+.ppt-slide-area { min-height: 250px; padding: 28px 36px; background: var(--bg-card); }
+.ppt-slide-inner { max-width: 800px; }
+.ppt-slide-title { font-size: 20px; color: var(--text-primary); margin: 0 0 20px 0; padding-bottom: 12px; border-bottom: 2px solid var(--color-primary); }
+.ppt-slide-points { padding-left: 20px; margin: 0; }
+.ppt-slide-points li { margin-bottom: 10px; line-height: 1.7; color: var(--text-regular); font-size: 15px; }
+.ppt-nav { display: flex; justify-content: center; gap: 12px; padding: 12px; border-top: 1px solid var(--border-light); background: var(--bg-overlay); }
+@media (max-width: 600px) { .video-grid { grid-template-columns: 1fr; } }
 </style>

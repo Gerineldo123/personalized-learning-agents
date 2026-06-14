@@ -6,6 +6,12 @@ from agents.tools import tavily_search
 from agents.skills import get_skill, get_all_skills, get_skills_description, SkillResult
 
 
+def _get_sse_queue(session_id: str):
+    """从全局队列字典取出 SSE 队列"""
+    from core.sse_registry import get
+    return get(session_id)
+
+
 async def _llm_stream(system_prompt: str, user_prompt: str):
     from core.llm_client import chat_completion
     from services.config_service import is_configured
@@ -97,7 +103,7 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
 
         async for token in _llm_stream(system, user):
             thinking_content += token
-            wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "data": {"content": thinking_content}})
+        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
 
         try:
             if "{" in thinking_content and "}" in thinking_content:
@@ -117,11 +123,11 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
         except Exception:
             pass
 
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "data": {"content": thinking_content}})
+        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
     else:
         thinking_content = f"分析任务：{user_message}"
         wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "data": {"content": thinking_content}})
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "data": {"content": thinking_content}})
+        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
 
     return {
         **state,
@@ -153,10 +159,15 @@ async def skills_node(state: AgentGraphState) -> AgentGraphState:
         "profile": state.get("profile"),
     }
 
+    # 取出 SSE 队列（由 _agent_stream 注入到 state）
+    sse_queue = _get_sse_queue(state.get("_session_id", ""))
+
     for skill_name in selected_skills:
         skill = get_skill(skill_name)
         if not skill:
             continue
+        # 将队列绑定到 skill 实例，emit_step 会用它实时推送
+        skill._sse_queue = sse_queue
         try:
             result = await skill.execute(context, wf)
             skill_results[skill_name] = result.data if result.success else {"error": result.error}
@@ -172,6 +183,8 @@ async def skills_node(state: AgentGraphState) -> AgentGraphState:
                 context["all_modules_data"] = ad
         except Exception as e:
             skill_results[skill_name] = {"error": str(e)}
+        finally:
+            skill._sse_queue = None
 
     ad["skill_results"] = skill_results
 
@@ -235,16 +248,16 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 - 涉及视频学习 → [建议] 搜索视频【主题】
 没有合适情况则不写建议。"""
 
-        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "AI 回答", "data": {"content": ""}})
+        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": ""}})
         final_md = ""
         if use_llm:
             async for token in _llm_stream("你是个性化学习AI助手，根据学生画像给出精准、有深度的回答。", direct_prompt):
                 final_md += token
-                wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "AI 回答", "data": {"content": final_md}})
+                wf.append({"type": "token", "step_id": step_id, "delta": token})
         else:
             final_md = f"**{user_message}**\n\n（LLM 未配置，无法回答）"
 
-        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "AI 回答", "data": {"content": final_md}})
+        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": final_md}})
         return {**state, "workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
 
     # ── 有 skill 模式：整合各 skill 结果 ──
@@ -277,11 +290,25 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                     quiz_text += f"\n... 共 {len(questions)} 题"
                 skill_summary_parts.append(quiz_text)
             elif skill_name == "video_search" and sdata.get("videos"):
-                video_text = "\n### 推荐视频\n"
-                for v in sdata["videos"][:3]:
-                    title = v.get("title", "").replace('<em class="keyword">', "").replace("</em>", "")
-                    video_text += f"\n- **[{title}]({v.get('url', '#')})** {v.get('author', '')} {v.get('play_count', '')}\n"
-                skill_summary_parts.append(video_text)
+                import html as _html
+                video_html = '\n<div class="video-results">\n<div class="video-results-header">🎬 为你推荐的教学视频</div>\n'
+                for v in sdata["videos"][:4]:
+                    title = _html.escape(v.get("title", "").replace('<em class="keyword">', "").replace("</em>", ""))
+                    author = _html.escape(v.get("author", ""))
+                    play = _html.escape(str(v.get("play_count", "")))
+                    duration = _html.escape(str(v.get("duration", "")))
+                    url = v.get("url", "#")
+                    cover = v.get("cover", "")
+                    cover_html = f'<img src="{_html.escape(cover)}" alt="{title}" loading="lazy" referrerpolicy="no-referrer" />' if cover else '<span>🎬</span>'
+                    video_html += f'''<a class="video-card" href="{_html.escape(url)}" target="_blank" rel="noopener">
+  <div class="video-cover">{cover_html}<span class="video-duration">{duration}</span></div>
+  <div class="video-info">
+    <div class="video-title" title="{title}">{title}</div>
+    <div class="video-meta"><span class="meta-author">{author}</span><span class="meta-play">▶ {play}</span></div>
+  </div>
+</a>\n'''
+                video_html += '</div>'
+                skill_summary_parts.append(video_html)
 
     llm_summary = ""
     if use_llm and has_search:
@@ -310,10 +337,10 @@ Tavily摘要：{answer}
 - 系统学习 → [建议] 系统学习【主题】  分析错题 → [建议] 分析错题
 - 学习评估 → [建议] 学习评估  视频学习 → [建议] 搜索视频【主题】"""
 
-        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "汇总分析报告", "data": {"content": result_header}})
+        wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "汇总分析报告", "agent_name": "汇总智能体", "data": {"content": result_header}})
         async for token in _llm_stream("你是数据分析专家，基于搜索结果进行分析并报告。", summary_prompt):
             llm_summary += token
-            wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "汇总分析报告", "data": {"content": result_header + "\n\n### AI 分析\n" + llm_summary}})
+            wf.append({"type": "token", "step_id": step_id, "delta": token})
 
     final_md = result_header
     if llm_summary:
@@ -331,7 +358,7 @@ Tavily摘要：{answer}
 
     final_md += f"\n### 执行统计\n| 步骤 | 状态 | 说明 |\n|------|------|------|\n{stats_rows}"
 
-    wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "汇总分析报告", "data": {"content": final_md}})
+    wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "汇总分析报告", "agent_name": "汇总智能体", "data": {"content": final_md}})
     return {**state, "workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
 
 

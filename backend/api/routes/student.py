@@ -39,12 +39,39 @@ IMPACTS = [
 
 @router.get("")
 def get_profile(user_id: str, db: Session = Depends(get_db)):
+    from models.profile_history import ProfileHistory
     profile = db.query(StudentProfile).filter(
         StudentProfile.user_id == user_id
     ).first()
     if not profile:
         return {"found": False, "user_id": user_id}
-    return {"found": True, "profile": ProfileResponse.model_validate(profile).model_dump()}
+
+    p = ProfileResponse.model_validate(profile).model_dump()
+
+    # 画像健全度
+    checks = [
+        p.get("major"), p.get("grade") or p.get("education_level"),
+        p.get("learning_goal"), p.get("cognitive_style"),
+        bool(p.get("weak_points")), bool(p.get("preferred_format")),
+        bool(p.get("weak_courses")),
+        bool(p.get("ability_scores") and any(v for v in p["ability_scores"].values())),
+    ]
+    completeness = round(sum(1 for c in checks if c) / len(checks) * 100)
+
+    # 历史快照（最近30条）
+    history = db.query(ProfileHistory).filter(
+        ProfileHistory.user_id == user_id
+    ).order_by(ProfileHistory.created_at.asc()).limit(30).all()
+    history_list = [
+        {
+            "trigger": h.trigger,
+            "snapshot": h.snapshot,
+            "created_at": h.created_at.isoformat() if h.created_at else None,
+        }
+        for h in history
+    ]
+
+    return {"found": True, "profile": p, "completeness": completeness, "history": history_list}
 
 
 @router.delete("")
@@ -650,6 +677,15 @@ async def rebuild_profile(user_id: str):
         }
     finally:
         db.close()
+
+@router.post("/run")
+async def run_profile_agent(user_id: str, message: str):
+    """通过自然语言对话触发画像智能体更新"""
+    agent = ProfileAgent()
+    state = AgentState(user_id=user_id, user_message=message)
+    await agent.process(state)
+    return {"ok": True}
+
 
 @router.post("")
 def create_or_update_profile(req: ProfileCreate, user_id: str, db: Session = Depends(get_db)):

@@ -66,17 +66,13 @@ onUnmounted(() => {
 
 <style scoped>
 .step-card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   overflow: hidden;
-  transition: box-shadow 0.2s;
+  transition: all var(--transition-fast);
 }
-
-.step-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
+.step-card:hover { box-shadow: var(--shadow-sm); }
 .step-header {
   display: flex;
   align-items: center;
@@ -84,72 +80,25 @@ onUnmounted(() => {
   cursor: pointer;
   gap: 8px;
   user-select: none;
+  transition: background var(--transition-fast);
 }
-
-.step-header:hover {
-  background: #fafafa;
-}
-
-.step-icon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.step-title {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.step-status {
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.step-status.running {
-  color: #409eff;
-}
-
-.step-status.completed {
-  color: #67c23a;
-}
-
-.step-status.error {
-  color: #f56c6c;
-}
-
-.step-arrow {
-  font-size: 12px;
-  color: #909399;
-  flex-shrink: 0;
-}
-
-.step-content {
-  padding: 0 14px 14px;
-  border-top: 1px solid #f0f0f0;
-}
-
+.step-header:hover { background: var(--bg-card-hover); }
+.step-icon { font-size: 18px; flex-shrink: 0; }
+.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-status { font-size: 12px; flex-shrink: 0; }
+.step-status.running { color: var(--color-primary); }
+.step-status.completed { color: var(--color-success); }
+.step-status.error { color: var(--color-danger); }
+.step-arrow { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+.step-content { padding: 0 14px 14px; border-top: 1px solid var(--border-light); }
 .typewriter {
   padding-top: 10px;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #333;
+  color: var(--text-regular);
 }
-
-.cursor-blink {
-  animation: blink 1s step-end infinite;
-  color: #409eff;
-  font-weight: bold;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
+.cursor-blink { animation: blink 1s step-end infinite; color: var(--color-primary); font-weight: bold; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 </style>

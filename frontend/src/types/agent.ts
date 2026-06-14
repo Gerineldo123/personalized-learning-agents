@@ -47,6 +47,7 @@ export interface AgentStep {
   stepType: StepType
   status: StepStatus
   title: string
+  agentName?: string
   data: ThinkingData | SearchData | MemoryData | CodeData | ScrapeData | SkillData | ResultData
   expanded: boolean
   timestamp: number
@@ -66,6 +67,7 @@ export interface StepEvent {
   step_id: string
   status: StepStatus
   title: string
+  agent_name?: string
   data: Record<string, unknown>
 }
 

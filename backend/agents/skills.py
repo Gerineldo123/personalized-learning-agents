@@ -5,6 +5,7 @@ Skill 系统：为 Agent 面板提供可插拔的能力模块。
 Skill 执行结果通过 SSE 事件流实时推送至前端。
 """
 
+import asyncio
 import json
 import uuid
 from abc import ABC, abstractmethod
@@ -41,21 +42,35 @@ class BaseSkill(ABC):
         """
         ...
 
+    _SKILL_AGENT_NAMES: dict = {
+        "deep_search": "搜索智能体", "code_analysis": "代码智能体",
+        "mindmap_gen": "导图智能体", "quiz_gen": "出题智能体", "video_search": "视频智能体",
+    }
+
     def emit_step(self, workflow_outputs: list, status: str, title: str, data: dict, step_id: str | None = None) -> str:
-        """向 workflow_outputs 追加一个 skill step 事件"""
+        """向 workflow_outputs 追加一个 skill step 事件，并实时推送到 SSE 队列"""
         sid = step_id or str(uuid.uuid4())[:8]
-        workflow_outputs.append({
+        event = {
             "type": "step",
             "step_type": "skill",
             "step_id": sid,
             "status": status,
             "title": title,
+            "agent_name": self._SKILL_AGENT_NAMES.get(self.name, self.name),
             "data": {
                 "skill_name": self.name,
                 "skill_icon": self.icon,
                 **data,
             },
-        })
+        }
+        workflow_outputs.append(event)
+        # 实时推送：如果 context 中有 SSE 队列，立即 put
+        q: asyncio.Queue | None = getattr(self, "_sse_queue", None)
+        if q is not None:
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                pass
         return sid
 
 
@@ -108,17 +123,17 @@ class DeepSearchSkill(BaseSkill):
         search_keywords = ad.get("search_keywords", user_message)
 
         step_id = self.emit_step(workflow_outputs, "running", f"深度搜索: {search_keywords[:30]}", {
-            "content": f"正在进行多轮搜索: {search_keywords}",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 第一轮关键词搜索中..."],
         })
 
         # 第一轮：关键词搜索
         result1 = await tavily_search(search_keywords, max_results=5)
-        sub_steps = [f"✅ 关键词搜索完成，获取 {len(result1.get('results', []))} 条结果"]
+        sub_steps = [f"✅ 关键词搜索完成，获取 {len(result1.get('results', []))} 条结果", "⏳ 第二轮补充搜索中..."]
+        self.emit_step(workflow_outputs, "running", f"深度搜索: {search_keywords[:30]}", {"sub_steps": sub_steps}, step_id)
 
         # 第二轮：原始问题搜索
         result2 = await tavily_search(user_message, max_results=3)
-        sub_steps.append(f"✅ 补充搜索完成，获取 {len(result2.get('results', []))} 条结果")
+        sub_steps[-1] = f"✅ 补充搜索完成，获取 {len(result2.get('results', []))} 条结果"
 
         # 合并去重
         seen_urls = set()
@@ -134,11 +149,13 @@ class DeepSearchSkill(BaseSkill):
         for r in all_results[:2]:
             url = r.get("url", "")
             if url:
+                sub_steps.append(f"⏳ 抓取网页: {r.get('title', url)[:40]}...")
+                self.emit_step(workflow_outputs, "running", f"深度搜索: {search_keywords[:30]}", {"sub_steps": sub_steps}, step_id)
                 scrape_result = await web_scrape(url)
                 content = scrape_result.get("content", "")
                 if content and len(content) > 50:
                     scraped_contents.append({"url": url, "title": r.get("title", ""), "content": content[:1000]})
-                    sub_steps.append(f"✅ 抓取网页: {r.get('title', url)[:40]}")
+                    sub_steps[-1] = f"✅ 抓取完成: {r.get('title', url)[:40]}"
 
         answer = result1.get("answer", "") or result2.get("answer", "")
 
@@ -174,8 +191,7 @@ class CodeAnalysisSkill(BaseSkill):
         search_answer = ad.get("search_result", {}).get("answer", "") if ad.get("search_result") else ""
 
         step_id = self.emit_step(workflow_outputs, "running", f"代码生成 ({code_lang})", {
-            "content": f"正在生成代码: {code_desc[:50]}",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成代码..."],
         })
 
         system_prompt = "你是一个代码专家。根据任务需求生成高质量、可运行的代码。包含详细注释说明逻辑。"
@@ -228,8 +244,7 @@ class MindmapSkill(BaseSkill):
         user_message = context.get("user_message", "")
 
         step_id = self.emit_step(workflow_outputs, "running", "生成思维导图", {
-            "content": f"正在为「{user_message[:30]}」生成径向树图...",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成知识结构..."],
         })
 
         prompt = f"""你是大学学科知识体系专家。请根据主题生成一份用于径向树图(Radial Tree)可视化的JSON知识结构。
@@ -311,8 +326,7 @@ class ArticleGenSkill(BaseSkill):
         user_id = context.get("user_id", "")
 
         step_id = self.emit_step(workflow_outputs, "running", "生成学习文章", {
-            "content": f"正在为「{user_message[:30]}」生成文章...",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成文章..."],
         })
 
         try:
@@ -363,8 +377,7 @@ class CodeGenSkill(BaseSkill):
         is_viz = any(kw in user_message.lower() for kw in VIZ_KEYWORDS)
 
         step_id = self.emit_step(workflow_outputs, "running", "生成代码案例", {
-            "content": f"正在为「{user_message[:30]}」生成{'可视化动画' if is_viz else '代码案例'}...",
-            "sub_steps": [],
+            "sub_steps": [f"⏳ 正在生成{'可视化动画' if is_viz else '代码案例'}..."],
         })
 
         try:
@@ -382,7 +395,11 @@ class CodeGenSkill(BaseSkill):
 - 提供"下一步"/"上一步"/"自动播放"控制按钮
 - 界面美观，关键步骤有文字说明
 - 不依赖外部CDN，所有代码内嵌
-- 只输出HTML代码，不要Markdown包裹"""
+
+严格输出规则（违反将导致错误）：
+- 直接输出HTML代码，以<!DOCTYPE html>或<html开头
+- 以</html>结尾，之后不得有任何内容
+- 禁止输出任何Markdown、注释、说明、建议或总结文字"""
 
                 resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3)
                 content = resp.choices[0].message.content.strip()
@@ -391,6 +408,11 @@ class CodeGenSkill(BaseSkill):
                     content = content.strip("`").strip()
                     if content.startswith("html"):
                         content = content[4:].strip()
+                # 截断 </html> 之后追加的 markdown 说明文字
+                import re as _re
+                _m = _re.search(r'</html\s*>', content, _re.IGNORECASE)
+                if _m:
+                    content = content[:_m.end()].strip()
 
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,
@@ -444,8 +466,7 @@ class QuizGenSkill(BaseSkill):
         ad = context.get("all_modules_data", {})
 
         step_id = self.emit_step(workflow_outputs, "running", "生成练习题", {
-            "content": f"正在为「{user_message[:30]}」生成练习题...",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成练习题..."],
         })
 
         try:
@@ -496,8 +517,7 @@ class PracticeCaseSkill(BaseSkill):
         profile = context.get("profile")
 
         step_id = self.emit_step(workflow_outputs, "running", "生成实操案例", {
-            "content": f"正在为「{user_message[:30]}」生成实操案例...",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成实操案例..."],
         })
 
         profile_text = ""
@@ -554,6 +574,7 @@ class PracticeCaseSkill(BaseSkill):
                 from core.database import SessionLocal
                 from models.resource import LearningResource
                 from services.rag_service import index_resource
+                self.emit_step(workflow_outputs, "running", "生成实操案例", {"sub_steps": ["✅ 案例内容生成完成", "⏳ 正在保存到资源库..."]}, step_id)
                 db = SessionLocal()
                 try:
                     title = f"实操案例：{user_message[:40]}"
@@ -570,7 +591,7 @@ class PracticeCaseSkill(BaseSkill):
 
             self.emit_step(workflow_outputs, "completed", "生成实操案例", {
                 "content": content,
-                "sub_steps": ["✅ 实操案例生成完成"],
+                "sub_steps": ["✅ 案例内容生成完成", "✅ 已保存到资源库"],
                 **({"resource_db_id": resource_db_id, "resource_type": "article"} if resource_db_id else {}),
             }, step_id)
 
@@ -630,7 +651,9 @@ class VideoSearchSkill(BaseSkill):
 
         videos = []
         try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                # 先访问主页获取 buvid cookie，否则搜索接口返回空 body
+                await client.get("https://www.bilibili.com/")
                 r = await client.get(BILI_SEARCH_API, params={
                     "search_type": "video", "keyword": search_keywords, "page": 1,
                 })
@@ -738,8 +761,7 @@ class PptGenSkill(BaseSkill):
         user_id = context.get("user_id", "")
 
         step_id = self.emit_step(workflow_outputs, "running", "生成PPT课件", {
-            "content": f"正在为「{user_message[:30]}」生成PPT课件...",
-            "sub_steps": [],
+            "sub_steps": ["⏳ 正在调用模型生成课件内容..."],
         })
 
         # 构建学生画像文本
@@ -780,6 +802,7 @@ class PptGenSkill(BaseSkill):
                 ppt_data = {"title": user_message, "slides": []}
 
             sub_steps = [f"✅ LLM生成完成，共 {len(ppt_data.get('slides', []))} 页"]
+            self.emit_step(workflow_outputs, "running", "生成PPT课件", {"sub_steps": sub_steps + ["⏳ 正在生成 .pptx 文件..."]}, step_id)
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成PPT课件", {
                 "content": f"生成失败: {str(e)}",
@@ -793,9 +816,10 @@ class PptGenSkill(BaseSkill):
         try:
             pptx_filename = self._generate_pptx_file(ppt_data)
             pptx_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "static", "ppt", pptx_filename)
-            sub_steps.append(f"✅ .pptx 文件已生成: {pptx_filename}")
+            sub_steps.append(f"✅ .pptx 文件已生成")
         except Exception as e:
             sub_steps.append(f"⚠️ .pptx 生成失败: {str(e)}")
+        self.emit_step(workflow_outputs, "running", "生成PPT课件", {"sub_steps": sub_steps + ["⏳ 正在保存到资源库..."]}, step_id)
 
         # 3. 保存到数据库
         db_id = None

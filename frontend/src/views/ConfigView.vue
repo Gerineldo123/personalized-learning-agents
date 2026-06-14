@@ -222,7 +222,8 @@ async function fetchMainModels() {
 
 <style scoped>
 .config-view { max-width: 700px; }
-.page-title { margin-bottom: 24px; color: #303133; }
-.config-card { margin-top: 16px; }
-.desc { color: #909399; font-size: 13px; margin-bottom: 20px; }
+.page-title { margin-bottom: 28px; }
+.config-card { margin-top: 16px; border-radius: var(--radius-md); }
+.desc { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; line-height: 1.6; }
+.desc a { color: var(--color-primary); font-weight: 500; }
 </style>

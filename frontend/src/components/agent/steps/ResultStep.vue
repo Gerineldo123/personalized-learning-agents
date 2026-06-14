@@ -147,9 +147,11 @@ async function explainTerm(term: string, x: number, y: number) {
 <template>
   <div class="step-card result-step" :class="{ expanded }">
     <div class="step-header" @click="toggleExpand">
-      <span class="step-icon">✅</span>
+      <span class="step-icon">{{ step.status === 'running' ? '⏳' : '✅' }}</span>
       <span class="step-title">{{ step.title }}</span>
-      <span class="step-status done">完成</span>
+      <span class="step-status" :class="step.status === 'running' ? 'running' : 'done'">
+        {{ step.status === 'running' ? '生成中...' : '完成' }}
+      </span>
       <span class="step-arrow">{{ expanded ? '▾' : '▸' }}</span>
     </div>
     <div v-show="expanded" class="step-content">
@@ -160,6 +162,7 @@ async function explainTerm(term: string, x: number, y: number) {
       </div>
 
       <div class="markdown-body" @click="handleClick" v-html="renderedHtml"></div>
+      <span v-if="step.status === 'running'" class="stream-cursor">▌</span>
     </div>
 
     <!-- 术语释义弹窗 -->
@@ -184,253 +187,99 @@ async function explainTerm(term: string, x: number, y: number) {
 
 <style scoped>
 .step-card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #67c23a;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-success);
   overflow: hidden;
-  transition: box-shadow 0.2s;
+  transition: all var(--transition-fast);
 }
-
-.step-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.step-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  gap: 8px;
-  user-select: none;
-  background: #f0f9eb;
-}
-
-.step-header:hover {
-  background: #e8f5e0;
-}
-
-.step-icon {
-  font-size: 18px;
-  flex-shrink: 0;
-}
-
-.step-title {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.step-status {
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.step-status.done {
-  color: #67c23a;
-}
-
-.step-arrow {
-  font-size: 12px;
-  color: #909399;
-  flex-shrink: 0;
-}
-
-.step-content {
-  padding: 14px;
-  border-top: 1px solid #e8f5e0;
-}
-
-.result-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.action-btn {
-  font-size: 12px;
-  padding: 4px 10px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  background: #fff;
-  color: #606266;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.action-btn:hover {
-  border-color: #409eff;
-  color: #409eff;
-  background: #ecf5ff;
-}
-
-.markdown-body {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #333;
-}
-
-.markdown-body :deep(h2) {
-  font-size: 18px;
-  margin: 14px 0 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid #eee;
-}
-
-.markdown-body :deep(h3) {
-  font-size: 15px;
-  margin: 12px 0 6px;
-}
-
-.markdown-body :deep(p) {
-  margin: 6px 0;
-}
-
-.markdown-body :deep(ul), .markdown-body :deep(ol) {
-  padding-left: 20px;
-  margin: 6px 0;
-}
-
-.markdown-body :deep(li) {
-  margin: 3px 0;
-}
-
-.markdown-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 10px 0;
-}
-
-.markdown-body :deep(th), .markdown-body :deep(td) {
-  border: 1px solid #e4e7ed;
-  padding: 6px 12px;
-  text-align: left;
-  font-size: 13px;
-}
-
-.markdown-body :deep(th) {
-  background: #f5f7fa;
-  font-weight: 500;
-}
-
-.markdown-body :deep(code) {
-  background: #f5f7fa;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: 'Menlo', 'Consolas', monospace;
-  font-size: 12px;
-}
-
-.markdown-body :deep(pre) {
-  background: #1e1e2e;
-  padding: 12px;
-  border-radius: 6px;
-  overflow-x: auto;
-}
-
-.markdown-body :deep(pre code) {
-  background: none;
-  color: #cdd6f4;
-  padding: 0;
-}
-
-.markdown-body :deep(blockquote) {
-  border-left: 3px solid #409eff;
-  padding-left: 12px;
-  color: #606266;
-  margin: 8px 0;
-}
-
-/* 术语高亮标签 */
-.markdown-body :deep(.term-highlight) {
-  background: linear-gradient(135deg, #e8f4fd 0%, #d6eaf8 100%);
-  color: #1a73e8;
-  padding: 1px 6px;
-  border-radius: 3px;
-  cursor: pointer;
-  font-weight: 500;
-  border-bottom: 1px dashed #1a73e8;
-  transition: all 0.2s;
-}
-
-.markdown-body :deep(.term-highlight:hover) {
-  background: #1a73e8;
-  color: #fff;
-  border-bottom-color: transparent;
-}
+.step-card:hover { box-shadow: var(--shadow-sm); }
+.step-header { display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 8px; user-select: none; background: var(--color-success-bg); transition: background var(--transition-fast); }
+.step-header:hover { background: rgba(82,196,26,0.14); }
+.step-icon { font-size: 18px; flex-shrink: 0; }
+.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-status { font-size: 12px; flex-shrink: 0; }
+.step-status.done { color: var(--color-success); }
+.step-status.running { color: var(--color-primary); }
+.stream-cursor { display: inline-block; animation: blink 0.8s step-end infinite; color: var(--color-primary); font-weight: bold; margin-left: 2px; }
+@keyframes blink { 50% { opacity: 0; } }
+.step-arrow { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
+.step-content { padding: 14px; border-top: 1px solid rgba(82,196,26,0.2); }
+.result-actions { display: flex; gap: 8px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border-light); }
+.action-btn { font-size: 12px; padding: 5px 12px; border: 1px solid var(--border-base); border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-regular); cursor: pointer; transition: all var(--transition-fast); }
+.action-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-bg); }
+.markdown-body { font-size: 14px; line-height: 1.7; color: var(--text-regular); }
+.markdown-body :deep(h2) { font-size: 18px; margin: 14px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-light); }
+.markdown-body :deep(h3) { font-size: 15px; margin: 12px 0 6px; }
+.markdown-body :deep(p) { margin: 6px 0; }
+.markdown-body :deep(ul), .markdown-body :deep(ol) { padding-left: 20px; margin: 6px 0; }
+.markdown-body :deep(li) { margin: 3px 0; }
+.markdown-body :deep(table) { border-collapse: collapse; width: 100%; margin: 10px 0; }
+.markdown-body :deep(th), .markdown-body :deep(td) { border: 1px solid var(--border-light); padding: 6px 12px; text-align: left; font-size: 13px; }
+.markdown-body :deep(th) { background: var(--bg-overlay); font-weight: 500; }
+.markdown-body :deep(code) { background: var(--bg-overlay); padding: 2px 6px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12px; }
+.markdown-body :deep(pre) { background: #1e1e2e; padding: 12px; border-radius: var(--radius-sm); overflow-x: auto; }
+.markdown-body :deep(pre code) { background: none; color: #cdd6f4; padding: 0; }
+.markdown-body :deep(blockquote) { border-left: 3px solid var(--color-primary); padding-left: 12px; color: var(--text-regular); margin: 8px 0; }
+.markdown-body :deep(.term-highlight) { background: linear-gradient(135deg, var(--color-primary-bg), rgba(167,139,250,0.1)); color: var(--color-primary); padding: 1px 6px; border-radius: var(--radius-sm); cursor: pointer; font-weight: 500; border-bottom: 1px dashed var(--color-primary); transition: all var(--transition-fast); }
+.markdown-body :deep(.term-highlight:hover) { background: var(--color-primary); color: #fff; border-bottom-color: transparent; }
 </style>
 
-<!-- 术语弹窗全局样式（非scoped） -->
 <style>
 .term-popover {
   position: fixed;
   z-index: 9999;
   min-width: 240px;
   max-width: 360px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  background: var(--bg-elevated, #fff);
+  border: 1px solid var(--border-light, #e4e7ed);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
   animation: popFadeIn 0.2s ease;
 }
+@keyframes popFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.popover-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border-light, #f0f0f0); }
+.popover-term { font-size: 14px; font-weight: 600; color: var(--color-primary); }
+.popover-close { cursor: pointer; color: var(--text-secondary, #909399); font-size: 14px; padding: 2px; }
+.popover-close:hover { color: var(--color-danger); }
+.popover-body { padding: 12px 14px; font-size: 13px; line-height: 1.7; color: var(--text-regular, #333); max-height: 200px; overflow-y: auto; }
+.popover-loading { color: var(--text-secondary, #909399); font-style: italic; }
 
-@keyframes popFadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+.markdown-body :deep(.video-results) { display: flex; flex-direction: column; gap: 14px; }
+.markdown-body :deep(.video-results-header) { font-weight: 600; font-size: 15px; color: var(--text-primary); margin-bottom: 4px; }
+.markdown-body :deep(.video-summary) { color: var(--text-regular); font-size: 13px; margin-bottom: 6px; }
+
+.markdown-body :deep(.video-card) {
+  display: block;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.25s ease;
+  box-shadow: var(--shadow-xs);
+}
+.markdown-body :deep(.video-card:hover) { transform: translateY(-3px); box-shadow: var(--shadow-lg); border-color: var(--color-primary); }
+
+.markdown-body :deep(.video-cover) { position: relative; width: 100%; padding-top: 56.25%; background: var(--bg-overlay); overflow: hidden; }
+.markdown-body :deep(.video-cover img) { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.markdown-body :deep(.video-cover span) {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--color-primary) 0%, #a78bfa 100%); font-size: 36px;
+}
+.markdown-body :deep(.video-duration) {
+  position: absolute; bottom: 6px; right: 6px;
+  background: rgba(0,0,0,0.78); color: #fff;
+  font-size: 11px; padding: 2px 6px; border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
 }
 
-.popover-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.popover-term {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a73e8;
-}
-
-.popover-close {
-  cursor: pointer;
-  color: #909399;
-  font-size: 14px;
-  padding: 2px;
-}
-
-.popover-close:hover {
-  color: #f56c6c;
-}
-
-.popover-body {
-  padding: 12px 14px;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #333;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.popover-loading {
-  color: #909399;
-  font-style: italic;
-}
-
-/* 视频卡片 */
-.markdown-body :deep(.video-results) { display: flex; flex-direction: column; gap: 10px; }
-.markdown-body :deep(.video-results-header) { font-weight: 600; font-size: 15px; color: #303133; margin-bottom: 4px; }
-.markdown-body :deep(.video-summary) { color: #606266; font-size: 13px; margin-bottom: 6px; }
-.markdown-body :deep(.video-card) { border: 1px solid #e4e7ed; border-radius: 8px; padding: 12px 14px; background: #fafafa; display: flex; flex-direction: column; gap: 4px; }
-.markdown-body :deep(.video-card-title) { font-weight: 600; font-size: 14px; color: #303133; }
-.markdown-body :deep(.video-card-meta) { font-size: 12px; color: #909399; }
-.markdown-body :deep(.video-card-reason) { font-size: 13px; color: #606266; }
-.markdown-body :deep(.video-card-link) { align-self: flex-start; margin-top: 4px; padding: 3px 10px; background: #409eff; color: #fff; border-radius: 4px; font-size: 12px; text-decoration: none; }
-.markdown-body :deep(.video-card-link:hover) { background: #337ecc; }
+.markdown-body :deep(.video-info) { padding: 10px 12px 12px; }
+.markdown-body :deep(.video-title) { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text-primary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; }
+.markdown-body :deep(.video-card:hover .video-title) { color: var(--color-primary); }
+.markdown-body :deep(.video-meta) { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-secondary); }
+.markdown-body :deep(.meta-author) { color: var(--text-regular); font-weight: 500; }
+.markdown-body :deep(.meta-play) { color: var(--text-secondary); }
 </style>

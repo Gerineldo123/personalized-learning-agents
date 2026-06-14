@@ -4,9 +4,11 @@ import { useRouter } from 'vue-router'
 import api from '../api'
 import ProfileRadar from '../components/profile/ProfileRadar.vue'
 import ProfileQuestionnaire from '../components/profile/ProfileQuestionnaire.vue'
+import KnowledgeGraph from '../components/profile/KnowledgeGraph.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
 import { ElMessage } from 'element-plus'
+import * as echarts from 'echarts'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -14,6 +16,8 @@ const router = useRouter()
 
 const profile = ref<any>(null)
 const loading = ref(false)
+const completeness = ref(0)
+const profileHistory = ref<Array<{ trigger: string; snapshot: any; created_at: string }>>([])
 const quizStats = ref({
   total: 0,
   avg_score_percent: 0,
@@ -26,6 +30,26 @@ const rebuildLoading = ref(false)
 const selectedCourse = ref<any>(null)
 
 const abilityDims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
+
+const abilityDimDesc: Record<string, string> = {
+  '知识记忆': '对核心概念、公式、定义的记忆与复现能力',
+  '逻辑推理': '分析问题、推导结论、判断因果关系的能力',
+  '应用实践': '将知识迁移到实际问题、动手编程或实验的能力',
+  '信息整合': '跨知识点归纳、构建知识体系的能力',
+  '应试能力': '在限时条件下稳定发挥、准确解题的能力',
+}
+
+// 画像健全度：统计已填字段占比
+const profileCompleteness = computed(() => {
+  if (!profile.value) return 0
+  const p = profile.value
+  const checks = [
+    p.major, p.grade || p.education_level, p.learning_goal,
+    p.cognitive_style, (p.weak_points?.length > 0), (p.preferred_format?.length > 0),
+    (p.weak_courses?.length > 0), (p.ability_scores && Object.keys(p.ability_scores).length > 0),
+  ]
+  return Math.round(checks.filter(Boolean).length / checks.length * 100)
+})
 
 onMounted(() => {
   if (userStore.userId) loadProfile()
@@ -49,8 +73,13 @@ async function loadProfile() {
   loading.value = true
   try {
     const r = await api.get('/profile', { params: { user_id: userStore.userId } })
-    if (r.data.found) profile.value = r.data.profile
-    else profile.value = null
+    if (r.data.found) {
+      profile.value = r.data.profile
+      completeness.value = r.data.completeness ?? 0
+      profileHistory.value = r.data.history || []
+    } else {
+      profile.value = null
+    }
 
     const qr = await api.get('/quiz/stats', { params: { user_id: userStore.userId } })
     quizStats.value = {
@@ -184,6 +213,28 @@ async function generatePathResources() {
 function openPathResource(resourceId: number) {
   router.push({ path: '/resources', query: { open: String(resourceId) } })
 }
+const chatUpdateInput = ref('')
+const chatUpdateLoading = ref(false)
+const chatUpdateResult = ref('')
+
+async function submitChatUpdate() {
+  if (!chatUpdateInput.value.trim() || !userStore.userId) return
+  chatUpdateLoading.value = true
+  chatUpdateResult.value = ''
+  try {
+    await api.post('/agent/profile/run', null, {
+      params: { user_id: userStore.userId, message: chatUpdateInput.value },
+    })
+    chatUpdateInput.value = ''
+    chatUpdateResult.value = '画像已更新'
+    await loadProfile()
+  } catch {
+    chatUpdateResult.value = '更新失败，请重试'
+  } finally {
+    chatUpdateLoading.value = false
+  }
+}
+
 async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) {
   try {
     const r = await api.patch(`/path/course/${pathId}/step/${stepOrder}`, null, {
@@ -199,6 +250,66 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
     }
   } catch { ElMessage.error('更新步骤状态失败') }
 }
+
+// 历史折线图
+const historyChartRef = ref<HTMLElement | null>(null)
+let historyChart: echarts.ECharts | null = null
+const TRIGGER_LABELS: Record<string, string> = {
+  quiz: '答题', focus: '专注', path_step: '路径步骤', chat: '对话', questionnaire: '问卷'
+}
+
+function renderHistoryChart() {
+  if (!historyChartRef.value || profileHistory.value.length < 2) return
+  if (!historyChart) historyChart = echarts.init(historyChartRef.value)
+
+  const dims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
+  const times = profileHistory.value.map(h => {
+    const d = new Date(h.created_at)
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
+  })
+  const series = dims.map(dim => ({
+    name: dim,
+    type: 'line',
+    smooth: true,
+    data: profileHistory.value.map(h => {
+      const v = h.snapshot?.ability_scores?.[dim]
+      return v != null ? Math.round(v * 10) : null
+    }),
+    connectNulls: true,
+  }))
+
+  historyChart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: dims, bottom: 0, textStyle: { fontSize: 11 } },
+    grid: { top: 16, left: 40, right: 16, bottom: 48 },
+    xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10, rotate: 30 } },
+    yAxis: { type: 'value', min: 0, max: 10, name: '评分', nameTextStyle: { fontSize: 10 } },
+    series,
+  })
+}
+
+watch(profileHistory, () => {
+  setTimeout(renderHistoryChart, 100)
+}, { deep: true })
+
+// 健全度引导提示
+const completenessHints = computed(() => {
+  if (!profile.value) return []
+  const p = profile.value
+  const hints: string[] = []
+  if (!p.weak_courses?.length) hints.push('填写薄弱课程（在问卷中补充）')
+  if (!p.ability_scores || !Object.values(p.ability_scores).some(Boolean)) hints.push('完成一套题库以获得能力评分')
+  if (!p.cognitive_style) hints.push('通过对话告诉我你的学习偏好')
+  return hints.slice(0, 2)
+})
+
+// 知识图谱数据：将 knowledge_base 合并入 ability_scores 给图谱着色
+const knowledgeGraphData = computed(() => {
+  if (!profile.value) return {}
+  const kb = profile.value.knowledge_base || {}
+  const as_ = profile.value.ability_scores || {}
+  return { ...kb, ...as_ }
+})
 </script>
 
 <template>
@@ -230,6 +341,28 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
         </div>
       </div>
 
+      <!-- 画像健全度 -->
+      <div class="completeness-bar">
+        <span class="completeness-label">画像健全度</span>
+        <el-progress
+          :percentage="completeness"
+          :stroke-width="8"
+          :color="completeness >= 80 ? '#67c23a' : completeness >= 50 ? '#e6a23c' : '#409eff'"
+          style="flex:1"
+        />
+        <span class="completeness-hint" v-if="completeness < 80">
+          继续对话或完成答题可提升健全度
+        </span>
+      </div>
+
+      <!-- 健全度引导卡片 -->
+      <div v-if="completenessHints.length" class="guide-card">
+        <span class="guide-title">提升建议</span>
+        <ul class="guide-list">
+          <li v-for="hint in completenessHints" :key="hint">{{ hint }}</li>
+        </ul>
+      </div>
+
       <div v-if="profile.ability_summary" class="ability-summary">
         {{ profile.ability_summary }}
       </div>
@@ -251,6 +384,49 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
           :knowledgeBase="abilityRadarData"
           title="能力雷达图"
         />
+        <div class="dim-tooltips">
+          <el-tooltip
+            v-for="dim in abilityDims" :key="dim"
+            :content="abilityDimDesc[dim]"
+            placement="top"
+          >
+            <el-tag size="small" type="info" class="dim-tag">{{ dim }}</el-tag>
+          </el-tooltip>
+        </div>
+      </div>
+
+      <!-- 对话式更新入口 -->
+      <div class="chat-update-box">
+        <div class="chat-update-title">通过对话更新画像</div>
+        <div class="chat-update-row">
+          <el-input
+            v-model="chatUpdateInput"
+            placeholder="例如：我最近在学强化学习，感觉概率基础比较薄弱"
+            size="default"
+            @keydown.enter="submitChatUpdate"
+          />
+          <el-button type="primary" :loading="chatUpdateLoading" @click="submitChatUpdate">更新</el-button>
+        </div>
+        <div v-if="chatUpdateResult" class="chat-update-result">{{ chatUpdateResult }}</div>
+      </div>
+
+      <!-- 能力成长折线图 -->
+      <div v-if="profileHistory.length >= 2" class="history-section">
+        <h3 class="section-title">能力成长趋势</h3>
+        <div ref="historyChartRef" class="history-chart" />
+        <div class="history-triggers">
+          <span v-for="h in profileHistory.slice(-8)" :key="h.created_at" class="trigger-dot" :title="h.created_at">
+            <el-tag size="small" :type="h.trigger === 'quiz' ? 'warning' : h.trigger === 'focus' ? 'success' : 'info'">
+              {{ TRIGGER_LABELS[h.trigger] || h.trigger }}
+            </el-tag>
+          </span>
+        </div>
+      </div>
+
+      <!-- 知识图谱 -->
+      <div class="kg-section">
+        <h3 class="section-title">知识图谱</h3>
+        <KnowledgeGraph :knowledgeBase="knowledgeGraphData" />
       </div>
 
       <div v-if="profile.weak_courses?.length" class="courses-section">
@@ -414,8 +590,7 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
 
 <style scoped>
 .profile-view { max-width: 960px; }
-.page-title { margin-bottom: 24px; color: #303133; }
-.loading-box { height: 200px; }
+.page-title { margin-bottom: 28px; }
 .empty-box { margin-top: 40px; }
 
 .profile-detail { margin-top: 8px; }
@@ -424,59 +599,42 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .ability-summary {
-  background: #ecf5ff;
-  border-radius: 8px;
-  padding: 14px 18px;
-  color: #409eff;
+  background: linear-gradient(135deg, var(--color-primary-bg), rgba(167,139,250,0.05));
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  color: var(--color-primary);
   font-size: 14px;
   line-height: 1.7;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+  border: 1px solid var(--color-primary-border);
 }
 
 .quiz-summary {
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 16px 18px;
-  margin-bottom: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  margin-bottom: 24px;
 }
 
 .quiz-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
-
-.quiz-head h3 {
-  margin: 0;
-  color: #303133;
-  font-size: 16px;
-}
-
-.quiz-meta {
-  display: flex;
-  gap: 16px;
-  color: #909399;
-  font-size: 12px;
-  margin-bottom: 8px;
-}
-
-.quiz-analysis {
-  margin: 0;
-  color: #606266;
-  font-size: 14px;
-  line-height: 1.8;
-}
+.quiz-head h3 { margin: 0; font-size: 16px; }
+.quiz-meta { display: flex; gap: 16px; color: var(--text-secondary); font-size: 12px; margin-bottom: 10px; }
+.quiz-analysis { margin: 0; color: var(--text-regular); font-size: 14px; line-height: 1.8; }
 
 .radar-section { margin-bottom: 28px; }
 
 .courses-section { margin-bottom: 28px; }
-.courses-section h3 { color: #303133; margin-bottom: 16px; }
+.courses-section h3 { margin-bottom: 16px; }
 
 .course-cards {
   display: grid;
@@ -485,68 +643,58 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
 }
 
 .course-card {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  padding: 16px;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  padding: 18px;
   cursor: pointer;
-  transition: 0.2s;
+  transition: all var(--transition-base);
 }
-.course-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
-.course-card.active { border-color: #409eff; background: #ecf5ff; }
+.course-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.course-card.active { border-color: var(--color-primary); background: var(--color-primary-bg); }
 
 .cc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.cc-name { font-weight: 600; color: #303133; font-size: 15px; }
-.cc-points { color: #606266; font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
+.cc-name { font-weight: 600; color: var(--text-primary); font-size: 15px; }
+.cc-points { color: var(--text-regular); font-size: 13px; line-height: 1.5; margin-bottom: 10px; }
 .cc-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .course-detail {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  padding: 20px;
-  margin-top: 8px;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  padding: 24px;
+  margin-top: 12px;
 }
-.course-detail h3 { color: #303133; margin-bottom: 16px; }
+.course-detail h3 { margin-bottom: 16px; }
 
 .cd-grid { display: grid; grid-template-columns: 360px 1fr; gap: 24px; }
 
 .cd-block { margin-bottom: 18px; }
-.cd-label { display: block; font-size: 12px; color: #909399; margin-bottom: 6px; }
-.cd-block p { color: #303133; font-size: 14px; line-height: 1.6; margin: 0; }
+.cd-label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
+.cd-block p { color: var(--text-primary); font-size: 14px; line-height: 1.6; margin: 0; }
 .cd-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .course-path-section {
   margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid #ebeef5;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
 }
 
 .cp-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
-
-.cp-title {
-  font-weight: 600;
-  color: #303133;
-  font-size: 15px;
-}
+.cp-title { font-weight: 600; font-size: 16px; }
 
 .cp-progress {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
-
-.cp-progress-text {
-  font-size: 13px;
-  color: #606266;
-  white-space: nowrap;
-}
+.cp-progress-text { font-size: 13px; color: var(--text-regular); white-space: nowrap; }
 
 .cp-steps { margin-top: 4px; }
 
@@ -555,44 +703,22 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   align-items: flex-start;
   gap: 12px;
   padding: 14px 0;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border-light);
 }
-
 .cp-step:last-child { border-bottom: none; }
-
 .cp-step-body { flex: 1; min-width: 0; }
-
-.cp-step-title {
-  font-weight: 600;
-  color: #303133;
-  font-size: 14px;
-  margin-bottom: 4px;
-}
-
-.cp-step-desc {
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.6;
-  margin-bottom: 6px;
-}
-
-.cp-step-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
+.cp-step-title { font-weight: 600; color: var(--text-primary); font-size: 14px; margin-bottom: 4px; }
+.cp-step-desc { color: var(--text-regular); font-size: 13px; line-height: 1.6; margin-bottom: 6px; }
+.cp-step-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .cp-step-duration {
   font-size: 12px;
-  color: #909399;
-  background: #f5f7fa;
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
-
 .cp-resources { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-.cp-res-label { font-size: 12px; color: #909399; }
+.cp-res-label { font-size: 12px; color: var(--text-secondary); }
 .cp-res-btn { font-size: 12px; }
 .cp-checkpoint {
   display: flex;
@@ -600,20 +726,68 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   gap: 6px;
   margin-top: 8px;
   padding: 8px 12px;
-  background: #f0f9eb;
-  border-radius: 4px;
-  color: #67c23a;
+  background: var(--color-success-bg);
+  border-radius: var(--radius-sm);
+  color: var(--color-success);
   font-size: 12px;
   line-height: 1.5;
 }
-
 .cp-empty { padding: 16px 0; }
-.cp-empty p { color: #909399; font-size: 13px; margin: 0 0 10px; }
+.cp-empty p { color: var(--text-secondary); font-size: 13px; margin: 0 0 10px; }
 
-.rebuild-hint { color: #606266; font-size: 14px; line-height: 1.8; margin-bottom: 12px; }
-.rebuild-sources { padding-left: 20px; margin: 0 0 16px; color: #303133; font-size: 14px; list-style: none; }
-.rebuild-sources li { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: #409eff; }
-.rebuild-warn { display: flex; align-items: center; gap: 6px; color: #e6a23c; font-size: 13px; padding: 10px 12px; background: #fdf6ec; border-radius: 4px; }
+.rebuild-hint { color: var(--text-regular); font-size: 14px; line-height: 1.8; margin-bottom: 12px; }
+.rebuild-sources { padding-left: 20px; margin: 0 0 16px; font-size: 14px; list-style: none; }
+.rebuild-sources li { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--color-primary); }
+.rebuild-warn { display: flex; align-items: center; gap: 6px; color: var(--color-warning); font-size: 13px; padding: 10px 12px; background: var(--color-warning-bg); border-radius: var(--radius-sm); }
+
+.completeness-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+.completeness-label { font-size: 13px; color: var(--text-secondary); white-space: nowrap; font-weight: 500; }
+.completeness-hint { font-size: 12px; color: var(--text-placeholder); white-space: nowrap; }
+
+.dim-tooltips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding: 0 20px 4px; }
+.dim-tag { cursor: help; }
+
+.chat-update-box {
+  background: var(--bg-card);
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+.chat-update-title { font-size: 13px; font-weight: 600; color: var(--color-primary); margin-bottom: 10px; }
+.chat-update-row { display: flex; gap: 10px; }
+.chat-update-result { margin-top: 8px; font-size: 12px; color: var(--color-success); }
+
+.guide-card {
+  background: var(--color-warning-bg);
+  border: 1px solid rgba(230,162,60,0.4);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.guide-title { font-size: 12px; font-weight: 600; color: var(--color-warning); white-space: nowrap; padding-top: 2px; }
+.guide-list { margin: 0; padding-left: 16px; font-size: 12px; color: var(--text-regular); line-height: 1.8; }
+
+.section-title { font-size: 15px; font-weight: 600; margin: 0 0 14px; color: var(--text-primary); }
+
+.history-section { margin-bottom: 28px; }
+.history-chart { width: 100%; height: 240px; }
+.history-triggers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.trigger-dot { cursor: default; }
+
+.kg-section { margin-bottom: 28px; }
 </style>
 
 

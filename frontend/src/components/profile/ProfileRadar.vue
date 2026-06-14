@@ -59,12 +59,11 @@ watch(() => props.knowledgeBase, () => renderChart(), { deep: true })
 
 <style scoped>
 .profile-radar {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   padding: 20px;
 }
-
 .chart {
   width: 100%;
   height: 260px;

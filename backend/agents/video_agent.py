@@ -78,7 +78,8 @@ class VideoAgent(BaseAgent):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Referer": "https://www.bilibili.com/",
         }
-        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+            await client.get("https://www.bilibili.com/")
             for kw in keywords:
                 query = kw.get("query", "")
                 if not query:
@@ -98,9 +99,14 @@ class VideoAgent(BaseAgent):
                         found = True
                         arcurl = v.get("arcurl", "")
                         url = arcurl if arcurl and "video" in arcurl else BILI_VIDEO_URL.format(bvid)
+                        pic = v.get("pic", "")
+                        if pic and not pic.startswith("http"):
+                            pic = "https:" + pic
                         results.append({
-                            "title": v.get("title", query),
+                            "title": v.get("title", query).replace('<em class="keyword">', "").replace("</em>", ""),
                             "url": url,
+                            "cover": pic,
+                            "duration": v.get("duration", ""),
                             "source": f"B站 · {v.get('author', '') or ''} · {self._fmt_play(v.get('play', 0))}播放",
                             "reason": kw.get("reason", ""),
                         })

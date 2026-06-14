@@ -126,9 +126,9 @@ onUnmounted(destroy)
 
 <style scoped>
 .mindmap-viewer {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   overflow: hidden;
 }
 .mindmap-svg {

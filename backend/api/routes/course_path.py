@@ -116,6 +116,17 @@ def update_step_status(path_id: int, step_order: int, done: bool = True):
             path.status = "completed"
         db.commit()
         db.refresh(path)
+
+        # 步骤完成时异步更新画像
+        if done:
+            step_title = next((s.get("title", "") for s in steps if s.get("order") == step_order), "")
+            import asyncio as _asyncio
+            from agents.profile_agent import ProfileAgent
+            from agents.base import AgentState as _AgentState
+            _asyncio.create_task(ProfileAgent().process(
+                _AgentState(user_id=path.user_id, user_message=f"完成学习路径步骤「{step_title}」（{path.course_name}），更新知识掌握画像"),
+                trigger="path_step",
+            ))
         return {
             "ok": True,
             "id": path.id,
