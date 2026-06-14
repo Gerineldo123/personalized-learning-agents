@@ -99,13 +99,25 @@ function renderProcessedContent(content: string): string {
   try {
     const data = JSON.parse(content)
     if (data.agent === 'video' && Array.isArray(data.videos)) {
-      const cards = data.videos.map((v: any) => `
+      const cards = data.videos.map((v: any) => {
+        const bvMatch = (v.url || '').match(/\/video\/(BV\w+)/)
+        const avMatch = (v.url || '').match(/\/video\/av(\d+)/)
+        const bvid = bvMatch ? bvMatch[1] : ''
+        const avid = avMatch ? avMatch[1] : ''
+        const embedSrc = bvid
+          ? `//player.bilibili.com/player.html?bvid=${bvid}&autoplay=0&danmaku=0`
+          : avid ? `//player.bilibili.com/player.html?aid=${avid}&autoplay=0&danmaku=0` : ''
+        const embedOrLink = embedSrc
+          ? `<div class="video-card-embed-wrap"><iframe src="${embedSrc}" scrolling="no" frameborder="0" allowfullscreen class="video-card-iframe"></iframe></div>`
+          : (v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">▶ 在 B 站打开</a>` : '')
+        return `
         <div class="video-card">
           <div class="video-card-title">📺 ${escapeHtml(v.title || '')}</div>
           <div class="video-card-meta">${escapeHtml(v.source || '')}${v.duration ? ' · ' + escapeHtml(v.duration) : ''}</div>
           <div class="video-card-reason">${escapeHtml(v.reason || '')}</div>
-          ${v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">▶ 观看</a>` : ''}
-        </div>`).join('')
+          ${embedOrLink}
+        </div>`
+      }).join('')
       const summary = data.search_summary ? `<div class="video-summary">${escapeHtml(data.search_summary)}</div>` : ''
       return `<div class="video-results"><div class="video-results-header">🎬 为你推荐的教学视频</div>${summary}${cards}</div>`
     }
@@ -1227,6 +1239,12 @@ function regenerateMessage(aiIndex: number) {
 }
 .message-content :deep(.video-card-link:hover) {
   background: #ecf5ff;
+}
+.message-content :deep(.video-card-embed-wrap) {
+  position: relative; width: 100%; padding-top: 56.25%; margin-top: 8px;
+}
+.message-content :deep(.video-card-iframe) {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 4px;
 }
 </style>
 

@@ -33,6 +33,8 @@ const genQuestionTypes = ref<string[]>(['single_choice'])
 const genCodeLanguage = ref('python')
 const genLoading = ref(false)
 const starterLoading = ref(false)
+const orchestrateLoading = ref(false)
+const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
 function markdownSource(content: any): string {
@@ -72,6 +74,8 @@ const genTypeOptions = [
   { value: 'code', label: '代码' },
   { value: 'mindmap', label: '思维导图' },
   { value: 'ppt', label: 'PPT课件' },
+  { value: 'video', label: '视频推荐' },
+  { value: 'evaluation', label: '学习评估' },
 ]
 const difficultyOptions = ['简单', '中等', '较难', '挑战']
 const codeLangOptions = [
@@ -83,7 +87,7 @@ const codeLangOptions = [
 ]
 
 onMounted(() => {
-  if (userStore.userId) loadResources()
+  if (userStore.userId) { loadResources(); loadRecommend() }
   eventStore.connect(userStore.userId || 'user_default')
   loadProfileAndSeeds()
 })
@@ -99,6 +103,7 @@ watch(() => userStore.userId, (newId) => {
   if (newId) {
     loadResources()
     loadProfileAndSeeds()
+    loadRecommend()
   }
 })
 
@@ -210,6 +215,33 @@ async function generateStarterPack() {
   }
 }
 
+async function generateOrchestrated(topic: string) {
+  orchestrateLoading.value = true
+  try {
+    await api.post('/resources/generate/orchestrate', null, {
+      params: { user_id: userStore.userId, topic },
+      timeout: 300000,
+    })
+    ElMessage.success('多智能体协同生成完成（文章+思维导图+题库+视频）')
+    page.value = 1
+    await loadResources()
+  } catch {
+    ElMessage.error('协同生成失败')
+  } finally {
+    orchestrateLoading.value = false
+  }
+}
+
+async function loadRecommend() {
+  if (!userStore.userId) return
+  try {
+    const r = await api.get('/resources/recommend', { params: { user_id: userStore.userId, top_k: 8 } })
+    recommendItems.value = r.data.items || []
+  } catch {
+    recommendItems.value = []
+  }
+}
+
 function viewResource(r: any) {
   if (manageMode.value) {
     toggleSelect(r.id)
@@ -281,6 +313,19 @@ function typeTag(t: string) {
   const map: Record<string, string> = { article: '', quiz: 'warning', code: 'success', mindmap: 'info', ppt: 'danger', video: '', evaluation: 'info' }
   return map[t] || ''
 }
+
+function bvidFromUrl(url: string): string {
+  if (!url) return ''
+  const bv = url.match(/\/video\/(BV\w+)/)
+  if (bv) return bv[1]
+  return ''
+}
+
+function avidFromUrl(url: string): string {
+  if (!url) return ''
+  const av = url.match(/\/video\/av(\d+)/)
+  return av ? av[1] : ''
+}
 </script>
 
 <template>
@@ -297,6 +342,21 @@ function typeTag(t: string) {
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(0)">取消置顶</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" type="danger" @click="batchDelete">批量删除</el-button>
       <el-button type="primary" @click="showGenDialog = true" style="margin-left: auto">+ 手动生成</el-button>
+    </div>
+
+    <!-- 为你推荐区 -->
+    <div v-if="recommendItems.length > 0 && !selected" class="recommend-banner">
+      <div class="recommend-head">
+        <span class="recommend-title">为你推荐</span>
+        <span class="recommend-hint">基于画像智能匹配</span>
+        <el-button size="small" text @click="loadRecommend" style="margin-left:auto">刷新</el-button>
+      </div>
+      <div class="recommend-list">
+        <div v-for="r in recommendItems" :key="r.id" class="recommend-item" @click="selected = r">
+          <el-tag :type="typeTag(r.resource_type)" size="small">{{ typeLabel(r.resource_type) }}</el-tag>
+          <span class="recommend-item-title">{{ r.title }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- 常驻智能推荐区：有 weak_points 时始终展示 -->
@@ -328,9 +388,11 @@ function typeTag(t: string) {
     <div v-if="(!loading && resources.length === 0)" class="starter-panel">
       <div class="starter-head">
         <h3>根据你的学习画像推荐</h3>
-        <el-button type="success" :loading="starterLoading" @click="generateStarterPack">
-          一键生成入门资源包
-        </el-button>
+        <div style="display:flex;gap:8px">
+          <el-button type="success" :loading="starterLoading" @click="generateStarterPack">
+            一键生成入门资源包
+          </el-button>
+        </div>
       </div>
       <p class="starter-desc">系统会优先根据你的薄弱课程，自动生成「文章 + 题库」组合资源，帮助你快速开始学习。</p>
 
@@ -341,6 +403,7 @@ function typeTag(t: string) {
           <div class="seed-actions">
             <el-button size="small" @click="generateQuick(s, 'article')">生成文章</el-button>
             <el-button size="small" type="warning" @click="generateQuick(s, 'quiz')">生成题库</el-button>
+            <el-button size="small" type="primary" :loading="orchestrateLoading" @click="generateOrchestrated(`${s.course}：${s.topic}`)">协同生成</el-button>
           </div>
         </div>
       </div>
@@ -355,6 +418,25 @@ function typeTag(t: string) {
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <MindMapViewer v-else-if="selected.resource_type === 'mindmap'" :markdown="selected.content?.markdown || ''" />
       <PptViewer v-else-if="selected.resource_type === 'ppt'" :content="selected.content" />
+      <div v-else-if="selected.resource_type === 'video'" class="video-viewer">
+        <div v-if="bvidFromUrl(selected.content?.url) || avidFromUrl(selected.content?.url)" class="video-embed-wrap">
+          <iframe
+            :src="bvidFromUrl(selected.content?.url)
+              ? `//player.bilibili.com/player.html?bvid=${bvidFromUrl(selected.content?.url)}&autoplay=0&danmaku=0`
+              : `//player.bilibili.com/player.html?aid=${avidFromUrl(selected.content?.url)}&autoplay=0&danmaku=0`"
+            scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"
+            class="bili-iframe"
+          />
+        </div>
+        <div v-else class="video-fallback">
+          <p>{{ selected.content?.reason }}</p>
+          <a :href="selected.content?.url" target="_blank" rel="noopener">在 B 站打开</a>
+        </div>
+        <div class="video-meta">
+          <span class="video-source">{{ selected.content?.source }}</span>
+          <p class="video-reason">{{ selected.content?.reason }}</p>
+        </div>
+      </div>
       <div v-else class="text-content markdown-body" v-html="renderMarkdown(selected.content)" @click="handleDetailClick"></div>
     </div>
 
@@ -425,6 +507,7 @@ function typeTag(t: string) {
       </el-form>
       <template #footer>
         <el-button @click="showGenDialog = false">取消</el-button>
+        <el-button type="success" :loading="orchestrateLoading" @click="() => { if (!genTopic.trim()) { ElMessage.warning('请输入主题'); return } showGenDialog = false; generateOrchestrated(genTopic.trim()) }">多智能体协同生成</el-button>
         <el-button type="primary" :loading="genLoading" @click="startGenerate">生成</el-button>
       </template>
     </el-dialog>
@@ -503,6 +586,26 @@ html.dark .starter-panel {
 .weak-tag { cursor: pointer; }
 .weak-tag:hover { opacity: 0.85; transform: scale(1.03); }
 
+.recommend-banner {
+  background: var(--color-primary-bg);
+  border: 1px solid var(--color-primary-border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 18px;
+}
+.recommend-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.recommend-title { font-weight: 600; color: var(--color-primary); font-size: 14px; }
+.recommend-hint { font-size: 12px; color: var(--text-secondary); }
+.recommend-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.recommend-item {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm); padding: 4px 10px;
+  cursor: pointer; font-size: 13px; transition: all var(--transition-fast);
+}
+.recommend-item:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary-border); }
+.recommend-item-title { color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .pagination-box { display: flex; justify-content: center; margin-top: 28px; }
 
 .text-content { background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--border-light); padding: 24px; }
@@ -522,5 +625,14 @@ html.dark .starter-panel {
 .text-content :deep(.code-copy-btn) { font-size: 11px; color: #abb2bf; cursor: pointer; padding: 2px 8px; border-radius: 3px; transition: all 0.15s; user-select: none; }
 .text-content :deep(.code-copy-btn:hover) { color: #fff; background: rgba(255,255,255,0.1); }
 .text-content :deep(blockquote) { border-left: 3px solid var(--color-primary); margin: 10px 0; padding: 6px 14px; color: var(--text-regular); background: var(--color-primary-bg); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+
+.video-viewer { background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--border-light); overflow: hidden; }
+.video-embed-wrap { position: relative; width: 100%; padding-top: 56.25%; background: #000; }
+.bili-iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; }
+.video-fallback { padding: 32px; text-align: center; }
+.video-fallback a { color: var(--color-primary); text-decoration: none; font-size: 15px; }
+.video-meta { padding: 14px 18px; }
+.video-source { font-size: 12px; color: var(--text-secondary); }
+.video-reason { margin: 6px 0 0; color: var(--text-regular); font-size: 14px; line-height: 1.6; }
 </style>
 

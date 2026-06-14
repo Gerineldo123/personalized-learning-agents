@@ -222,7 +222,7 @@ async function submitChatUpdate() {
   chatUpdateLoading.value = true
   chatUpdateResult.value = ''
   try {
-    await api.post('/agent/profile/run', null, {
+    await api.post('/profile/run', null, {
       params: { user_id: userStore.userId, message: chatUpdateInput.value },
     })
     chatUpdateInput.value = ''
