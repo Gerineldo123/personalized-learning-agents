@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { useUserStore } from '../stores/user'
@@ -9,6 +9,8 @@ import QuizCard from '../components/resource/QuizCard.vue'
 import PptViewer from '../components/resource/PptViewer.vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdownEnhanced as renderMdCommon, codeBlockStore } from '../utils/markdown'
+import SausageIcon from '../components/SausageIcon.vue'
+import LoadingSausage from '../components/LoadingSausage.vue'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -37,6 +39,7 @@ const orchestrateLoading = ref(false)
 const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
+
 function markdownSource(content: any): string {
   if (typeof content === 'string') return content
   if (content && typeof content === 'object') {
@@ -87,12 +90,10 @@ const codeLangOptions = [
 ]
 
 onMounted(() => {
+  if (route.query.type) typeFilter.value = route.query.type as string
   if (userStore.userId) { loadResources(); loadRecommend() }
   eventStore.connect(userStore.userId || 'user_default')
   loadProfileAndSeeds()
-})
-
-onUnmounted(() => {
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
@@ -100,11 +101,13 @@ watch(() => eventStore.lastEvent, (evt) => {
 })
 
 watch(() => userStore.userId, (newId) => {
-  if (newId) {
-    loadResources()
-    loadProfileAndSeeds()
-    loadRecommend()
-  }
+  if (newId) { loadResources(); loadProfileAndSeeds(); loadRecommend() }
+})
+
+watch(() => route.query.type, (newType) => {
+  typeFilter.value = (newType as string) || ''
+  page.value = 1
+  loadResources()
 })
 
 async function loadProfileAndSeeds() {
@@ -243,10 +246,7 @@ async function loadRecommend() {
 }
 
 function viewResource(r: any) {
-  if (manageMode.value) {
-    toggleSelect(r.id)
-    return
-  }
+  if (manageMode.value) { toggleSelect(r.id); return }
   selected.value = r
 }
 
@@ -265,43 +265,26 @@ function toggleSelect(id: number) {
 }
 
 async function batchPin(pinned: 0 | 1) {
-  if (selectedIds.value.length === 0) {
-    ElMessage.warning('请先选择资源')
-    return
-  }
+  if (selectedIds.value.length === 0) { ElMessage.warning('请先选择资源'); return }
   try {
     await api.post('/resources/batch_pin', null, {
-      params: {
-        user_id: userStore.userId,
-        ids: selectedIds.value.join(','),
-        pinned,
-      },
+      params: { user_id: userStore.userId, ids: selectedIds.value.join(','), pinned },
     })
     ElMessage.success(pinned ? '已批量置顶' : '已取消置顶')
     await loadResources()
-  } catch {
-    ElMessage.error('操作失败')
-  }
+  } catch { ElMessage.error('操作失败') }
 }
 
 async function batchDelete() {
-  if (selectedIds.value.length === 0) {
-    ElMessage.warning('请先选择资源')
-    return
-  }
+  if (selectedIds.value.length === 0) { ElMessage.warning('请先选择资源'); return }
   try {
     await api.post('/resources/batch_delete', null, {
-      params: {
-        user_id: userStore.userId,
-        ids: selectedIds.value.join(','),
-      },
+      params: { user_id: userStore.userId, ids: selectedIds.value.join(',') },
     })
     ElMessage.success('已批量删除')
     selectedIds.value = []
     await loadResources()
-  } catch {
-    ElMessage.error('删除失败')
-  }
+  } catch { ElMessage.error('删除失败') }
 }
 
 function typeLabel(t: string) {
@@ -317,8 +300,7 @@ function typeTag(t: string) {
 function bvidFromUrl(url: string): string {
   if (!url) return ''
   const bv = url.match(/\/video\/(BV\w+)/)
-  if (bv) return bv[1]
-  return ''
+  return bv ? bv[1] : ''
 }
 
 function avidFromUrl(url: string): string {
@@ -330,9 +312,7 @@ function avidFromUrl(url: string): string {
 
 <template>
   <div class="resources-view">
-    <h2 class="page-title">学习资源</h2>
-
-    <div class="toolbar">
+    <div class="toolbar animate-up animate-delay-1">
       <el-select v-model="typeFilter" placeholder="全部类型" @change="page = 1; loadResources()" style="width: 160px">
         <el-option v-for="t in resourceTypes" :key="t" :label="t || '全部'" :value="t" />
       </el-select>
@@ -345,7 +325,7 @@ function avidFromUrl(url: string): string {
     </div>
 
     <!-- 为你推荐区 -->
-    <div v-if="recommendItems.length > 0 && !selected" class="recommend-banner">
+    <div v-if="recommendItems.length > 0 && !selected" class="recommend-banner animate-up animate-delay-2">
       <div class="recommend-head">
         <span class="recommend-title">为你推荐</span>
         <span class="recommend-hint">基于画像智能匹配</span>
@@ -359,8 +339,8 @@ function avidFromUrl(url: string): string {
       </div>
     </div>
 
-    <!-- 常驻智能推荐区：有 weak_points 时始终展示 -->
-    <div v-if="weakPoints.length > 0 && !selected" class="weak-banner">
+    <!-- 薄弱知识点专项推荐 -->
+    <div v-if="weakPoints.length > 0 && !selected" class="weak-banner animate-up animate-delay-2">
       <div class="weak-banner-head">
         <span class="weak-banner-title">薄弱知识点专项推荐</span>
         <span class="weak-banner-hint">基于你的学习画像和答题记录自动生成</span>
@@ -385,7 +365,7 @@ function avidFromUrl(url: string): string {
       </div>
     </div>
 
-    <div v-if="(!loading && resources.length === 0)" class="starter-panel">
+    <div v-if="(!loading && resources.length === 0)" class="starter-panel animate-up animate-delay-2">
       <div class="starter-head">
         <h3>根据你的学习画像推荐</h3>
         <div style="display:flex;gap:8px">
@@ -408,12 +388,15 @@ function avidFromUrl(url: string): string {
         </div>
       </div>
 
-      <el-empty v-else description="尚未检测到可推荐的薄弱课程，可先去学习画像完成问卷" />
+      <div v-else class="sa-empty">
+        <SausageIcon :size="64" animate />
+        <p class="sa-empty-text">尚未检测到可推荐的薄弱课程<br/>可先去学习画像完成问卷</p>
+      </div>
     </div>
 
-    <div v-if="loading" v-loading="loading" class="loading-box" />
+    <div v-if="loading" class="loading-box"><LoadingSausage text="加载资源..." /></div>
 
-    <div v-else-if="selected" class="detail-view">
+    <div v-else-if="selected" class="detail-view animate-up animate-delay-2">
       <el-button @click="selected = null" style="margin-bottom: 16px">返回列表</el-button>
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <MindMapViewer v-else-if="selected.resource_type === 'mindmap'" :markdown="selected.content?.markdown || ''" />
@@ -440,8 +423,8 @@ function avidFromUrl(url: string): string {
       <div v-else class="text-content markdown-body" v-html="renderMarkdown(selected.content)" @click="handleDetailClick"></div>
     </div>
 
-    <div v-else-if="resources.length > 0" class="resource-list">
-      <div v-for="r in resources" :key="r.id" class="resource-card" @click="viewResource(r)">
+    <div v-else-if="resources.length > 0" class="resource-list animate-up animate-delay-2">
+      <div v-for="r in resources" :key="r.id" class="resource-card animate-up" @click="viewResource(r)">
         <div class="card-header">
           <el-checkbox
             v-if="manageMode"
@@ -454,14 +437,18 @@ function avidFromUrl(url: string): string {
           <span class="card-date">{{ r.created_at?.slice(0, 10) }}</span>
         </div>
         <h4 class="card-title">{{ r.title }}</h4>
+        <div class="card-deco"><SausageIcon :size="20" muted /></div>
       </div>
     </div>
 
-    <div v-else class="empty-box">
-      <el-empty description="暂无资源" />
+    <div v-else class="empty-box animate-up animate-delay-2">
+      <div class="sa-empty">
+        <SausageIcon :size="72" animate />
+        <p class="sa-empty-text">还没有学习资源<br/>尝试生成或刷新看看吧</p>
+      </div>
     </div>
 
-    <div v-if="!selected && !loading && totalResources > pageSize" class="pagination-box">
+    <div v-if="!selected && !loading && totalResources > pageSize" class="pagination-box animate-up animate-delay-3">
       <el-pagination
         v-model:current-page="page"
         :page-size="pageSize"
@@ -489,7 +476,7 @@ function avidFromUrl(url: string): string {
         <template v-if="genTypes.includes('quiz')">
           <el-form-item label="题目数量">
             <el-input-number v-model="genQuestionCount" :min="3" :max="30" :step="1" />
-            <span style="margin-left:8px;color:#909399;font-size:12px">建议 5~15 题</span>
+            <span style="margin-left:8px;color:#948A80;font-size:12px">建议 5~15 题</span>
           </el-form-item>
           <el-form-item label="题库难度">
             <el-radio-group v-model="genDifficulty">
@@ -515,29 +502,25 @@ function avidFromUrl(url: string): string {
 </template>
 
 <style scoped>
-.resources-view { max-width: 1000px; }
-.page-title { margin-bottom: 28px; }
-.toolbar { display: flex; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+.resources-view { max-width: 1280px; padding: 28px 20px 34px; margin: 0 auto; box-sizing: border-box; background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%); }
+.toolbar { display: flex; align-items: center; margin-bottom: 20px; padding-top: 4px; flex-wrap: wrap; gap: 4px; }
+.loading-box { height: 200px; }
 
 .starter-panel {
-  background: linear-gradient(140deg, #f5f9ff 0%, #f8fff5 100%);
-  border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  margin-bottom: 24px;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 20px;
 }
-html.dark .starter-panel {
-  background: linear-gradient(140deg, rgba(91,127,255,0.06) 0%, rgba(82,196,26,0.04) 100%);
-}
-
 .starter-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
-.starter-head h3 { margin: 0; font-size: 18px; }
-.starter-desc { margin: 0 0 16px; color: var(--text-regular); font-size: 13px; line-height: 1.7; }
+.starter-head h3 { margin: 0; color: #3A332E; font-size: 20px; font-weight: 500; }
+.starter-desc { margin: 0 0 14px; color: #6B635C; font-size: 13px; line-height: 1.7; }
 
 .seed-grid {
   display: grid;
@@ -545,94 +528,184 @@ html.dark .starter-panel {
   gap: 12px;
 }
 .seed-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
-  transition: all var(--transition-fast);
+  background: #FFFBF5;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 12px;
+  padding: 12px;
 }
-.seed-card:hover { box-shadow: var(--shadow-sm); }
-.seed-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
-.seed-topic { color: var(--text-regular); font-size: 13px; min-height: 40px; line-height: 1.5; }
-.seed-actions { display: flex; gap: 8px; margin-top: 12px; }
-
-.resource-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-
-.resource-card {
-  background: var(--bg-card);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
-  padding: 18px;
-  cursor: pointer;
-  transition: all var(--transition-base);
-}
-.resource-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); border-color: var(--color-primary-border); }
-
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.card-date { font-size: 12px; color: var(--text-secondary); }
-.card-title { margin: 0; font-size: 15px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.seed-title { font-weight: 500; color: #3A332E; margin-bottom: 4px; }
+.seed-topic { color: #6B635C; font-size: 13px; min-height: 40px; line-height: 1.5; }
+.seed-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
 .weak-banner {
-  background: var(--color-warning-bg);
-  border: 1px solid rgba(250,140,22,0.25);
-  border-radius: var(--radius-md);
+  background: rgba(253, 246, 236, 0.9);
+  border: 1px solid rgba(235, 177, 95, 0.4);
+  border-radius: 12px;
   padding: 14px 18px;
   margin-bottom: 18px;
 }
 .weak-banner-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.weak-banner-title { font-weight: 600; color: var(--color-warning); font-size: 14px; }
-.weak-banner-hint { font-size: 12px; color: var(--text-secondary); }
+.weak-banner-title { font-weight: 500; color: #DBA878; font-size: 14px; }
+.weak-banner-hint { font-size: 12px; color: #948A80; }
 .weak-tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .weak-tag { cursor: pointer; }
 .weak-tag:hover { opacity: 0.85; transform: scale(1.03); }
 
 .recommend-banner {
-  background: var(--color-primary-bg);
-  border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-md);
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 12px;
   padding: 12px 16px;
   margin-bottom: 18px;
 }
 .recommend-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.recommend-title { font-weight: 600; color: var(--color-primary); font-size: 14px; }
-.recommend-hint { font-size: 12px; color: var(--text-secondary); }
+.recommend-title { font-weight: 500; color: #3A332E; font-size: 14px; }
+.recommend-hint { font-size: 12px; color: #948A80; }
 .recommend-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .recommend-item {
   display: flex; align-items: center; gap: 6px;
-  background: var(--bg-card); border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm); padding: 4px 10px;
-  cursor: pointer; font-size: 13px; transition: all var(--transition-fast);
+  background: #FFF5EB; border: 1px solid #EFE6DC;
+  border-radius: 8px; padding: 4px 10px;
+  cursor: pointer; font-size: 13px; transition: all 0.2s;
 }
-.recommend-item:hover { box-shadow: var(--shadow-sm); border-color: var(--color-primary-border); }
-.recommend-item-title { color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recommend-item:hover { border-color: #E8C29C; box-shadow: 0 2px 8px rgba(58,51,46,0.08); }
+.recommend-item-title { color: #3A332E; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.pagination-box { display: flex; justify-content: center; margin-top: 28px; }
+.resource-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 
-.text-content { background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--border-light); padding: 24px; }
-.text-content :deep(h1), .text-content :deep(h2), .text-content :deep(h3) { margin: 14px 0 8px; font-weight: 600; }
-.text-content :deep(h1) { font-size: 22px; }
-.text-content :deep(h2) { font-size: 18px; }
-.text-content :deep(h3) { font-size: 16px; }
-.text-content :deep(p) { margin: 8px 0; }
-.text-content :deep(ul), .text-content :deep(ol) { margin: 8px 0; padding-left: 20px; }
-.text-content :deep(li) { margin: 4px 0; }
-.text-content :deep(code) { background: var(--bg-overlay); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 13px; font-family: var(--font-mono); }
-.text-content :deep(pre) { background: #1f2430; color: #d8dee9; padding: 14px 16px; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow-x: auto; margin: 0; }
-.text-content :deep(pre code) { background: transparent; padding: 0; color: inherit; font-size: 13px; white-space: pre; }
-.text-content :deep(.code-block-wrapper) { margin: 12px 0; border-radius: var(--radius-md); overflow: hidden; }
-.text-content :deep(.code-header) { display: flex; justify-content: space-between; align-items: center; background: #21252b; padding: 6px 14px; border-radius: var(--radius-md) var(--radius-md) 0 0; }
-.text-content :deep(.code-lang) { font-size: 11px; color: #abb2bf; text-transform: uppercase; }
-.text-content :deep(.code-copy-btn) { font-size: 11px; color: #abb2bf; cursor: pointer; padding: 2px 8px; border-radius: 3px; transition: all 0.15s; user-select: none; }
+.resource-card {
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 83px;
+  padding: 14px 14px;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 12px;
+  background: #FFFBF5;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.resource-card:hover {
+  border-color: #E8C29C;
+  background: linear-gradient(135deg, #FFFBF5, color-mix(in srgb, #E8C29C 8%, #FFFBF5));
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(58,51,46,0.08);
+}
+
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.card-date { font-size: 11px; color: #948A80; }
+.card-title { margin: 0; color: #3A332E; font-size: 14px; font-weight: 500; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pagination-box { display: flex; justify-content: center; margin-top: 24px; }
+
+.text-content {
+  background: #FFF5EB;
+  color: #3A332E;
+  border-radius: 4px 12px 12px 12px;
+  border: 1px solid #EFE6DC;
+  padding: 12px 16px;
+  line-height: 1.6;
+  word-break: break-word;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  font-weight: normal;
+}
+.text-content :deep(h1),
+.text-content :deep(h2),
+.text-content :deep(h3) { margin: 12px 0 8px; font-weight: normal; color: #3A332E; font-family: inherit; font-size: inherit; }
+.text-content :deep(p) { margin: 10px 0; color: #3A332E; font-family: inherit; }
+.text-content :deep(ul),
+.text-content :deep(ol) { padding-left: 20px; margin: 10px 0; color: #3A332E; font-family: inherit; }
+.text-content :deep(li) { margin: 6px 0; line-height: 1.7; color: #3A332E; font-family: inherit; }
+.text-content :deep(code) { background: #f5ebdf; padding: 2px 6px; border-radius: 3px; font-size: inherit; font-family: inherit; color: #3A332E; }
+.text-content :deep(strong),
+.text-content :deep(em),
+.text-content :deep(small),
+.text-content :deep(td),
+.text-content :deep(th) { color: #3A332E; font-family: inherit; font-weight: normal; }
+.text-content :deep(pre) { background: #2f3541; color: #f0f4f9; padding: 14px 18px; border-radius: 0 0 6px 6px; overflow-x: auto; margin: 0; }
+.text-content :deep(pre code) { background: none; padding: 0; color: inherit; font-size: 13px; white-space: pre; tab-size: 4; -moz-tab-size: 4; }
+.text-content :deep(.code-block-wrapper) { margin: 12px 0; border-radius: 6px; overflow: hidden; }
+.text-content :deep(.code-header) { display: flex; justify-content: space-between; align-items: center; background: #21252b; padding: 6px 14px; border-radius: 6px 6px 0 0; }
+.text-content :deep(.code-lang) { font-size: 11px; color: #3A332E; text-transform: uppercase; }
+.text-content :deep(.code-copy-btn) { font-size: 11px; color: #3A332E; cursor: pointer; padding: 2px 8px; border-radius: 3px; transition: all 0.15s; user-select: none; }
 .text-content :deep(.code-copy-btn:hover) { color: #fff; background: rgba(255,255,255,0.1); }
-.text-content :deep(blockquote) { border-left: 3px solid var(--color-primary); margin: 10px 0; padding: 6px 14px; color: var(--text-regular); background: var(--color-primary-bg); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.text-content :deep(blockquote) { border-left: 3px solid #e35749; padding: 4px 12px; margin: 8px 0; color: #3A332E; background: rgba(227,87,73,0.08); }
+.text-content :deep(table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.text-content :deep(th),
+.text-content :deep(td) { border: 1px solid #EFE6DC; padding: 6px 10px; text-align: left; }
+.text-content :deep(th) { background: #FFF5EB; font-weight: 600; }
+.text-content :deep(strong) { font-weight: 700; }
+.text-content :deep(a) { color: #3A332E; text-decoration: none; }
+.text-content :deep(a:hover) { text-decoration: underline; }
+.text-content :deep(.math-block) { display: block; text-align: center; margin: 14px 0; overflow-x: auto; }
+.text-content :deep(.math-inline) { padding: 0 2px; }
 
-.video-viewer { background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid var(--border-light); overflow: hidden; }
+.video-viewer {
+  background: #FFFBF5;
+  border-radius: 12px;
+  border: 1px solid #EFE6DC;
+  overflow: hidden;
+}
 .video-embed-wrap { position: relative; width: 100%; padding-top: 56.25%; background: #000; }
 .bili-iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; }
 .video-fallback { padding: 32px; text-align: center; }
-.video-fallback a { color: var(--color-primary); text-decoration: none; font-size: 15px; }
+.video-fallback a { color: #DBA878; text-decoration: none; font-size: 15px; }
 .video-meta { padding: 14px 18px; }
-.video-source { font-size: 12px; color: var(--text-secondary); }
-.video-reason { margin: 6px 0 0; color: var(--text-regular); font-size: 14px; line-height: 1.6; }
-</style>
+.video-source { font-size: 12px; color: #948A80; }
+.video-reason { margin: 6px 0 0; color: #3A332E; font-size: 14px; line-height: 1.6; }
 
+@keyframes floatUpIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-up {
+  opacity: 0;
+  animation: floatUpIn 0.55s cubic-bezier(0.2, 0.75, 0.22, 1) forwards;
+}
+.animate-delay-1 { animation-delay: 0.08s; }
+.animate-delay-2 { animation-delay: 0.16s; }
+.animate-delay-3 { animation-delay: 0.28s; }
+.animate-delay-4 { animation-delay: 0.40s; }
+
+.resource-card.animate-up { animation-duration: 0.4s; }
+.resource-card:nth-child(1) { animation-delay: 0.10s; }
+.resource-card:nth-child(2) { animation-delay: 0.14s; }
+.resource-card:nth-child(3) { animation-delay: 0.18s; }
+.resource-card:nth-child(4) { animation-delay: 0.22s; }
+.resource-card:nth-child(5) { animation-delay: 0.26s; }
+.resource-card:nth-child(6) { animation-delay: 0.30s; }
+.resource-card:nth-child(7) { animation-delay: 0.34s; }
+.resource-card:nth-child(8) { animation-delay: 0.38s; }
+.resource-card:nth-child(9) { animation-delay: 0.42s; }
+.resource-card:nth-child(10) { animation-delay: 0.46s; }
+.resource-card:nth-child(11) { animation-delay: 0.50s; }
+.resource-card:nth-child(12) { animation-delay: 0.54s; }
+
+@media (max-width: 1024px) {
+  .resource-list { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+}
+@media (max-width: 640px) {
+  .resource-list { grid-template-columns: 1fr; gap: 12px; }
+}
+
+.sa-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+}
+.sa-empty-text {
+  margin: 0;
+  font-size: 14px;
+  color: #948A80;
+  text-align: center;
+  line-height: 1.8;
+}
+.card-deco {
+  display: flex;
+  justify-content: flex-end;
+  opacity: 0.25;
+  margin-top: auto;
+}
+</style>

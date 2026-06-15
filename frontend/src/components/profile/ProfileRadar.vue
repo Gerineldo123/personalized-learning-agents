@@ -39,9 +39,9 @@ function renderChart() {
       {
         type: 'radar',
         data: [{ value: values, name: '当前水平' }],
-        areaStyle: { color: 'rgba(64, 158, 255, 0.2)' },
-        lineStyle: { color: '#409eff' },
-        itemStyle: { color: '#409eff' },
+        areaStyle: { color: 'rgba(249, 217, 184, 0.25)' },
+        lineStyle: { color: '#DBA878' },
+        itemStyle: { color: '#DBA878' },
       },
     ],
   })

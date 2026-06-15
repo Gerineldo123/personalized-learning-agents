@@ -94,37 +94,32 @@ async function submit() {
 
 <style scoped>
 .auth-wrap {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(160deg, #f0f4ff 0%, #f8f5ff 40%, #fff5f5 100%);
+  min-height: calc(100vh - 48px);
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%);
 }
-html.dark .auth-wrap {
-  background: linear-gradient(160deg, #0f1119 0%, #151230 40%, #1a1218 100%);
-}
-
 .auth-card {
   width: 420px;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--shadow-xl);
-  animation: fadeIn 0.5s ease;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 12px;
 }
 .auth-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
+  color: #3A332E;
+  font-size: 20px;
+  font-weight: 500;
 }
 .submit-btn {
   width: 100%;
-  margin-top: 12px;
-  height: 44px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: var(--radius-md);
+  margin-top: 8px;
+  background: #F9D9B8;
+  color: #3A332E;
+  border-radius: 8px;
+  border: none;
 }
+.submit-btn:hover { background: #E8C29C; }
 </style>

@@ -119,7 +119,7 @@ async function generateResources() {
 function progressColor(p: number) {
   if (p >= 1) return '#67c23a'
   if (p >= 0.5) return '#e6a23c'
-  return '#409eff'
+  return '#DBA878'
 }
 
 onMounted(loadPaths)

@@ -193,7 +193,7 @@ function getStepIcon(stepType: string): string {
 .timeline-card-wrapper { flex: 1; min-width: 0; padding-bottom: 16px; }
 .executing-indicator { padding: 20px; color: var(--text-secondary); font-style: italic; animation: fade-pulse 1.5s ease-in-out infinite; }
 
-@keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(91,127,255,0.4); } 50% { box-shadow: 0 0 0 8px rgba(91,127,255,0); } }
+@keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(249,217,184,0.6); } 50% { box-shadow: 0 0 0 8px rgba(249,217,184,0); } }
 @keyframes fade-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 </style>

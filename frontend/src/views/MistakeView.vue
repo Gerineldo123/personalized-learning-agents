@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
+import SausageIcon from '../components/SausageIcon.vue'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
@@ -23,7 +24,7 @@ const pendingReview = ref<Record<number, any[]>>({})
 const reviewAnswers = ref<Record<string, string>>({})
 const reviewCorrectCount = ref<Record<string, number>>({})
 const reviewAttempts = ref<Record<string, number>>({})
-const reviewAnalyses = ref<Record<string, any>>({})
+const reviewAnalyses = ref<Record<string, any>>()
 const pendingReviewRemove = ref<{ mistakeId: number; ri: number; item: any } | null>(null)
 let reviewRemoveTimer: ReturnType<typeof setTimeout> | null = null
 let undoTimer: ReturnType<typeof setTimeout> | null = null
@@ -389,7 +390,7 @@ function renderMath(text: string): string {
 
 <template>
   <div class="mistake-view">
-    <div class="header">
+    <div class="header animate-up animate-delay-1">
       <h2>错题本</h2>
       <div class="ops">
         <el-button @click="loadMistakes">刷新</el-button>
@@ -408,11 +409,14 @@ function renderMath(text: string): string {
       <el-button size="small" type="primary" text @click="undoReviewRemove">撤回</el-button>
     </div>
 
-    <div v-loading="loading">
-      <el-empty v-if="items.length === 0 && !expandedId" description="暂无错题" />
+    <div v-loading="loading" class="animate-up animate-delay-2">
+      <div v-if="items.length === 0 && !expandedId" class="sa-empty">
+        <SausageIcon :size="72" animate />
+        <p class="sa-empty-text">还没有错题记录<br/>继续保持好状态！</p>
+      </div>
 
       <template v-if="expandedId">
-        <div v-for="m in items.filter(i => i.id === expandedId)" :key="m.id" class="m-card expanded">
+        <div v-for="m in items.filter(i => i.id === expandedId)" :key="m.id" class="m-card expanded animate-up animate-delay-1">
           <div class="m-head">
             <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
               {{ isWrong(m) ? '答错' : '手动加入' }}
@@ -424,35 +428,35 @@ function renderMath(text: string): string {
           <div class="m-expand">
             <div v-if="analyzing && !analyses[m.id]" class="m-loading">分析中...</div>
             <template v-else-if="analyses[m.id]">
-              <div class="m-section" v-if="isWrong(m)">
+              <div class="m-section animate-up animate-delay-1" v-if="isWrong(m)">
                 <div class="m-label">错误分析</div>
                 <div class="m-text" v-html="renderMath(analyses[m.id].error_analysis || '无')"></div>
               </div>
-              <div class="m-section">
+              <div class="m-section animate-up animate-delay-2">
                 <div class="m-label">你的选择</div>
                 <div class="m-answer wrong" v-html="renderMath(getOptionText(m.question, m.user_answer))"></div>
               </div>
-              <div class="m-section">
+              <div class="m-section animate-up animate-delay-2">
                 <div class="m-label">正确答案</div>
                 <div class="m-answer correct" v-html="renderMath(getOptionText(m.question, m.correct_answer))"></div>
               </div>
-              <div class="m-section" v-if="m.question?.explanation">
+              <div class="m-section animate-up animate-delay-2" v-if="m.question?.explanation">
                 <div class="m-label">解析</div>
                 <div class="m-text" v-html="renderMath(m.question.explanation)"></div>
               </div>
-              <div class="m-section" v-if="analyses[m.id].confused_points?.length">
+              <div class="m-section animate-up animate-delay-3" v-if="analyses[m.id].confused_points?.length">
                 <div class="m-label">混淆知识点</div>
                 <div class="m-tags">
                   <el-tag v-for="pt in analyses[m.id].confused_points" :key="pt" size="small" type="warning">{{ pt }}</el-tag>
                 </div>
               </div>
-              <div class="m-section" v-if="analyses[m.id].weak_points?.length">
+              <div class="m-section animate-up animate-delay-3" v-if="analyses[m.id].weak_points?.length">
                 <div class="m-label">薄弱知识点</div>
                 <div class="m-tags">
                   <el-tag v-for="pt in analyses[m.id].weak_points" :key="pt" size="small" type="danger">{{ pt }}</el-tag>
                 </div>
               </div>
-              <div class="m-section" v-if="analyses[m.id].key_concepts?.length">
+              <div class="m-section animate-up animate-delay-3" v-if="analyses[m.id].key_concepts?.length">
                 <div class="m-label">核心知识点</div>
                 <div class="m-tags">
                   <el-tag v-for="pt in analyses[m.id].key_concepts" :key="pt" size="small">{{ pt }}</el-tag>
@@ -460,7 +464,7 @@ function renderMath(text: string): string {
               </div>
             </template>
 
-            <div v-if="reviewProblems[m.id]?.length" class="m-review">
+            <div v-if="reviewProblems[m.id]?.length" class="m-review animate-up animate-delay-2">
               <div class="m-review-header">错题回顾</div>
               <div
                 v-for="(r, ri) in reviewProblems[m.id]"
@@ -529,7 +533,7 @@ function renderMath(text: string): string {
               </div>
             </div>
 
-            <div class="m-similar-bar">
+            <div class="m-similar-bar animate-up animate-delay-2">
               <el-button
                 type="primary"
                 size="small"
@@ -540,7 +544,7 @@ function renderMath(text: string): string {
               </el-button>
             </div>
 
-            <div v-if="similarProblems[m.id]?.length" class="m-similar">
+            <div v-if="similarProblems[m.id]?.length" class="m-similar animate-up animate-delay-2">
               <div
                 v-for="(p, pi) in similarProblems[m.id]"
                 :key="pi"
@@ -606,7 +610,7 @@ function renderMath(text: string): string {
               <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
                 {{ isWrong(m) ? '答错' : '手动加入' }}
               </el-tag>
-            <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
+              <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
               <el-button size="small" text type="danger" @click.stop="removeItem(m.id)">移除</el-button>
             </div>
           </div>
@@ -617,9 +621,9 @@ function renderMath(text: string): string {
 </template>
 
 <style scoped>
-.mistake-view { max-width: 900px; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.header h2 { margin: 0; }
+.mistake-view { max-width: 1280px; padding: 28px 20px 34px; margin: 0 auto; box-sizing: border-box; background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%); }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.header h2 { margin: 0; color: #3A332E; font-size: 24px; font-weight: 600; }
 .ops { display: flex; gap: 8px; }
 .m-group { margin-bottom: 20px; }
 
@@ -627,127 +631,186 @@ function renderMath(text: string): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--color-warning-bg);
-  border: 1px solid rgba(250,140,22,0.2);
-  border-radius: var(--radius-md);
-  padding: 10px 16px;
-  margin-bottom: 16px;
+  background: rgba(249,217,184,0.15);
+  border: 1px solid #EFE6DC;
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 14px;
   font-size: 13px;
-  color: var(--color-warning);
+  color: #6B635C;
   position: fixed;
-  top: 70px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   width: 900px;
-  max-width: calc(100vw - 260px);
+  max-width: 1280px;
   z-index: 100;
-  box-shadow: var(--shadow-lg);
 }
 
 .m-back {
   font-size: 14px;
-  color: var(--color-primary);
+  color: #DBA878;
   cursor: pointer;
   padding: 8px 0;
-  margin-bottom: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-weight: 500;
-  transition: color var(--transition-fast);
+  margin-bottom: 12px;
+  display: block;
+  text-align: left;
   user-select: none;
 }
-.m-back:hover { color: var(--color-primary-light); }
+.m-back:hover { color: #DBA878; }
 
 .m-group-header {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
+  color: #3A332E;
   padding: 6px 0;
   margin-bottom: 8px;
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid #EFE6DC;
 }
 
 .m-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  background: #FFFBF5;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 12px;
   padding: 14px 16px;
   margin-bottom: 10px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.m-card:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+
+.m-card:hover { box-shadow: 0 2px 8px rgba(58,51,46,0.08); }
 
 .m-head { display: flex; align-items: center; gap: 10px; }
-.m-q-text { flex: 1; font-size: 14px; line-height: 1.5; }
+.m-q-text { flex: 1; color: #3A332E; font-size: 14px; line-height: 1.5; text-align: left; }
 
-.m-expand { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-light); }
+.m-expand { margin-top: 14px; padding-top: 14px; border-top: 1px solid #EFE6DC; }
 
-.m-section { margin-bottom: 14px; text-align: left; }
-.m-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 500; }
-.m-text { font-size: 13px; color: var(--text-regular); line-height: 1.6; text-align: left; }
-.m-answer { font-size: 14px; font-weight: 600; padding: 6px 12px; border-radius: var(--radius-sm); display: block; text-align: left; }
-.m-answer.wrong { background: var(--color-danger-bg); color: var(--color-danger); }
-.m-answer.correct { background: var(--color-success-bg); color: var(--color-success); }
+.m-section { margin-bottom: 12px; text-align: left; }
+.m-label { font-size: 12px; color: #948A80; margin-bottom: 4px; font-weight: 500; text-align: left; }
+.m-text { font-size: 13px; color: #6B635C; line-height: 1.6; text-align: left; }
+.m-answer { font-size: 14px; font-weight: 600; padding: 4px 10px; border-radius: 4px; display: block; text-align: left; }
+.m-answer.wrong { background: rgba(242,184,162,0.12); color: #F2B8A2; }
+.m-answer.correct { background: rgba(152,201,179,0.15); color: #98C9B3; }
 .m-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.m-loading { color: var(--text-secondary); font-size: 13px; padding: 8px 0; }
+.m-loading { color: #948A80; font-size: 13px; padding: 8px 0; }
 
-.m-similar-bar { display: flex; justify-content: flex-end; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--border-light); }
+.m-similar-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #EFE6DC;
+}
 
-.m-review { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-light); }
-.m-review-header { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.m-review { margin-top: 14px; padding-top: 12px; border-top: 1px solid #EFE6DC; }
+.m-review-header { font-size: 14px; font-weight: 500; color: #3A332E; margin-bottom: 10px; }
 
 .m-review-item {
-  background: var(--color-warning-bg);
-  border: 1px solid rgba(250,140,22,0.2);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
+  background: rgba(249,217,184,0.15);
+  border: 1px solid #EFE6DC;
+  border-radius: 8px;
+  padding: 12px 14px;
   margin-bottom: 10px;
 }
-.m-review-item-head { display: flex; align-items: flex-start; justify-content: space-between; }
-.m-review-remove-btn { flex-shrink: 0; margin-left: 8px; }
-.m-review-meta { display: flex; justify-content: flex-end; align-items: center; margin-top: 8px; font-size: 12px; gap: 12px; }
-.m-mastery-hint { color: var(--color-success); font-weight: 500; text-align: center; padding-top: 6px; }
-.m-review-correct { color: var(--color-success); font-weight: 500; }
-.m-opt-static { font-size: 13px; color: var(--text-regular); padding: 2px 8px; }
 
-.m-similar { margin-top: 16px; }
+.m-review-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.m-review-remove-btn {
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.m-review-meta {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #948A80;
+  gap: 12px;
+}
+
+.m-mastery-hint { color: #98C9B3; font-weight: 500; text-align: center; padding-top: 6px; }
+
+.m-review-correct { color: #98C9B3; font-weight: 500; }
+
+.m-opt-static { font-size: 13px; color: #6B635C; padding: 2px 8px; }
+
+.m-similar { margin-top: 14px; }
+
 .m-similar-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
+  background: #FFF5EB;
+  border: 1px solid #EFE6DC;
+  border-radius: 8px;
+  padding: 12px 14px;
   margin-bottom: 10px;
 }
-.m-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+
+.m-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .m-opt-btn {
   font-size: 13px;
-  color: var(--text-regular);
-  padding: 6px 16px;
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
+  color: #6B635C;
+  padding: 4px 14px;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all 0.15s;
   text-align: left;
 }
-.m-opt-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
-.m-opt-btn.selected.correct { background: var(--color-success-bg); border-color: var(--color-success); color: var(--color-success); }
-.m-opt-btn.selected.wrong { background: var(--color-danger-bg); border-color: var(--color-danger); color: var(--color-danger); }
+.m-opt-btn:hover { border-color: #DBA878; color: #DBA878; }
+.m-opt-btn.selected.correct { background: rgba(152,201,179,0.15); border-color: #98C9B3; color: #98C9B3; }
+.m-opt-btn.selected.wrong { background: rgba(242,184,162,0.12); border-color: #F2B8A2; color: #F2B8A2; }
 
-.m-similar-result { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-light); }
-.m-similar-answer { font-size: 13px; color: var(--color-success); margin: 6px 0; text-align: left; }
-.m-similar-label { color: var(--text-secondary); font-weight: 400; }
-.m-wrong-count { font-size: 12px; color: var(--color-danger); margin-top: 6px; text-align: right; }
+.m-similar-result { margin-top: 10px; padding-top: 10px; border-top: 1px solid #EFE6DC; }
+
+.m-similar-answer { font-size: 13px; color: #98C9B3; margin: 6px 0; text-align: left; }
+.m-similar-label { color: #948A80; font-weight: 400; }
+
+.m-wrong-count { font-size: 12px; color: #F2B8A2; margin-top: 6px; text-align: right; }
 
 .m-opt-explanations { margin: 10px 0; }
-.m-opt-exp-item { font-size: 12px; color: var(--text-regular); line-height: 1.7; text-align: left; }
+.m-opt-exp-item { font-size: 12px; color: #6B635C; line-height: 1.7; text-align: left; }
 .m-opt-exp-item b { margin-right: 4px; }
-.c-green { color: var(--color-success); }
-.c-red { color: var(--color-danger); }
-.m-tag-label { font-size: 12px; color: var(--text-secondary); vertical-align: middle; margin-right: 4px; }
+.c-green { color: #98C9B3; }
+.c-red { color: #F2B8A2; }
 
-.m-similar-card .m-text, .m-similar-card .m-q-text { text-align: left; }
-.m-q-text { flex: 1; font-size: 14px; line-height: 1.5; text-align: left; }
+.m-tag-label { font-size: 12px; color: #948A80; vertical-align: middle; margin-right: 4px; }
+
+.m-similar-card .m-text { text-align: left; }
+.m-similar-card .m-q-text { text-align: left; }
+
+@keyframes floatUpIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-up {
+  opacity: 0;
+  animation: floatUpIn 0.55s cubic-bezier(0.2, 0.75, 0.22, 1) forwards;
+}
+.animate-delay-1 { animation-delay: 0.08s; }
+.animate-delay-2 { animation-delay: 0.16s; }
+.animate-delay-3 { animation-delay: 0.24s; }
+
+.sa-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
+}
+.sa-empty-text {
+  margin: 0;
+  font-size: 14px;
+  color: #948A80;
+  text-align: center;
+  line-height: 1.8;
+}
+
 .m-q-text :deep(.math-block) { display: block; text-align: center; margin: 10px 0; overflow-x: auto; }
 .m-q-text :deep(.math-inline) { padding: 0 2px; }
 .m-text :deep(.math-block) { display: block; text-align: center; margin: 10px 0; overflow-x: auto; }

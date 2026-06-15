@@ -267,7 +267,7 @@ async function explainTerm(term: string, x: number, y: number) {
 .markdown-body :deep(.video-cover span) {
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, var(--color-primary) 0%, #a78bfa 100%); font-size: 36px;
+  background: linear-gradient(135deg, #F9D9B8 0%, #E8C29C 100%); font-size: 36px;
 }
 .markdown-body :deep(.video-duration) {
   position: absolute; bottom: 6px; right: 6px;

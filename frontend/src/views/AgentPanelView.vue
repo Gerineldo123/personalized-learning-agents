@@ -644,7 +644,7 @@ const questionPanelOpen = ref(false)
 .chat-msg.user { justify-content: flex-end; }
 .chat-msg.assistant { justify-content: flex-start; }
 .chat-bubble { max-width: 72%; padding: 12px 16px; border-radius: var(--radius-lg); font-size: 14px; line-height: 1.7; word-break: break-word; }
-.chat-msg.user .chat-bubble { background: var(--color-primary); color: #fff; border-bottom-right-radius: var(--radius-sm); white-space: pre-wrap; box-shadow: 0 2px 10px rgba(91,127,255,0.3); }
+.chat-msg.user .chat-bubble { background: var(--brand-dark); color: var(--text-body); border-bottom-right-radius: var(--radius-sm); white-space: pre-wrap; box-shadow: var(--shadow-md); }
 .chat-msg.assistant .chat-bubble { background: var(--bg-card); border: 1px solid var(--border-light); border-bottom-left-radius: var(--radius-sm); box-shadow: var(--shadow-sm); }
 .cursor { animation: blink 1s step-end infinite; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -657,8 +657,8 @@ const questionPanelOpen = ref(false)
 .tab-del:hover { color: var(--color-danger); }
 
 .suggestion-area { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
-.suggestion-btn { background: linear-gradient(135deg, var(--color-primary) 0%, #a78bfa 100%); color: #fff; border: none; border-radius: var(--radius-full); padding: 8px 18px; font-size: 13px; cursor: pointer; transition: all var(--transition-fast); box-shadow: 0 2px 8px rgba(91,127,255,0.3); }
-.suggestion-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(91,127,255,0.4); }
+.suggestion-btn { background: linear-gradient(135deg, var(--brand-dark) 0%, #E8C29C 100%); color: var(--text-body); border: none; border-radius: var(--radius-full); padding: 8px 18px; font-size: 13px; cursor: pointer; transition: all var(--transition-fast); box-shadow: var(--shadow-sm); }
+.suggestion-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .suggestion-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .resource-area { display: flex; flex-wrap: wrap; gap: 8px; }
 .resource-card-inline { display: flex; align-items: center; gap: 8px; background: var(--color-success-bg); border: 1px solid rgba(82,196,26,0.3); border-radius: var(--radius-md); padding: 8px 14px; font-size: 13px; }
