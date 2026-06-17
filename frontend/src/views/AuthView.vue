@@ -97,17 +97,29 @@ async function submit() {
   min-height: calc(100vh - 48px);
   display: grid;
   place-items: center;
+  background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%);
 }
 .auth-card {
   width: 420px;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 12px;
 }
 .auth-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  color: #3A332E;
+  font-size: 20px;
+  font-weight: 500;
 }
 .submit-btn {
   width: 100%;
   margin-top: 8px;
+  background: #F9D9B8;
+  color: #3A332E;
+  border-radius: 8px;
+  border: none;
 }
+.submit-btn:hover { background: #E8C29C; }
 </style>

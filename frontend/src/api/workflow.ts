@@ -1,5 +1,11 @@
 export type WorkflowType = 'study' | 'review' | 'evaluation' | 'video'
 
+export interface ResourceEvent {
+  resource_id: number
+  resource_type: string
+  title: string
+}
+
 export function workflowStream(
   type: WorkflowType,
   userId: string,
@@ -9,6 +15,7 @@ export function workflowStream(
   onStage: (stage: string, data: string) => void,
   onDone: () => void,
   onError: (err: Error) => void,
+  onResource?: (resource: ResourceEvent) => void,
 ) {
   const controller = new AbortController()
 
@@ -38,6 +45,10 @@ export function workflowStream(
             try {
               const parsed = JSON.parse(raw)
               if (parsed.type === 'stage') { onStage(parsed.stage, parsed.data); continue }
+              if (parsed.type === 'resource' && onResource) {
+                onResource({ resource_id: parsed.resource_id, resource_type: parsed.resource_type, title: parsed.title })
+                continue
+              }
             } catch {}
             onChunk(raw)
           }

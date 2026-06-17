@@ -42,3 +42,25 @@ def get_video_model() -> str:
     if is_configured("video"):
         return get_model("video")
     return _get_model()
+
+
+def _build_ppt_kwargs() -> dict:
+    if is_configured("ppt"):
+        return build_client_kwargs("ppt")
+    return _build_kwargs()
+
+
+def _get_ppt_model() -> str:
+    if is_configured("ppt"):
+        return get_model("ppt")
+    return _get_model()
+
+
+async def ppt_completion(messages: list, stream: bool = False, **kwargs):
+    client = AsyncOpenAI(**_build_ppt_kwargs())
+    return await client.chat.completions.create(
+        model=_get_ppt_model(),
+        messages=messages,
+        stream=stream,
+        **kwargs,
+    )

@@ -42,6 +42,8 @@ async def study_content_node(state: AgentGraphState) -> dict:
     )
     result = await _content_agent.process(agent_state)
     article = result.get("response", "")
+    resource_db_id = result.get("resource_db_id")
+    resource_title = state["user_message"]
 
     feedback = {
         "content_generated": bool(article),
@@ -53,7 +55,7 @@ async def study_content_node(state: AgentGraphState) -> dict:
     }
 
     outputs = list(state.get("workflow_outputs") or [])
-    outputs.append({"stage": "content_gen", "data": article})
+    outputs.append({"stage": "content_gen", "data": article, "resource_db_id": resource_db_id, "resource_type": "article", "title": resource_title})
 
     completed = list(state.get("completed_tasks") or [])
     completed.append({"agent": "study_content", "result_summary": f"生成 {len(article)} 字{depth}级别内容"})

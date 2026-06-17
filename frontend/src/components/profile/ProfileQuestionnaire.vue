@@ -475,90 +475,76 @@ defineExpose({ educationLevel, educationYear, discipline, major, crossDiscipline
 <style scoped>
 .q-header { display: flex; align-items: center; }
 .q-step { min-height: 300px; max-height: 520px; overflow-y: auto; }
-.q-step h4 { color: #303133; margin-bottom: 16px; }
-.q-desc { color: #909399; font-size: 13px; margin-bottom: 12px; }
+.q-step h4 { margin-bottom: 16px; }
+.q-desc { color: var(--text-secondary); font-size: 13px; margin-bottom: 12px; }
 
 .level-grid, .discipline-grid { display: flex; gap: 10px; flex-wrap: wrap; }
 .level-card, .disc-card {
   padding: 12px 20px;
-  border-radius: 8px;
-  border: 1px solid #dcdfe6;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-base);
   cursor: pointer;
-  transition: 0.2s;
+  transition: all var(--transition-fast);
   font-size: 14px;
 }
-.level-card:hover, .disc-card:hover { border-color: #409eff; color: #409eff; }
+.level-card:hover, .disc-card:hover { border-color: var(--color-primary); color: var(--color-primary); }
 .level-card.active, .disc-card.active {
-  border-color: #409eff;
-  background: #ecf5ff;
-  color: #409eff;
+  border-color: var(--color-primary);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
   font-weight: 600;
 }
-
 .year-grid { margin-top: 16px; }
 
-/* 专业选择 */
 .selected-major { margin-bottom: 16px; }
 .major-search-row { margin-bottom: 12px; }
 
-.search-results {
-  display: flex; gap: 8px; flex-wrap: wrap;
-  margin-bottom: 12px;
-}
+.search-results { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .search-item {
   padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   cursor: pointer;
   font-size: 14px;
-  transition: 0.15s;
+  transition: all var(--transition-fast);
 }
-.search-item:hover { border-color: #409eff; color: #409eff; }
-.search-item.active { border-color: #409eff; background: #ecf5ff; color: #409eff; font-weight: 600; }
+.search-item:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.search-item.active { border-color: var(--color-primary); background: var(--color-primary-bg); color: var(--color-primary); font-weight: 600; }
 
 .major-tree { margin-bottom: 8px; }
-.cat-title { font-weight: 600; font-size: 14px; color: #303133; }
+.cat-title { font-weight: 600; font-size: 14px; }
 
-.major-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-  padding: 8px 0 12px;
-}
+.major-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; padding: 8px 0 12px; }
 .major-item {
   padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   cursor: pointer;
   font-size: 13px;
-  transition: 0.15s;
+  transition: all var(--transition-fast);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.major-item:hover { border-color: #409eff; color: #409eff; }
-.major-item.active { border-color: #409eff; background: #ecf5ff; color: #409eff; font-weight: 600; }
+.major-item:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.major-item.active { border-color: var(--color-primary); background: var(--color-primary-bg); color: var(--color-primary); font-weight: 600; }
 
 .custom-major { display: flex; align-items: center; }
 
-/* 薄弱课程 */
 .seed-tags { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
 .seed-tag { cursor: pointer; font-size: 14px; }
-
 .search-row { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
-
 .added-courses { margin-top: 8px; }
-.added-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
-.course-name { font-weight: 600; color: #303133; }
-.course-detail { color: #909399; font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.added-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-light); }
+.course-name { font-weight: 600; color: var(--text-primary); }
+.course-detail { color: var(--text-secondary); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 确认 */
-.summary-card { background: #f5f7fa; border-radius: 8px; padding: 20px; }
+.summary-card { background: var(--bg-overlay); border-radius: var(--radius-md); padding: 20px; }
 .summary-row { display: flex; justify-content: space-between; margin-bottom: 12px; }
-.s-label { color: #909399; font-size: 13px; }
-.s-value { color: #303133; font-weight: 500; }
-.course-summary { display: flex; align-items: center; gap: 8px; padding: 8px; background: #fff; border-radius: 4px; margin-bottom: 6px; }
-.course-summary span { color: #606266; font-size: 13px; }
+.s-label { color: var(--text-secondary); font-size: 13px; }
+.s-value { color: var(--text-primary); font-weight: 500; }
+.course-summary { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-card); border-radius: var(--radius-sm); margin-bottom: 6px; border: 1px solid var(--border-light); }
+.course-summary span { color: var(--text-regular); font-size: 13px; }
 
 .q-footer { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

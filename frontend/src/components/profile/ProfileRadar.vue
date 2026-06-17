@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import * as echarts from 'echarts'
 
 interface KnowledgeBase {
@@ -9,20 +9,10 @@ interface KnowledgeBase {
 const props = defineProps<{
   knowledgeBase: KnowledgeBase
   title?: string
-  color?: string
 }>()
 
 const chartRef = ref<HTMLElement | null>(null)
 let chart: echarts.ECharts | null = null
-
-const accentColor = computed(() => props.color || '#409eff')
-
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
 
 function renderChart() {
   if (!chartRef.value) return
@@ -49,27 +39,16 @@ function renderChart() {
       {
         type: 'radar',
         data: [{ value: values, name: '当前水平' }],
-        areaStyle: { color: hexToRgba(accentColor.value, 0.2) },
-        lineStyle: { color: accentColor.value },
-        itemStyle: { color: accentColor.value },
+        areaStyle: { color: 'rgba(249, 217, 184, 0.25)' },
+        lineStyle: { color: '#DBA878' },
+        itemStyle: { color: '#DBA878' },
       },
     ],
   })
 }
 
-onMounted(async () => {
-  await nextTick()
-  renderChart()
-  await nextTick()
-  chart?.resize()
-})
-
-watch(() => props.knowledgeBase, async () => {
-  await nextTick()
-  renderChart()
-  await nextTick()
-  chart?.resize()
-}, { deep: true })
+onMounted(() => renderChart())
+watch(() => props.knowledgeBase, () => renderChart(), { deep: true })
 </script>
 
 <template>
@@ -80,12 +59,11 @@ watch(() => props.knowledgeBase, async () => {
 
 <style scoped>
 .profile-radar {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
   padding: 20px;
 }
-
 .chart {
   width: 100%;
   height: 260px;

@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {"id": "微观经济学", "category": 0, "value": 0},
+    {"id": "宏观经济学", "category": 0, "value": 0},
+    {"id": "政治经济学", "category": 0, "value": 0},
+    {"id": "统计学", "category": 1, "value": 0},
+    {"id": "计量经济学", "category": 1, "value": 0},
+    {"id": "货币银行学", "category": 2, "value": 0},
+    {"id": "国际经济学", "category": 2, "value": 0},
+    {"id": "财政学", "category": 2, "value": 0},
+    {"id": "产业经济学", "category": 3, "value": 0},
+    {"id": "发展经济学", "category": 3, "value": 0}
+  ],
+  "links": [
+    {"source": "微观经济学", "target": "产业经济学"},
+    {"source": "微观经济学", "target": "国际经济学"},
+    {"source": "宏观经济学", "target": "货币银行学"},
+    {"source": "宏观经济学", "target": "财政学"},
+    {"source": "宏观经济学", "target": "发展经济学"},
+    {"source": "统计学", "target": "计量经济学"},
+    {"source": "微观经济学", "target": "计量经济学"},
+    {"source": "宏观经济学", "target": "计量经济学"}
+  ],
+  "categories": [
+    {"name": "经济学基础"},
+    {"name": "定量分析"},
+    {"name": "应用经济"},
+    {"name": "发展与产业"}
+  ]
+}

@@ -5,6 +5,7 @@ from core.database import SessionLocal
 from models.student import StudentProfile
 from models.quiz_record import QuizRecord
 from models.conversation import Conversation, ChatMessage
+from models.profile_history import ProfileHistory
 
 EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供的多维数据，更新学生画像，只返回JSON：
 
@@ -41,7 +42,7 @@ class ProfileAgent(BaseAgent):
     name = "profile"
     description = "通过对话构建和更新学生学习画像"
 
-    async def process(self, state: AgentState) -> AgentState:
+    async def process(self, state: AgentState, trigger: str = "chat") -> AgentState:
         user_id = state.user_id
 
         db = SessionLocal()
@@ -72,6 +73,8 @@ class ProfileAgent(BaseAgent):
 
             extracted = json.loads(raw)
 
+            old_snapshot = self._profile_dict(old_profile) if old_profile else {}
+
             if old_profile:
                 self._merge_profile(old_profile, extracted)
             else:
@@ -86,10 +89,31 @@ class ProfileAgent(BaseAgent):
             db.commit()
             db.refresh(old_profile)
 
+            # 写历史快照（记录本次变化的维度）
+            new_snapshot = self._profile_dict(old_profile)
+            delta = {
+                k: {"from": old_snapshot.get(k), "to": new_snapshot.get(k)}
+                for k in ("knowledge_base", "weak_points", "ability_scores",
+                          "focus_stamina_score", "cognitive_style")
+                if old_snapshot.get(k) != new_snapshot.get(k)
+            }
+            db.add(ProfileHistory(
+                user_id=user_id,
+                trigger=trigger,
+                snapshot={
+                    "ability_scores": new_snapshot.get("ability_scores") or {},
+                    "knowledge_base": new_snapshot.get("knowledge_base") or {},
+                    "weak_points": new_snapshot.get("weak_points") or [],
+                    "focus_stamina_score": new_snapshot.get("focus_stamina_score"),
+                },
+                delta=delta,
+            ))
+            db.commit()
+
             state["response"] = json.dumps({
                 "agent": self.name,
                 "action": "profile_updated",
-                "profile": self._profile_dict(old_profile),
+                "profile": new_snapshot,
             }, ensure_ascii=False)
             state["profile"] = old_profile
 

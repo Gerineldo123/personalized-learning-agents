@@ -13,9 +13,11 @@ async def study_mindmap_node(state: AgentGraphState) -> dict:
     )
     result = await _mindmap_agent.process(agent_state)
     mindmap = result.get("response", "")
+    resource_db_id = result.get("resource_db_id")
+    resource_title = state["user_message"]
 
     outputs = list(state.get("workflow_outputs") or [])
-    outputs.append({"stage": "mindmap", "data": mindmap})
+    outputs.append({"stage": "mindmap", "data": mindmap, "resource_db_id": resource_db_id, "resource_type": "mindmap", "title": resource_title})
 
     completed = list(state.get("completed_tasks") or [])
     completed.append({"agent": "study_mindmap", "result_summary": "生成思维导图"})

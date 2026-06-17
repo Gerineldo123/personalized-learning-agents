@@ -26,6 +26,17 @@ def create_session(body: FocusSessionIn, user_id: str, db: Session = Depends(get
     db.add(session)
     db.commit()
     db.refresh(session)
+
+    # 专注会话结束后异步更新画像（仅完成时）
+    if body.completed:
+        import asyncio as _asyncio
+        from agents.profile_agent import ProfileAgent
+        from agents.base import AgentState as _AgentState
+        _asyncio.create_task(ProfileAgent().process(
+            _AgentState(user_id=user_id, user_message=f"刚完成一次专注，时长{body.duration_min}分钟，更新专注行为画像"),
+            trigger="focus",
+        ))
+
     return {"id": session.id}
 
 

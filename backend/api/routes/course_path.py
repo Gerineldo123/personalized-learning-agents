@@ -46,6 +46,25 @@ COURSE_PATH_PROMPT = """你是一个学习路径规划专家。根据学生在�
 只返回JSON，不要其他内容。"""
 
 
+@router.get("/list")
+def list_course_paths(user_id: str):
+    db = SessionLocal()
+    try:
+        paths = db.query(CoursePath).filter(
+            CoursePath.user_id == user_id,
+            CoursePath.status.in_(["active", "completed"]),
+        ).order_by(CoursePath.updated_at.desc()).all()
+        return {"items": [
+            {"id": p.id, "course_name": p.course_name, "steps": p.steps,
+             "total_steps": p.total_steps, "done_steps": p.done_steps,
+             "progress": p.progress, "status": p.status,
+             "created_at": p.created_at.isoformat() if p.created_at else None}
+            for p in paths
+        ]}
+    finally:
+        db.close()
+
+
 @router.get("")
 def get_course_path(user_id: str, course_name: str):
     db = SessionLocal()
@@ -97,6 +116,17 @@ def update_step_status(path_id: int, step_order: int, done: bool = True):
             path.status = "completed"
         db.commit()
         db.refresh(path)
+
+        # 步骤完成时异步更新画像
+        if done:
+            step_title = next((s.get("title", "") for s in steps if s.get("order") == step_order), "")
+            import asyncio as _asyncio
+            from agents.profile_agent import ProfileAgent
+            from agents.base import AgentState as _AgentState
+            _asyncio.create_task(ProfileAgent().process(
+                _AgentState(user_id=path.user_id, user_message=f"完成学习路径步骤「{step_title}」（{path.course_name}），更新知识掌握画像"),
+                trigger="path_step",
+            ))
         return {
             "ok": True,
             "id": path.id,

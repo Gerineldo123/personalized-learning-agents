@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from core.database import engine, Base
 from core.exceptions import AppException, AgentNotFoundError
 from models.student import StudentProfile
@@ -12,7 +13,7 @@ from models.mistake_question import MistakeQuestion
 from models.course_path import CoursePath
 from models.focus import FocusSession
 from models.user import User
-from models.weak_point import WeakPoint
+from models.profile_history import ProfileHistory
 
 Base.metadata.create_all(bind=engine)
 
@@ -66,6 +67,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 挂载静态文件目录，供下载 .pptx 等文件
+import os as _os
+_static_dir = _os.path.join(_os.path.dirname(__file__), "static")
+_os.makedirs(_os.path.join(_static_dir, "ppt"), exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 
 @app.exception_handler(AppException)
 async def app_exception_handler(request: Request, exc: AppException):
@@ -98,6 +105,7 @@ from agents.mindmap_agent import MindMapAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.chat_agent import ChatAgent
 from agents.video_agent import VideoAgent
+from agents.skills import init_skills
 
 register(ProfileAgent())
 register(ContentGenAgent())
@@ -106,9 +114,12 @@ register(EvaluationAgent())
 register(ChatAgent())
 register(VideoAgent())
 
+# 初始化 Skill 系统
+init_skills()
+
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -124,6 +135,7 @@ app.include_router(auth.router)
 app.include_router(focus.router)
 app.include_router(workflow.router)
 app.include_router(weak_point.router)
+app.include_router(agent_panel.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

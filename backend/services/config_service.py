@@ -30,13 +30,22 @@ def _load_configs() -> dict[str, ApiConfig]:
             api_key=os.getenv("VIDEO_API_KEY", ""),
             api_secret=os.getenv("VIDEO_API_SECRET", ""),
         ),
+        "tavily": ApiConfig(
+            api_key=os.getenv("TAVILY_API_KEY", ""),
+        ),
+        "ppt": ApiConfig(
+            base_url=os.getenv("PPT_BASE_URL", ""),
+            api_key=os.getenv("PPT_API_KEY", ""),
+            api_secret=os.getenv("PPT_API_SECRET", ""),
+            model=os.getenv("PPT_MODEL", ""),
+        ),
     }
 
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for key in ("main", "video"):
+            for key in ("main", "video", "tavily", "ppt"):
                 json_cfg = data.get(key, {})
                 cfg = configs[key]
                 if json_cfg.get("base_url"):
@@ -58,6 +67,8 @@ def _save_configs(configs: dict[str, ApiConfig]):
         json.dump({
             "main": configs["main"].model_dump(),
             "video": configs["video"].model_dump(),
+            "tavily": configs["tavily"].model_dump(),
+            "ppt": configs["ppt"].model_dump(),
         }, f, ensure_ascii=False, indent=2)
 
 
@@ -114,3 +125,35 @@ def get_model(config_key: str = "main") -> str:
 def is_configured(config_key: str = "main") -> bool:
     cfg = _configs.get(config_key, _configs["main"])
     return bool(cfg.api_key and cfg.base_url)
+
+
+def get_tavily_config() -> ApiConfig:
+    return _configs["tavily"]
+
+
+def set_tavily_config(cfg: ApiConfig):
+    fields = cfg.model_fields_set
+    if "api_key" in fields:
+        _configs["tavily"].api_key = cfg.api_key
+    _save_configs(_configs)
+
+
+def get_tavily_api_key() -> str:
+    return _configs["tavily"].api_key
+
+
+def get_ppt_config() -> ApiConfig:
+    return _configs["ppt"]
+
+
+def set_ppt_config(cfg: ApiConfig):
+    fields = cfg.model_fields_set
+    if "model" in fields:
+        _configs["ppt"].model = cfg.model
+    if "base_url" in fields:
+        _configs["ppt"].base_url = cfg.base_url
+    if "api_key" in fields:
+        _configs["ppt"].api_key = cfg.api_key
+    if "api_secret" in fields:
+        _configs["ppt"].api_secret = cfg.api_secret
+    _save_configs(_configs)

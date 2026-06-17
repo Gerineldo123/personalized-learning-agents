@@ -23,7 +23,7 @@ async def quiz_gen_node(state: AgentGraphState) -> dict:
     resource_db_id = result.get("resource_db_id")
 
     outputs = list(state.get("workflow_outputs") or [])
-    outputs.append({"stage": "quiz", "data": quiz, "resource_db_id": resource_db_id})
+    outputs.append({"stage": "quiz", "data": quiz, "resource_db_id": resource_db_id, "resource_type": "quiz", "title": state["user_message"]})
 
     completed = list(state.get("completed_tasks") or [])
     completed.append({"agent": "quiz_gen", "result_summary": "生成练习题"})

@@ -29,3 +29,5 @@ class AgentGraphState(TypedDict):
 
     # 跨模块共享
     all_modules_data: NotRequired[dict]
+    _sse_queue: NotRequired[Any]   # asyncio.Queue，用于 skill 实时推送 SSE
+    _session_id: NotRequired[str]  # 对应 _sse_queues 全局字典的 key

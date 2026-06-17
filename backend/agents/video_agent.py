@@ -3,6 +3,9 @@ import httpx
 from urllib.parse import quote
 from agents.base import BaseAgent, AgentState
 from core.llm_client import chat_completion
+from core.database import SessionLocal
+from models.resource import LearningResource
+from services.rag_service import index_resource
 
 KEYWORD_PROMPT = """你是教学视频推荐助手。根据学生画像，推荐 2~3 个 B站 搜索关键词。
 
@@ -65,6 +68,7 @@ class VideoAgent(BaseAgent):
         keywords = kw_result.get("keywords", [])
         videos = await self._search_bilibili(keywords[:3])
 
+        self._save_videos(state, videos, kw_result.get("search_summary", ""))
         state["response"] = json.dumps({
             "agent": "video",
             "videos": videos,
@@ -72,13 +76,35 @@ class VideoAgent(BaseAgent):
         }, ensure_ascii=False)
         return state
 
+    def _save_videos(self, state: AgentState, videos: list[dict], summary: str):
+        if not videos:
+            return
+        db = SessionLocal()
+        try:
+            for v in videos:
+                title = v.get("title") or "视频推荐"
+                resource = LearningResource(
+                    user_id=state.user_id,
+                    resource_type="video",
+                    title=title,
+                    content=v,
+                    tags=["video"],
+                )
+                db.add(resource)
+                db.flush()
+                index_resource(resource.id, state.user_id or "", title, "video")
+            db.commit()
+        finally:
+            db.close()
+
     async def _search_bilibili(self, keywords: list[dict]) -> list[dict]:
         results = []
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Referer": "https://www.bilibili.com/",
         }
-        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+            await client.get("https://www.bilibili.com/")
             for kw in keywords:
                 query = kw.get("query", "")
                 if not query:
@@ -98,9 +124,14 @@ class VideoAgent(BaseAgent):
                         found = True
                         arcurl = v.get("arcurl", "")
                         url = arcurl if arcurl and "video" in arcurl else BILI_VIDEO_URL.format(bvid)
+                        pic = v.get("pic", "")
+                        if pic and not pic.startswith("http"):
+                            pic = "https:" + pic
                         results.append({
-                            "title": v.get("title", query),
+                            "title": v.get("title", query).replace('<em class="keyword">', "").replace("</em>", ""),
                             "url": url,
+                            "cover": pic,
+                            "duration": v.get("duration", ""),
                             "source": f"B站 · {v.get('author', '') or ''} · {self._fmt_play(v.get('play', 0))}播放",
                             "reason": kw.get("reason", ""),
                         })

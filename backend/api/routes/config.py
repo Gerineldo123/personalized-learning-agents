@@ -3,7 +3,8 @@ from fastapi import APIRouter
 from services.config_service import (
     ApiConfig,
     get_main_config, set_main_config,
-    get_video_config, set_video_config,
+    get_tavily_config, set_tavily_config,
+    get_ppt_config, set_ppt_config,
     build_client_kwargs,
     get_model,
 )
@@ -105,9 +106,41 @@ def list_main_models():
     return _list_models("main")
 
 
-@router.get("/video")
-def get_video():
-    cfg = get_video_config()
+@router.get("/tavily")
+def get_tavily():
+    cfg = get_tavily_config()
+    return {
+        "api_key": _mask_key(cfg.api_key),
+        "has_key": bool(cfg.api_key),
+    }
+
+
+@router.post("/tavily")
+def update_tavily(body: ApiConfig):
+    set_tavily_config(body)
+    return {"ok": True}
+
+
+@router.post("/tavily/test")
+async def test_tavily():
+    from agents.tools import tavily_search
+    cfg = get_tavily_config()
+    if not cfg.api_key:
+        return {"ok": False, "error": "未配置 Tavily API Key"}
+    if not cfg.api_key.startswith("tvly-"):
+        return {"ok": False, "error": f"API Key 格式错误：Tavily 密钥应以 tvly- 开头，当前以 {cfg.api_key[:4]}... 开头"}
+    try:
+        result = await tavily_search("hello world", max_results=1)
+        if result.get("error"):
+            return {"ok": False, "error": result["error"]}
+        return {"ok": True, "result_count": len(result.get("results", [])), "has_answer": bool(result.get("answer"))}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+@router.get("/ppt")
+def get_ppt():
+    cfg = get_ppt_config()
     return {
         "base_url": cfg.base_url,
         "api_key": _mask_key(cfg.api_key),
@@ -117,17 +150,12 @@ def get_video():
     }
 
 
-@router.post("/video")
-def update_video(body: ApiConfig):
-    set_video_config(body)
+@router.post("/ppt")
+def update_ppt(body: ApiConfig):
+    set_ppt_config(body)
     return {"ok": True}
 
 
-@router.get("/video/models")
-def list_video_models():
-    from services.video_service import get_vms_client
-    client = get_vms_client()
-    result = client.test_connection()
-    if result["ok"]:
-        return {"models": [], "error": None, "message": f"视频 API 连接成功 (HTTP {result['status']})"}
-    return {"models": [], "error": result.get("error", "连接失败")}
+@router.get("/ppt/models")
+def list_ppt_models():
+    return _list_models("ppt")

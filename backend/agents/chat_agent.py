@@ -25,6 +25,20 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 你可以帮助学生解答各种学习问题、提供知识讲解、进行学习规划讨论等。
 如果你认为需要构建画像、生成学习资源、规划路径等，可以建议用户说明需求。
 
+【思维链要求 — 在正式回答前提供推理过程】
+每次回答必须在开头输出一个推理环节，格式为：
+
+<thinking>
+（你的分析思路：理解问题 → 拆解要点 → 确定回答框架）
+</thinking>
+
+然后输出正常回答。
+注意：
+- <thinking> 和 </thinking> 必须各占单独一行
+- 推理内容简洁但完整，控制在 100-300 字
+- 不要将正常回答的内容放入 thinking 标签内
+- thinking 标签内不要使用代码块
+
 【回答格式要求 — 请参照以下模板组织你的回答】
 
 使用 ### 作为小节标题，用 --- 分隔不同小节。整体结构清晰、层级分明。
@@ -80,20 +94,67 @@ class ChatAgent(BaseAgent):
         stream_resp = await chat_completion(messages, temperature=0.7, stream=True)
 
         collected = ""
+        thinking_collected = ""
+        raw_buf = ""
+        in_thinking = False
+        seen_thinking = False
+
+        OPEN_TAG = "<thinking>\n"
+        CLOSE_TAG = "\n</thinking>"
+
         async for chunk in stream_resp:
             delta = chunk.choices[0].delta
-            if delta.content:
-                collected += delta.content
-                yield delta.content
+            if not delta.content:
+                continue
 
-        safe_collected, ok = await check_text(collected)
-        state["response"] = safe_collected
+            raw_buf += delta.content
+
+            while True:
+                if not in_thinking:
+                    idx = raw_buf.find(OPEN_TAG)
+                    if idx == -1:
+                        chunk_out = raw_buf
+                        raw_buf = ""
+                        collected += chunk_out
+                        yield chunk_out
+                        break
+                    before = raw_buf[:idx]
+                    raw_buf = raw_buf[idx + len(OPEN_TAG):]
+                    if before:
+                        collected += before
+                        yield before
+                    in_thinking = True
+                    seen_thinking = True
+                    yield json.dumps({"type": "thinking_start"}, ensure_ascii=False)
+                else:
+                    idx = raw_buf.find(CLOSE_TAG)
+                    if idx == -1:
+                        safe_len = max(0, len(raw_buf) - len(CLOSE_TAG))
+                        if safe_len > 0:
+                            part = raw_buf[:safe_len]
+                            thinking_collected += part
+                            raw_buf = raw_buf[safe_len:]
+                            yield json.dumps({"type": "thinking", "text": part}, ensure_ascii=False)
+                        else:
+                            break
+                    else:
+                        part = raw_buf[:idx]
+                        thinking_collected += part
+                        raw_buf = raw_buf[idx + len(CLOSE_TAG):]
+                        if part:
+                            yield json.dumps({"type": "thinking", "text": part}, ensure_ascii=False)
+                        yield json.dumps({"type": "thinking_end"}, ensure_ascii=False)
+                        in_thinking = False
+
+        if raw_buf:
+            collected += raw_buf
+            yield raw_buf
+        state["response"] = collected
 
     def _profile_text(self, state: AgentState) -> str:
         p = state.get("profile")
         user_id = state.get("user_id", "")
 
-        # 读取最近错题
         mistake_text = "无"
         try:
             from core.database import SessionLocal
@@ -112,7 +173,6 @@ class ChatAgent(BaseAgent):
         except Exception:
             pass
 
-        # 读取专注数据
         focus_text = "无专注记录"
         try:
             from core.database import SessionLocal as SL2
