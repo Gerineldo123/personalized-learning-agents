@@ -403,16 +403,14 @@ class CodeGenSkill(BaseSkill):
 
                 resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3)
                 content = resp.choices[0].message.content.strip()
-                # 去掉可能的 markdown 包裹
-                if content.startswith("```"):
-                    content = content.strip("`").strip()
-                    if content.startswith("html"):
-                        content = content[4:].strip()
-                # 截断 </html> 之后追加的 markdown 说明文字
+                # 提取 HTML：找到第一个 < 到最后 </html> 之间的内容
                 import re as _re
-                _m = _re.search(r'</html\s*>', content, _re.IGNORECASE)
-                if _m:
-                    content = content[:_m.end()].strip()
+                _m_start = _re.search(r'<(!DOCTYPE html|html)', content, _re.IGNORECASE)
+                _m_end = _re.search(r'</html\s*>', content, _re.IGNORECASE)
+                if _m_start and _m_end:
+                    content = content[_m_start.start():_m_end.end()].strip()
+                elif _m_end:
+                    content = content[:_m_end.end()].strip()
 
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,

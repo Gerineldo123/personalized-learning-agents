@@ -144,8 +144,8 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
     _DONE = object()
 
     live_pushed: set = set()
-    token_counts: dict = {}  # step_id -> 已推送的 token 数量
-    step_pushed: set = set()  # (step_id, status) -> 已推送的 step 事件
+    token_counts: dict = {}
+    step_pushed: set = set()
 
     async def run_graph():
         try:
@@ -154,8 +154,12 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
                     wf = node_update.get("workflow_outputs", None)
                     if wf is None:
                         continue
-                    # token 增量去重
+                    from core.sse_registry import get_live_token_steps
+                    already_live = get_live_token_steps(session_id)
+                    # token 增量去重（跳过已实时推送的 step）
                     for sid, tokens in _group_tokens(wf).items():
+                        if sid in already_live:
+                            continue
                         already = token_counts.get(sid, 0)
                         for te in tokens[already:]:
                             await sse_queue.put(te)

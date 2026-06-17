@@ -65,40 +65,19 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.step-card {
-  background: var(--bg-card);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-light);
-  overflow: hidden;
-  transition: all var(--transition-fast);
-}
-.step-card:hover { box-shadow: var(--shadow-sm); }
-.step-header {
-  display: flex;
-  align-items: center;
-  padding: 10px 14px;
-  cursor: pointer;
-  gap: 8px;
-  user-select: none;
-  transition: background var(--transition-fast);
-}
-.step-header:hover { background: var(--bg-card-hover); }
+.step-card { background: #FFFBF5; border-radius: 12px; border: 1px solid #EFE6DC; overflow: hidden; transition: all 0.25s cubic-bezier(.4,0,.2,1); }
+.step-card:hover { box-shadow: 0 2px 10px rgba(58,51,46,0.08); transform: translateY(-1px); }
+.step-header { display: flex; align-items: center; padding: 10px 14px; cursor: pointer; gap: 8px; user-select: none; transition: background 0.2s; }
+.step-header:hover { background: #FFF5EB; }
 .step-icon { font-size: 18px; flex-shrink: 0; }
-.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-title { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3A332E; }
 .step-status { font-size: 12px; flex-shrink: 0; }
-.step-status.running { color: var(--color-primary); }
-.step-status.completed { color: var(--color-success); }
-.step-status.error { color: var(--color-danger); }
-.step-arrow { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; }
-.step-content { padding: 0 14px 14px; border-top: 1px solid var(--border-light); }
-.typewriter {
-  padding-top: 10px;
-  font-size: 13px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-regular);
-}
-.cursor-blink { animation: blink 1s step-end infinite; color: var(--color-primary); font-weight: bold; }
+.step-status.running { color: #E8C29C; }
+.step-status.completed { color: #98C9B3; }
+.step-status.error { color: #F2B8A2; }
+.step-arrow { font-size: 12px; color: #948A80; flex-shrink: 0; }
+.step-content { padding: 0 14px 14px; border-top: 1px solid #EFE6DC; }
+.typewriter { padding-top: 10px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; color: #6B635C; }
+.cursor-blink { animation: blink 1s step-end infinite; color: #DBA878; font-weight: bold; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 </style>

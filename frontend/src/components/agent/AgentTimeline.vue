@@ -127,73 +127,52 @@ function getStepIcon(stepType: string): string {
 .timeline { max-width: 900px; margin: 0 auto; }
 
 .agent-collab-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 10px 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 20px; padding: 10px 16px;
+  background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px;
 }
-.collab-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  font-weight: 500;
-}
+.collab-label { font-size: 12px; color: #948A80; white-space: nowrap; font-weight: 500; }
 .agent-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .agent-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-light);
-  font-size: 12px;
-  color: var(--text-regular);
-  transition: all var(--transition-fast);
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 20px;
+  background: #FFF5EB; border: 1px solid #EFE6DC;
+  font-size: 12px; color: #6B635C;
+  transition: all 0.25s cubic-bezier(.4,0,.2,1);
 }
 .agent-chip.active {
-  background: var(--color-primary-bg);
-  border-color: var(--color-primary-border);
-  color: var(--color-primary);
+  background: #FFF5EB; border-color: #F9D9B8; color: #3A332E;
   animation: pulse-glow 1.5s ease-in-out infinite;
 }
 .agent-chip-icon { font-size: 14px; }
 .agent-chip-name { font-size: 12px; font-weight: 500; }
 
 .step-agent-badge {
-  font-size: 11px;
-  color: var(--color-primary);
-  background: var(--color-primary-bg);
-  border: 1px solid var(--color-primary-border);
-  border-radius: var(--radius-sm);
-  padding: 2px 8px;
-  display: inline-block;
-  margin-bottom: 4px;
+  font-size: 11px; color: #6B635C;
+  background: #FFF5EB; border: 1px solid #EFE6DC;
+  border-radius: 6px; padding: 2px 8px;
+  display: inline-block; margin-bottom: 4px;
 }
 
-.timeline-node { display: flex; gap: 14px; animation: fadeIn 0.35s ease; }
+.timeline-node { display: flex; gap: 14px; animation: fadeIn 0.35s cubic-bezier(.4,0,.2,1); }
 .timeline-line-col { display: flex; flex-direction: column; align-items: center; width: 40px; flex-shrink: 0; }
 .timeline-dot {
   width: 36px; height: 36px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: var(--bg-overlay); border: 2px solid var(--border-base);
+  background: #FFF5EB; border: 2px solid #EFE6DC;
   font-size: 16px; flex-shrink: 0; transition: all 0.3s ease;
 }
-.timeline-dot.running { background: var(--color-primary-bg); border-color: var(--color-primary); animation: pulse-glow 1.5s ease-in-out infinite; }
-.timeline-dot.completed { background: var(--color-success-bg); border-color: var(--color-success); }
+.timeline-dot.running { background: #FFF5EB; border-color: #F9D9B8; animation: pulse-glow 1.5s ease-in-out infinite; }
+.timeline-dot.completed { background: #F0FAF5; border-color: #98C9B3; }
 .timeline-dot.error { background: var(--color-danger-bg); border-color: var(--color-danger); }
-.timeline-vline { width: 2px; flex: 1; min-height: 20px; background: var(--border-light); margin: 4px 0; }
+.timeline-vline { width: 2px; flex: 1; min-height: 20px; background: #EFE6DC; margin: 4px 0; }
 .timeline-vline.dashed {
-  background: repeating-linear-gradient(to bottom, var(--text-placeholder) 0px, var(--text-placeholder) 4px, transparent 4px, transparent 8px);
+  background: repeating-linear-gradient(to bottom, #E8C29C 0px, #E8C29C 4px, transparent 4px, transparent 8px);
 }
 .timeline-card-wrapper { flex: 1; min-width: 0; padding-bottom: 16px; }
-.executing-indicator { padding: 20px; color: var(--text-secondary); font-style: italic; animation: fade-pulse 1.5s ease-in-out infinite; }
+.executing-indicator { padding: 20px; color: #948A80; font-style: italic; animation: fade-pulse 1.5s ease-in-out infinite; font-size: 13px; }
 
-@keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(249,217,184,0.6); } 50% { box-shadow: 0 0 0 8px rgba(249,217,184,0); } }
+@keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(249,217,184,0.7); } 50% { box-shadow: 0 0 0 8px rgba(249,217,184,0); } }
 @keyframes fade-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 </style>

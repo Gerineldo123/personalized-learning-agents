@@ -1,0 +1,35 @@
+{
+  "nodes": [
+    {"id": "高等数学", "category": 0, "value": 0},
+    {"id": "线性代数", "category": 0, "value": 0},
+    {"id": "概率论与数理统计", "category": 0, "value": 0},
+    {"id": "实变函数", "category": 1, "value": 0},
+    {"id": "复变函数", "category": 1, "value": 0},
+    {"id": "泛函分析", "category": 1, "value": 0},
+    {"id": "数值分析", "category": 2, "value": 0},
+    {"id": "常微分方程", "category": 2, "value": 0},
+    {"id": "偏微分方程", "category": 2, "value": 0},
+    {"id": "数理统计", "category": 3, "value": 0},
+    {"id": "随机过程", "category": 3, "value": 0},
+    {"id": "运筹学", "category": 3, "value": 0}
+  ],
+  "links": [
+    {"source": "高等数学", "target": "实变函数"},
+    {"source": "高等数学", "target": "常微分方程"},
+    {"source": "高等数学", "target": "复变函数"},
+    {"source": "线性代数", "target": "泛函分析"},
+    {"source": "线性代数", "target": "数值分析"},
+    {"source": "实变函数", "target": "泛函分析"},
+    {"source": "常微分方程", "target": "偏微分方程"},
+    {"source": "概率论与数理统计", "target": "数理统计"},
+    {"source": "概率论与数理统计", "target": "随机过程"},
+    {"source": "数理统计", "target": "运筹学"},
+    {"source": "线性代数", "target": "运筹学"}
+  ],
+  "categories": [
+    {"name": "基础数学"},
+    {"name": "数学分析"},
+    {"name": "应用数学"},
+    {"name": "统计与优化"}
+  ]
+}

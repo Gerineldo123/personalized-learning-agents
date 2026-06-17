@@ -95,10 +95,12 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
 选择skills的原则（可以只选1个，也可以不选某个）：
 - 只有任务明确需要搜索外部资料时才选 deep_search
 - 如果是简单概念解释、代码问题、直接推理可解决的任务，不需要 deep_search
-- 如果任务涉及编程，加入 code_analysis
+- 如果任务涉及代码分析、解释、调试、优化，加入 code_analysis
+- 如果任务需要生成代码示例、可视化动画、实操案例，加入 code_gen
 - 如果任务需要知识梳理，加入 mindmap_gen
 - 如果任务需要练习巩固，加入 quiz_gen
 - 如果任务需要视频学习，加入 video_search
+- code_analysis 和 code_gen 是独立的：请根据任务需求只选一个，一般不要同时选
 - selected_skills 可以为空数组（表示直接用LLM回答）"""
 
         async for token in _llm_stream(system, user):
@@ -117,8 +119,8 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
                 # 校验 skill 名称有效性
                 valid_skills = get_all_skills()
                 selected_skills = [s for s in raw_skills if s in valid_skills]
-                # 如果需要代码但没选 code_analysis，自动加入
-                if code_needed and "code_analysis" not in selected_skills:
+                # 如果需要代码但没选任何代码相关 skill，默认 fallback 到 code_analysis
+                if code_needed and "code_analysis" not in selected_skills and "code_gen" not in selected_skills:
                     selected_skills.append("code_analysis")
         except Exception:
             pass
@@ -199,6 +201,7 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
     """结果汇总节点：整合所有 skill 执行结果生成最终报告"""
     user_message = state.get("user_message", "")
     wf = state.get("workflow_outputs", [])
+    sse_queue = _get_sse_queue(state.get("_session_id", ""))
     ad = state.get("all_modules_data") or {}
     search_result = ad.get("search_result", {})
     skill_results = ad.get("skill_results", {})
@@ -249,11 +252,21 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 没有合适情况则不写建议。"""
 
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": ""}})
+        if sse_queue:
+            try: sse_queue.put_nowait(wf[-1])
+            except Exception: pass
         final_md = ""
         if use_llm:
             async for token in _llm_stream("你是个性化学习AI助手，根据学生画像给出精准、有深度的回答。", direct_prompt):
                 final_md += token
-                wf.append({"type": "token", "step_id": step_id, "delta": token})
+                te = {"type": "token", "step_id": step_id, "delta": token}
+                wf.append(te)
+                if sse_queue:
+                    try:
+                        sse_queue.put_nowait(te)
+                        from core.sse_registry import mark_live_token_step
+                        mark_live_token_step(state.get("_session_id", ""), step_id)
+                    except Exception: pass
         else:
             final_md = f"**{user_message}**\n\n（LLM 未配置，无法回答）"
 
@@ -338,9 +351,19 @@ Tavily摘要：{answer}
 - 学习评估 → [建议] 学习评估  视频学习 → [建议] 搜索视频【主题】"""
 
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "汇总分析报告", "agent_name": "汇总智能体", "data": {"content": result_header}})
+        if sse_queue:
+            try: sse_queue.put_nowait(wf[-1])
+            except Exception: pass
         async for token in _llm_stream("你是数据分析专家，基于搜索结果进行分析并报告。", summary_prompt):
             llm_summary += token
-            wf.append({"type": "token", "step_id": step_id, "delta": token})
+            te = {"type": "token", "step_id": step_id, "delta": token}
+            wf.append(te)
+            if sse_queue:
+                try:
+                    sse_queue.put_nowait(te)
+                    from core.sse_registry import mark_live_token_step
+                    mark_live_token_step(state.get("_session_id", ""), step_id)
+                except Exception: pass
 
     final_md = result_header
     if llm_summary:

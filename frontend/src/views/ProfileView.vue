@@ -109,10 +109,7 @@ const completenessHints = computed(() => {
   return hints.slice(0, 2)
 })
 
-const knowledgeGraphData = computed(() => {
-  if (!profile.value) return {}
-  return { ...(profile.value.knowledge_base || {}), ...(profile.value.ability_scores || {}) }
-})
+const knowledgeGraphData = computed(() => profile.value?.knowledge_base || {})
 
 function renderHistoryChart() {
   if (!historyChartRef.value || profileHistory.value.length < 2) return
@@ -137,8 +134,15 @@ onUnmounted(() => {
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
-  if (evt?.event === 'profile.updated' || evt?.event === 'quiz.submitted') {
+  if (evt?.event === 'profile.updated') {
     nextTick().then(() => loadProfile(true))
+  }
+  if (evt?.event === 'quiz.submitted') {
+    // 功能6: 答题后自动重建画像以刷新知识图谱
+    nextTick().then(() => loadProfile(true))
+    api.post('/profile/rebuild', null, { params: { user_id: userStore.userId } })
+      .then(() => loadProfile())
+      .catch(() => {})
   }
 })
 
@@ -312,6 +316,53 @@ async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) 
   } catch { ElMessage.error('更新步骤状态失败') }
 }
 
+// ── AI 深度解读 ──────────────────────────────────────
+const aiInterpretLoading = ref(false)
+const aiInterpretText = ref('')
+
+async function fetchAiInterpret() {
+  if (!userStore.userId || !profile.value) return
+  aiInterpretLoading.value = true
+  aiInterpretText.value = ''
+  const scores = profile.value.ability_scores || {}
+  const weakNames = (profile.value.weak_courses || []).map((c: any) => c.name).join('、')
+  const message = `请根据我当前的学习画像给出深度解读和个性化建议。能力评分：${JSON.stringify(scores)}；薄弱课程：${weakNames || '暂无'}；认知风格：${profile.value.cognitive_style || '未知'}；能力摘要：${profile.value.ability_summary || ''}。请用2-3段话给出有针对性的学习建议。`
+  try {
+    const r = await api.post('/profile/run', null, {
+      params: { user_id: userStore.userId, message },
+      timeout: 60000,
+    })
+    // /profile/run 只返回 {ok:true}，刷新画像后读 ability_summary 更新
+    await loadProfile()
+    aiInterpretText.value = profile.value?.ability_summary || '解读完成，画像已更新。'
+  } catch { aiInterpretText.value = '解读失败，请稍后重试。' }
+  finally { aiInterpretLoading.value = false }
+}
+
+// ── 薄弱课程排序权重 ──────────────────────────────────
+const IMPACT_WEIGHT: Record<string, number> = {
+  '担心挂科或补考': 10, '影响保研或奖学金': 9, '影响期末成绩': 8,
+  '影响后续课程学习': 7, '影响实习或就业': 6,
+}
+function courseImpactScore(course: any): number {
+  return ((course.impacts || []) as string[])
+    .reduce((sum, i) => sum + (IMPACT_WEIGHT[i] ?? 3), 0)
+}
+const sortedWeakCourses = computed(() => {
+  if (!profile.value?.weak_courses) return []
+  return [...profile.value.weak_courses].sort((a, b) => courseImpactScore(b) - courseImpactScore(a))
+})
+
+// ── 能力维度与答题联动 ────────────────────────────────
+const abilityQuizHint = computed(() => {
+  if (!profile.value?.ability_scores || !quizStats.value.total) return []
+  const scores = profile.value.ability_scores as Record<string, number>
+  return abilityDims
+    .map(d => ({ dim: d, score: scores[d] ?? 0 }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 3)
+})
+
 const chatUpdateInput = ref('')
 const chatUpdateLoading = ref(false)
 const chatUpdateResult = ref('')
@@ -357,12 +408,13 @@ async function submitChatUpdate() {
           </div>
         </div>
         <div class="sidebar-courses-wrapper">
-          <template v-for="c in profile.weak_courses" :key="c.name">
+          <template v-for="(c, idx) in sortedWeakCourses" :key="c.name">
             <div
               :class="['sidebar-course', { active: selectedCourse?.name === c.name }]"
               @click="selectedCourse = c"
             >
               <div class="sc-row">
+                <div class="sc-priority-badge" v-if="idx === 0">优先</div>
                 <div class="sc-name">{{ c.name }}</div>
                 <div class="sc-tags">
                   <span v-for="t in c.difficulty_types" :key="t" class="sc-tag">{{ t }}</span>
@@ -381,7 +433,13 @@ async function submitChatUpdate() {
 
       <main class="profile-main animate-up animate-delay-2">
         <div v-if="profile.ability_summary" class="ability-summary">
-          {{ profile.ability_summary }}
+          <div class="ability-summary-text">{{ aiInterpretText || profile.ability_summary }}</div>
+          <el-button
+            size="small" text type="primary"
+            :loading="aiInterpretLoading"
+            class="ai-interpret-btn"
+            @click="fetchAiInterpret"
+          >{{ aiInterpretLoading ? '解读中...' : 'AI 深度解读' }}</el-button>
         </div>
 
         <!-- 画像健全度 -->
@@ -409,6 +467,26 @@ async function submitChatUpdate() {
             <span v-if="quizStats.latest_score_percent !== null">最近一次：{{ quizStats.latest_score_percent.toFixed(1) }}%</span>
           </div>
           <p class="quiz-analysis">{{ quizAnalysis }}</p>
+          <!-- 能力维度联动：显示最弱的3个维度，点击高亮雷达图 -->
+          <div v-if="abilityQuizHint.length" class="ability-dim-hint">
+            <span class="adh-label">待提升维度</span>
+            <div class="adh-bars">
+              <div
+                v-for="item in abilityQuizHint" :key="item.dim"
+                class="adh-bar-row"
+                @click="selectedCourse = null"
+              >
+                <span class="adh-dim">{{ item.dim }}</span>
+                <el-progress
+                  :percentage="item.score * 10"
+                  :stroke-width="6"
+                  :color="item.score < 4 ? '#E35749' : item.score < 7 ? '#DBA878' : '#98C9B3'"
+                  style="flex:1"
+                />
+                <span class="adh-score">{{ item.score.toFixed(1) }}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="bottom-area">
@@ -537,7 +615,11 @@ async function submitChatUpdate() {
         <!-- 知识图谱 -->
         <div class="kg-section">
           <div class="section-title">知识图谱</div>
-          <KnowledgeGraph :knowledgeBase="knowledgeGraphData" />
+          <KnowledgeGraph
+            :knowledgeBase="knowledgeGraphData"
+            :discipline="profile.discipline"
+            @node-click="(id) => router.push({ path: '/resources', query: { search: id } })"
+          />
         </div>
       </main>
     </div>
@@ -573,41 +655,47 @@ async function submitChatUpdate() {
 <style scoped>
 .profile-view {
   max-width: 1260px;
-  padding: 28px 20px 34px;
+  padding: 24px 20px 40px;
   margin: 0 auto;
   box-sizing: border-box;
-  background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%);
+  background: linear-gradient(160deg, #F9D9B8 0%, #FFF5EB 40%, #FFFBF5 100%);
+  min-height: 100vh;
 }
 .loading-box { height: 200px; }
 .empty-box { margin-top: 40px; color: #948A80; }
 
 .profile-layout {
   display: flex;
-  gap: 24px;
+  gap: 20px;
   align-items: flex-start;
 }
 
 .profile-sidebar {
-  width: 300px;
+  width: 280px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  position: sticky;
+  top: 16px;
 }
 
 .sidebar-top-card {
-  background: #FFFBF5;
+  background: linear-gradient(135deg, #FFFBF5 0%, #FFF0E0 100%);
   border: 1px solid #EFE6DC;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 16px;
   display: flex;
   gap: 14px;
   align-items: center;
   cursor: pointer;
   transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.08);
 }
 .sidebar-top-card:hover {
   border-color: #DBA878;
+  box-shadow: 0 4px 16px rgba(219,168,120,0.15);
+  transform: translateY(-1px);
 }
 
 .sidebar-avatar {
@@ -649,11 +737,11 @@ async function submitChatUpdate() {
 
 .sidebar-actions {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 8px;
 }
 .sidebar-actions .el-button {
-  width: 100%;
+  flex: 1;
   background: transparent !important;
   border-color: #EFE6DC !important;
   color: #3A332E;
@@ -664,16 +752,6 @@ async function submitChatUpdate() {
   min-width: 0;
 }
 
-.ability-summary {
-  background: #FFFBF5;
-  border-left: 3px solid #DBA878;
-  border-radius: 4px;
-  padding: 12px 16px;
-  color: #3A332E;
-  font-size: 14px;
-  line-height: 1.7;
-  margin-bottom: 20px;
-}
 
 .sidebar-courses-wrapper {
   display: flex;
@@ -684,23 +762,18 @@ async function submitChatUpdate() {
 .sidebar-course {
   background: #FFFBF5;
   border: 1px solid #EFE6DC;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 10px 12px;
   cursor: pointer;
   transition: 0.2s;
   color: #3A332E;
 }
 .sidebar-course:hover {
-  background: #FFF5EB;
+  background: #FFF0E0;
+  border-color: #DBA878;
 }
 .sidebar-course.active {
-  outline: 2px solid #DBA878;
-  outline-offset: 1px;
-}
-.sidebar-course:hover {
-  filter: brightness(1.05);
-}
-.sidebar-course.active {
+  background: #FFF0E0;
   outline: 2px solid #DBA878;
   outline-offset: 1px;
 }
@@ -720,7 +793,7 @@ async function submitChatUpdate() {
 
 .sc-points {
   font-size: 12px;
-  color: #FFFBF5;
+  color: #948A80;
   opacity: 0.9;
   line-height: 1.4;
   margin-top: 4px;
@@ -748,7 +821,8 @@ async function submitChatUpdate() {
   border: 1px solid #EFE6DC;
   border-radius: 12px;
   padding: 16px 18px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
 }
 
 .quiz-head {
@@ -781,7 +855,7 @@ async function submitChatUpdate() {
 }
 
 .bottom-area {
-  margin-top: 20px;
+  margin-top: 16px;
 }
 
 .ba-card {
@@ -789,7 +863,7 @@ async function submitChatUpdate() {
   border: 1px solid #EFE6DC;
   border-radius: 12px;
   display: flex;
-  height: 360px;
+  min-height: 320px;
 }
 
 .ba-radar-cell {
@@ -798,18 +872,19 @@ async function submitChatUpdate() {
   flex-basis: 0%;
   display: flex;
   align-items: center;
-  padding-left: calc(50% - 150px);
+  justify-content: center;
+  padding: 16px;
   transition: flex-grow 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               flex-shrink 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               flex-basis 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-              padding-left 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+              padding 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .ba-radar-cell.ba-shrink {
   flex-grow: 0;
   flex-shrink: 0;
-  flex-basis: 300px;
-  padding-left: 0;
+  flex-basis: 280px;
+  padding: 16px 0 16px 16px;
 }
 
 .ba-chart {
@@ -996,36 +1071,104 @@ async function submitChatUpdate() {
 }
 
 .completeness-bar {
-  display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
   padding: 12px 16px; background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
 }
 .completeness-label { font-size: 13px; color: #6B635C; white-space: nowrap; font-weight: 500; }
 .completeness-hint { font-size: 12px; color: #948A80; white-space: nowrap; }
 
 .guide-card {
   background: rgba(253,246,236,0.9); border: 1px solid rgba(235,177,95,0.4);
-  border-radius: 12px; padding: 12px 16px; margin-bottom: 16px;
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
   display: flex; align-items: flex-start; gap: 12px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
 }
 .guide-title { font-size: 12px; font-weight: 500; color: #DBA878; white-space: nowrap; padding-top: 2px; }
 .guide-list { margin: 0; padding-left: 16px; font-size: 12px; color: #6B635C; line-height: 1.8; }
 
 .chat-update-box {
   background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px;
-  padding: 16px 18px; margin-top: 20px;
+  padding: 16px 18px; margin-top: 16px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
 }
 .chat-update-title { font-size: 13px; font-weight: 500; color: #DBA878; margin-bottom: 10px; }
 .chat-update-row { display: flex; gap: 10px; }
 .chat-update-result { margin-top: 8px; font-size: 12px; color: #98C9B3; }
 
-.history-section { margin-top: 20px; }
-.history-chart { width: 100%; height: 240px; background: #FFFBF5; border-radius: 12px; }
+.history-section { margin-top: 16px; }
+.history-chart { width: 100%; height: 240px; background: #FFFBF5; border-radius: 12px; border: 1px solid #EFE6DC; box-shadow: 0 2px 8px rgba(219,168,120,0.06); }
 .history-triggers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .trigger-dot { cursor: default; }
 
 .section-title { font-size: 14px; font-weight: 500; color: #3A332E; margin: 0 0 12px; }
 
-.kg-section { margin-top: 20px; }
+.kg-section { margin-top: 16px; }
+
+/* AI 深度解读 */
+.ability-summary {
+  background: #FFFBF5;
+  border-left: 3px solid #DBA878;
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
+}
+.ability-summary-text {
+  color: #3A332E;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.ai-interpret-btn {
+  margin-top: 8px;
+  padding: 0;
+  font-size: 12px;
+}
+
+/* 薄弱课程优先徽标 */
+.sc-priority-badge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: #E35749;
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+}
+
+/* 能力维度联动 */
+.ability-dim-hint {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #EFE6DC;
+}
+.adh-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B635C;
+  display: block;
+  margin-bottom: 8px;
+}
+.adh-bars { display: flex; flex-direction: column; gap: 6px; }
+.adh-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.adh-dim {
+  font-size: 12px;
+  color: #3A332E;
+  width: 56px;
+  flex-shrink: 0;
+}
+.adh-score {
+  font-size: 12px;
+  color: #948A80;
+  width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}
 </style>
 
 

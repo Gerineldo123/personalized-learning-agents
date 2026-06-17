@@ -1,26 +1,87 @@
 ﻿<script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, watch, computed, reactive } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { chatStream } from '../api/chat'
 import type { ResourceEvent } from '../api/workflow'
 import { useUserStore } from '../stores/user'
 import api from '../api'
-import { useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import SausageIcon from '../components/SausageIcon.vue'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const userStore = useUserStore()
+const route = useRoute()
 const router = useRouter()
+
+const isBootstrappingFromHome = ref(false)
+
+function getHomeQueryText(): string {
+  const q = route.query.q
+  if (Array.isArray(q)) return String(q[0] || '')
+  return typeof q === 'string' ? q : ''
+}
+
+async function bootstrapConversationFromHome() {
+  if (route.query.from !== 'home' || isBootstrappingFromHome.value) return
+  isBootstrappingFromHome.value = true
+  try {
+    await newConversation()
+    const question = getHomeQueryText().trim()
+    if (question) { inputText.value = question; sendMessage() }
+    await router.replace({ path: '/chat' })
+  } finally {
+    isBootstrappingFromHome.value = false
+  }
+}
+
+async function clickSuggestion(q: string) {
+  if (!currentConvId.value) {
+    try {
+      const r = await api.post('/conversations', null, { params: { user_id: userStore.userId, title: '新对话' } })
+      currentConvId.value = r.data.id
+      await loadConversations()
+    } catch { ElMessage.error('创建对话失败'); return }
+  }
+  inputText.value = q
+  sendMessage()
+}
+
+async function loadSuggestedQuestions() {
+  if (!userStore.userId) return
+  try {
+    const r = await api.get('/resources', { params: { user_id: userStore.userId, limit: 20 } })
+    const items: Array<{ title?: string }> = r.data.items || []
+    const questions: string[] = []
+    for (const item of items) {
+      const title = item.title
+      if (!title || title.length < 2) continue
+      if (title.length <= 20) {
+        questions.push(`讲解一下"${title}"的核心概念`)
+        questions.push(`"${title}"的重点是什么？`)
+      } else {
+        questions.push(`请帮我理解"${title}"`)
+      }
+      if (questions.length >= 20) break
+    }
+    suggestedQuestions.value = questions
+  } catch { suggestedQuestions.value = [] }
+}
 
 onMounted(() => {
   if (!userStore.userId) {
     userStore.setUserId('user_' + Date.now())
   }
   loadConversations()
+  loadPinnedConversations()
+  loadSuggestedQuestions()
+  bootstrapConversationFromHome()
   document.addEventListener('click', handleDocumentClick)
 })
+
+watch(() => route.query.t, () => { bootstrapConversationFromHome() })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleDocumentClick)
@@ -59,15 +120,85 @@ const inputText = ref('')
 const isStreaming = ref(false)
 const chatContainer = ref<HTMLElement | null>(null)
 const showConvList = ref(false)
+const pinnedConversationIds = ref<number[]>([])
+const convMenuVisible = ref(false)
+const convMenuX = ref(0)
+const convMenuY = ref(0)
+const convMenuTarget = ref<ConvItem | null>(null)
 
+const suggestedQuestions = ref<string[]>([])
 const questionHistory = ref<QuestionItem[]>([])
-const panelOpen = ref(false)
 const highlightIndex = ref(-1)
 const thinkingExpanded = reactive<Record<number, boolean>>({})
 
-function toggleThinking(uid: number) {
-  thinkingExpanded[uid] = !thinkingExpanded[uid]
+const sortedConversations = computed(() => {
+  const pinned = new Set(pinnedConversationIds.value)
+  return [...conversations.value].sort((a, b) => {
+    const ap = pinned.has(a.id) ? 1 : 0
+    const bp = pinned.has(b.id) ? 1 : 0
+    if (ap !== bp) return bp - ap
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  })
+})
+
+function loadPinnedConversations() {
+  try {
+    const raw = localStorage.getItem(`chat_pinned_${userStore.userId}`)
+    pinnedConversationIds.value = raw ? JSON.parse(raw) : []
+  } catch { pinnedConversationIds.value = [] }
 }
+
+function savePinnedConversations() {
+  localStorage.setItem(`chat_pinned_${userStore.userId}`, JSON.stringify(pinnedConversationIds.value))
+}
+
+function isPinned(id: number) { return pinnedConversationIds.value.includes(id) }
+
+function togglePinConversation() {
+  const target = convMenuTarget.value
+  if (!target) return
+  if (isPinned(target.id)) {
+    pinnedConversationIds.value = pinnedConversationIds.value.filter((x) => x !== target.id)
+  } else {
+    pinnedConversationIds.value = [target.id, ...pinnedConversationIds.value]
+  }
+  savePinnedConversations()
+  convMenuVisible.value = false
+}
+
+async function renameConversation() {
+  const target = convMenuTarget.value
+  if (!target) return
+  try {
+    const r = await ElMessageBox.prompt('请输入新的对话名称', '重命名对话', {
+      inputValue: target.title, confirmButtonText: '确定', cancelButtonText: '取消',
+    })
+    const title = (r.value || '').trim()
+    if (!title) return
+    await api.put(`/conversations/${target.id}`, null, { params: { title } })
+    await loadConversations()
+  } catch {}
+  convMenuVisible.value = false
+}
+
+async function removeConversationFromMenu() {
+  const target = convMenuTarget.value
+  if (!target) return
+  await deleteConversation(target.id)
+  pinnedConversationIds.value = pinnedConversationIds.value.filter((x) => x !== target.id)
+  savePinnedConversations()
+  convMenuVisible.value = false
+}
+
+function openConversationMenu(e: MouseEvent, conv: ConvItem) {
+  e.preventDefault()
+  convMenuTarget.value = conv
+  convMenuX.value = e.clientX
+  convMenuY.value = e.clientY
+  convMenuVisible.value = true
+}
+
+function toggleThinking(uid: number) { thinkingExpanded[uid] = !thinkingExpanded[uid] }
 
 function generateSummary(text: string): string {
   const cleaned = text.replace(/\s+/g, ' ').trim()
@@ -82,16 +213,6 @@ function rebuildQuestionHistory() {
       questionHistory.value.push({ summary: generateSummary(msg.content), index: i })
     }
   })
-}
-
-function scrollToMessage(index: number) {
-  const el = document.getElementById(`msg-${index}`)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    highlightIndex.value = index
-    panelOpen.value = false
-    setTimeout(() => { highlightIndex.value = -1 }, 2000)
-  }
 }
 
 function renderProcessedContent(content: string): string {
@@ -333,6 +454,9 @@ function handleDocumentClick(e: MouseEvent) {
   if (!target.closest('.term-popover') && !target.closest('.term-highlight') && !target.closest('.code-copy-btn')) {
     popoverVisible.value = false
   }
+  if (!target.closest('.conv-context-menu')) {
+    convMenuVisible.value = false
+  }
 }
 
 async function scrollToBottom() {
@@ -359,6 +483,7 @@ async function newConversation() {
     questionHistory.value = []
     codeBlocks.value = {}
     showConvList.value = false
+    loadSuggestedQuestions()
     await loadConversations()
   } catch {
     ElMessage.error('创建对话失败')
@@ -583,152 +708,136 @@ function regenerateMessage(aiIndex: number) {
 
 <template>
   <div class="chat-page">
-    <div class="panel-area" :class="{ open: panelOpen }">
-      <div class="panel-tab" @click="panelOpen = !panelOpen">
-        <span class="tab-icon">{{ panelOpen ? '▶' : '◀' }}</span>
-        <span class="tab-text">问题列表</span>
-      </div>
-      <div class="question-panel">
-        <div class="panel-header">问题列表</div>
-        <div class="panel-list">
-          <div v-if="questionHistory.length === 0" class="panel-empty">
-            暂无问题记录
-          </div>
+    <div class="chat-shell">
+      <aside class="history-pane animate-up animate-delay-1">
+        <div class="history-controls">
+          <el-button class="warm-btn" @click="newConversation">开启新对话</el-button>
+          <el-button class="warm-btn history-label-btn" disabled>历史对话</el-button>
+        </div>
+        <div class="conversation-list">
+          <div v-if="conversations.length === 0" class="panel-empty">暂无历史对话</div>
           <div
-            v-for="(item, idx) in questionHistory"
-            :key="idx"
-            class="question-item"
-            :class="{ active: item.index === highlightIndex }"
-            @click="scrollToMessage(item.index)"
+            v-for="c in sortedConversations"
+            :key="c.id"
+            class="conversation-item"
+            :class="{ active: c.id === currentConvId }"
+            @click="switchConversation(c.id)"
+            @contextmenu="openConversationMenu($event, c)"
           >
-            <span class="question-idx">{{ idx + 1 }}</span>
-            <span class="question-text">{{ item.summary }}</span>
+            <div class="conv-item">
+              <span v-if="isPinned(c.id)" class="conv-pin">置顶</span>
+              <span class="conv-title">{{ c.title }}</span>
+              <span class="conv-meta">{{ c.msg_count }}条</span>
+              <el-button size="small" type="danger" text class="conv-del" @click.stop="deleteConversation(c.id)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
-
-    <div class="chat-view">
-      <div class="chat-header">
-        <h2>AI 对话</h2>
-        <div class="conv-controls">
-          <el-button size="small" @click="newConversation">+ 新对话</el-button>
-          <el-dropdown trigger="click" @command="switchConversation">
-            <el-button size="small">
-              历史对话 <el-icon><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu v-if="conversations.length > 0">
-                <el-dropdown-item
-                  v-for="c in conversations"
-                  :key="c.id"
-                  :command="c.id"
-                  :class="{ active: c.id === currentConvId }"
-                >
-                  <div class="conv-item">
-                    <span class="conv-title">{{ c.title }}</span>
-                    <span class="conv-meta">{{ formatConvTime(c.updated_at) }}</span>
-                    <el-button
-                      size="small"
-                      type="danger"
-                      text
-                      class="conv-del"
-                      @click.stop="deleteConversation(c.id)"
-                    >
-                      <el-icon><Delete /></el-icon>
-                    </el-button>
-                  </div>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-              <el-dropdown-item v-else disabled>暂无历史对话</el-dropdown-item>
-            </template>
-          </el-dropdown>
+        <div class="history-footer">
           <span class="user-id">用户: {{ userStore.userId }}</span>
         </div>
-      </div>
+      </aside>
 
-      <div ref="chatContainer" class="chat-messages" @click="handleContentClick">
-        <div v-if="messages.length === 0" class="empty-hint">
-          点击「+ 新对话」开始，或从「历史对话」中选择
+      <section class="chat-view">
+        <h2 class="chat-title animate-up animate-delay-1">今天想学点什么？</h2>
+
+        <div ref="chatContainer" class="chat-messages animate-up animate-delay-2" @click="handleContentClick">
+          <div v-if="messages.length === 0" class="empty-hint">
+            <SausageIcon :size="56" animate />
+            <p style="margin:12px 0 0">输入你的问题，AI 将立刻开始思考并回答</p>
+          </div>
+          <div v-if="messages.length === 0 && suggestedQuestions.length > 0" class="suggested-questions">
+            <div class="suggest-row">
+              <div class="suggest-track track-ltr">
+                <button v-for="(q, i) in suggestedQuestions" :key="'ltr-' + i" class="suggest-btn" @click="clickSuggestion(q)">{{ q }}</button>
+                <button v-for="(q, i) in suggestedQuestions" :key="'ltr-dup-' + i" class="suggest-btn" @click="clickSuggestion(q)">{{ q }}</button>
+              </div>
+            </div>
+            <div class="suggest-row">
+              <div class="suggest-track track-rtl">
+                <button v-for="(q, i) in suggestedQuestions" :key="'rtl-' + i" class="suggest-btn" @click="clickSuggestion(q)">{{ q }}</button>
+                <button v-for="(q, i) in suggestedQuestions" :key="'rtl-dup-' + i" class="suggest-btn" @click="clickSuggestion(q)">{{ q }}</button>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-for="(msg, i) in messages"
+            :key="msg.uid"
+            :id="`msg-${i}`"
+            :class="['message', msg.role, { highlight: i === highlightIndex }]"
+          >
+            <div v-if="msg.role === 'user' && msg.time" class="msg-time">{{ formatMsgTime(msg.time) }}</div>
+            <div v-if="msg.role === 'assistant' && msg.thinking" class="thinking-area">
+              <span class="thinking-toggle" @click="toggleThinking(msg.uid)">
+                {{ thinkingExpanded[msg.uid] ? '📖 收起思路 ▾' : '📖 查看思路 ▸' }}
+              </span>
+              <div v-if="thinkingExpanded[msg.uid]" class="thinking-content">{{ msg.thinking }}</div>
+            </div>
+            <div class="message-content" v-if="msg.role === 'assistant' && !msg.streaming" v-html="renderProcessedContent(msg.content)" />
+            <div class="message-content" v-else>
+              {{ msg.content }}
+              <span v-if="msg.streaming" class="cursor">|</span>
+            </div>
+
+            <div v-if="msg.role === 'assistant' && msg.resources?.length && !msg.streaming" class="msg-resources">
+              <div v-for="r in msg.resources" :key="r.resource_id" class="resource-card-inline">
+                <span class="resource-badge">{{ r.resource_type === 'mindmap' ? '🧠' : r.resource_type === 'quiz' ? '📝' : '📄' }} {{ r.title || '学习资源' }}</span>
+                <span class="resource-type-tag">{{ r.resource_type === 'mindmap' ? '思维导图' : r.resource_type === 'quiz' ? '题库' : r.resource_type === 'article' ? '文章' : r.resource_type }}</span>
+                <span class="resource-jump-btn" @click="router.push({ path: '/resources', query: { open: String(r.resource_id) } })">查看 →</span>
+              </div>
+            </div>
+
+            <div class="message-actions" v-if="!msg.streaming">
+              <span class="action-btn" @click="copyMessage(msg.content)" title="复制">复制</span>
+              <template v-if="msg.role === 'user'">
+                <span class="action-btn" @click="editMessage(i)" title="编辑">编辑</span>
+              </template>
+              <template v-else>
+                <span class="action-btn" :class="{ disabled: isStreaming }" @click="regenerateMessage(i)" title="重新生成">刷新</span>
+                <span v-if="msg.quizResourceId" class="action-btn quiz-btn" @click="router.push({ path: '/resources', query: { open: String(msg.quizResourceId) } })">📝 前往答题</span>
+              </template>
+            </div>
+          </div>
         </div>
 
-        <div
-          v-for="(msg, i) in messages"
-          :key="msg.uid"
-          :id="`msg-${i}`"
-          :class="['message', msg.role, { highlight: i === highlightIndex }]"
-        >
-          <div v-if="msg.role === 'user' && msg.time" class="msg-time">{{ formatMsgTime(msg.time) }}</div>
-          <div v-if="msg.role === 'assistant' && msg.thinking" class="thinking-area">
-            <span
-              class="thinking-toggle"
-              @click="toggleThinking(msg.uid)"
+        <div class="chat-input-wrap animate-up animate-delay-3">
+          <div class="chat-input">
+            <el-input
+              v-model="inputText"
+              type="textarea"
+              :rows="3"
+              placeholder="输入你的问题..."
+              :disabled="isStreaming"
+              @keydown="handleKeydown"
+            />
+            <el-button
+              class="send-btn"
+              :disabled="!inputText.trim() || isStreaming"
+              :loading="isStreaming"
+              @click="sendMessage"
             >
-              {{ thinkingExpanded[msg.uid] ? '📖 收起思路 ▾' : '📖 查看思路 ▸' }}
-            </span>
-            <div v-if="thinkingExpanded[msg.uid]" class="thinking-content">
-              {{ msg.thinking }}
-            </div>
+              发送
+            </el-button>
           </div>
-          <div
-            class="message-content"
-            v-if="msg.role === 'assistant' && !msg.streaming"
-            v-html="renderProcessedContent(msg.content)"
-          />
-          <div class="message-content" v-else>
-            {{ msg.content }}
-            <span v-if="msg.streaming" class="cursor">|</span>
-          </div>
-
-          <div v-if="msg.role === 'assistant' && msg.resources?.length && !msg.streaming" class="msg-resources">
-            <div v-for="r in msg.resources" :key="r.resource_id" class="resource-card-inline">
-              <span class="resource-badge">{{ r.resource_type === 'mindmap' ? '🧠' : r.resource_type === 'quiz' ? '📝' : '📄' }} {{ r.title || '学习资源' }}</span>
-              <span class="resource-type-tag">{{ r.resource_type === 'mindmap' ? '思维导图' : r.resource_type === 'quiz' ? '题库' : r.resource_type === 'article' ? '文章' : r.resource_type }}</span>
-              <span
-                class="resource-jump-btn"
-                @click="router.push({ path: '/resources', query: { open: String(r.resource_id) } })"
-              >查看 →</span>
-            </div>
-          </div>
-
-          <div class="message-actions" v-if="!msg.streaming">
-            <span class="action-btn" @click="copyMessage(msg.content)" title="复制">复制</span>
-            <template v-if="msg.role === 'user'">
-              <span class="action-btn" @click="editMessage(i)" title="编辑">编辑</span>
-            </template>
-            <template v-else>
-              <span class="action-btn" :class="{ disabled: isStreaming }" @click="regenerateMessage(i)" title="重新生成">刷新</span>
-              <span
-                v-if="msg.quizResourceId"
-                class="action-btn quiz-btn"
-                @click="router.push({ path: '/resources', query: { open: String(msg.quizResourceId) } })"
-              >📝 前往答题</span>
-            </template>
-          </div>
-      </div>
-
-      <div class="chat-input">
-        <el-input
-          v-model="inputText"
-          type="textarea"
-          :rows="3"
-          placeholder="输入您的问题..."
-          :disabled="isStreaming"
-          @keydown="handleKeydown"
-        />
-        <el-button
-          type="primary"
-          :disabled="!inputText.trim() || isStreaming"
-          :loading="isStreaming"
-          @click="sendMessage"
-        >
-          发送
-        </el-button>
-      </div>
+        </div>
+      </section>
     </div>
   </div>
 
   <Teleport to="body">
+    <div
+      v-if="convMenuVisible && convMenuTarget"
+      class="conv-context-menu"
+      :style="{ left: `${convMenuX}px`, top: `${convMenuY}px` }"
+      @click.stop
+    >
+      <button class="context-item" type="button" @click="togglePinConversation">{{ isPinned(convMenuTarget.id) ? '取消置顶' : '置顶' }}</button>
+      <button class="context-item" type="button" @click="renameConversation">重命名</button>
+      <button class="context-item danger" type="button" @click="removeConversationFromMenu">删除</button>
+    </div>
+
     <div
       v-if="popoverVisible"
       class="term-popover"
@@ -750,505 +859,299 @@ function regenerateMessage(aiIndex: number) {
 
 <style scoped>
 .chat-page {
+  min-height: calc(100vh - 60px);
+  background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%);
+  padding: 28px 20px 34px;
+}
+
+.chat-shell {
+  max-width: 1260px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 24px;
+  align-items: stretch;
+}
+
+@keyframes floatUpIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-up { opacity: 0; animation: floatUpIn 0.55s cubic-bezier(0.2, 0.75, 0.22, 1) forwards; }
+.animate-delay-1 { animation-delay: 0.08s; }
+.animate-delay-2 { animation-delay: 0.16s; }
+.animate-delay-3 { animation-delay: 0.24s; }
+
+.history-pane {
+  background: #FFFBF5;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(58, 51, 46, 0.08);
   display: flex;
-  justify-content: center;
-  height: calc(100vh - 48px);
-  position: relative;
+  flex-direction: column;
+  height: calc(100vh - 126px);
+  min-height: 640px;
   overflow: hidden;
 }
 
-.panel-area {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 20;
-  display: flex;
-  transform: translateX(calc(100% - 32px));
-  transition: transform 0.28s ease;
-}
-
-.panel-area.open {
-  transform: translateX(0);
-}
-
-.panel-tab {
-  width: 32px;
-  flex-shrink: 0;
-  background: #f0f2f5;
-  border: 1px solid #e4e7ed;
-  border-right: none;
-  border-radius: 8px 0 0 8px;
+.history-controls {
+  padding: 14px 14px 10px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  user-select: none;
+  gap: 10px;
+}
+
+.conversation-list {
+  flex: 1;
+  overflow-y: scroll;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
-  transition: background 0.2s;
+  padding: 0 14px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #d9cbb8 transparent;
 }
+.conversation-list::-webkit-scrollbar { width: 8px; }
+.conversation-list::-webkit-scrollbar-track { background: transparent; }
+.conversation-list::-webkit-scrollbar-thumb { background: #d9cbb8; border-radius: 999px; }
+.conversation-list::-webkit-scrollbar-thumb:hover { background: #c7b39a; }
 
-.panel-tab:hover {
-  background: #e4e7ed;
-}
+.history-label-btn { pointer-events: none; }
 
-.tab-icon {
-  font-size: 12px;
-  color: #909399;
-  line-height: 1;
-}
-
-.tab-text {
-  writing-mode: vertical-rl;
-  font-size: 12px;
-  color: #606266;
-  letter-spacing: 2px;
-}
-
-.question-panel {
-  width: 260px;
-  flex-shrink: 0;
-  background: #fff;
-  border-left: 1px solid #e4e7ed;
-  display: flex;
-  flex-direction: column;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
-}
-
-.panel-header {
-  padding: 14px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  border-bottom: 1px solid #ebeef5;
-  flex-shrink: 0;
-}
-
-.panel-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.panel-empty {
-  text-align: center;
-  color: #c0c4cc;
-  padding: 40px 16px;
-  font-size: 13px;
-}
-
-.question-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 16px;
+.conversation-item {
+  padding: 8px 10px;
+  border-radius: 12px;
   cursor: pointer;
-  transition: background 0.15s;
-  border-left: 2px solid transparent;
+  transition: background 0.18s;
 }
+.conversation-item:hover { background: #FFF5EB; }
+.conversation-item.active { background: rgba(249, 217, 184, 0.3); }
 
-.question-item:hover {
-  background: #f5f7fa;
-}
+.panel-empty { text-align: center; color: #948A80; padding: 40px 16px; font-size: 14px; }
 
-.question-item.active {
-  background: #FFF5EB;
-  border-left-color: #DBA878;
-}
-
-.question-idx {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #f0f2f5;
-  color: #909399;
-  font-size: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 1px;
-}
-
-.question-item.active .question-idx {
-  background: #DBA878;
-  color: #fff;
-}
-
-.question-text {
-  flex: 1;
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.5;
-  word-break: break-all;
-}
+.history-footer { margin-top: auto; padding: 10px 16px 14px; border-top: 1px solid #EFE6DC; }
 
 .chat-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  max-width: 800px;
-  width: 100%;
-  margin: 0 auto;
-  transition: margin-right 0.28s ease;
+  min-width: 0;
+  height: calc(100vh - 126px);
+  min-height: 640px;
 }
 
-.chat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+.chat-title {
+  margin: 0 0 18px;
+  color: #3A332E;
+  font-size: 24px;
+  line-height: 1.4;
+  font-weight: 600;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  text-align: center;
 }
 
-.chat-header h2 { margin: 0; color: #303133; }
-
-.conv-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.warm-btn {
+  border-radius: 8px;
+  border: 1.5px solid #EFE6DC;
+  color: #3A332E;
+  background: transparent;
+  font-weight: 500;
 }
+.history-controls :deep(.el-button) { width: 100%; justify-content: center; }
+.history-controls :deep(.el-button + .el-button) { margin-left: 0; }
+.warm-btn:hover { color: #3A332E; border-color: #E8C29C; background: #FFF5EB; }
 
-.user-id { font-size: 12px; color: #909399; }
+.user-id { font-size: 12px; color: #948A80; }
 
-.conv-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 260px;
-}
-
-.conv-title {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conv-meta {
-  font-size: 11px;
-  color: #909399;
-}
-
+.conv-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.conv-pin { flex-shrink: 0; font-size: 11px; color: #DBA878; background: rgba(219, 168, 120, 0.12); border-radius: 999px; padding: 2px 6px; }
+.conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: #3A332E; }
+.conv-meta { font-size: 14px; color: #948A80; }
 .conv-del { margin-left: auto; }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  margin-bottom: 16px;
+  padding: 40px 20px;
+  background: #FFFBF5;
+  border-radius: 12px;
+  margin-bottom: 14px;
   scroll-behavior: smooth;
+  box-shadow: 0 4px 24px rgba(58, 51, 46, 0.08);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #d9cbb8 transparent;
 }
+.chat-messages::-webkit-scrollbar { width: 8px; }
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.chat-messages::-webkit-scrollbar-thumb { background: #d9cbb8; border-radius: 999px; }
+.chat-messages::-webkit-scrollbar-thumb:hover { background: #c7b39a; }
 
 .empty-hint {
   text-align: center;
-  color: #c0c4cc;
-  padding: 60px 0;
+  color: #948A80;
+  padding: 60px 0 40px;
   font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
+
+.suggested-questions { padding: 0 0 40px; overflow: hidden; }
+.suggest-row { overflow: hidden; margin-bottom: 8px; }
+.suggest-row:hover .suggest-track { animation-play-state: paused; }
+.suggest-track { display: flex; gap: 10px; width: max-content; animation-timing-function: linear; animation-iteration-count: infinite; }
+.track-ltr { animation: scrollLtr 120s linear infinite; }
+.track-rtl { animation: scrollRtl 110s linear infinite; }
+@keyframes scrollLtr { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+@keyframes scrollRtl { 0% { transform: translateX(-50%); } 100% { transform: translateX(0); } }
+.suggest-btn {
+  flex-shrink: 0;
+  padding: 8px 20px;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 22px;
+  background: #FFFBF5;
+  color: #948A80;
+  font-size: 13px;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.suggest-btn:hover { border-color: #E8C29C; background: #FFF5EB; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(58, 51, 46, 0.08); }
 
 .message { margin-bottom: 16px; }
 
-.msg-time {
-  font-size: 11px;
-  color: #c0c4cc;
-  margin-bottom: 3px;
-}
-
-.msg-time.user {
-  text-align: right;
-}
-
-.msg-time.assistant {
-  text-align: left;
-}
+.msg-time { font-size: 11px; color: #948A80; margin-bottom: 3px; }
 
 .message-actions {
-  display: flex;
-  gap: 2px;
-  margin-top: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
+  display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 0.15s;
 }
-
-.message:hover .message-actions {
-  opacity: 1;
-}
-
-.message.user .message-actions {
-  justify-content: flex-end;
-}
-
-.message.assistant .message-actions {
-  margin-left: 2px;
-}
+.message:hover .message-actions { opacity: 1; }
+.message.user .message-actions { justify-content: flex-end; margin-right: 2px; }
+.message.assistant .message-actions { margin-left: 2px; }
 
 .action-btn {
-  font-size: 12px;
-  color: #909399;
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
-  transition: all 0.15s;
-  user-select: none;
+  font-size: 12px; color: #948A80; cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: all 0.15s; user-select: none;
 }
-
-.action-btn:hover {
-  color: #DBA878;
-  background: rgba(249, 217, 184, 0.2);
-}
-
-.action-btn.disabled {
-  color: #c0c4cc;
-  cursor: not-allowed;
-}
-
-.action-btn.quiz-btn {
-  color: #e6a23c;
-  background: rgba(230, 162, 60, 0.08);
-}
-
+.action-btn:hover { color: #DBA878; background: rgba(219, 168, 120, 0.1); }
+.action-btn.disabled { color: #948A80; cursor: not-allowed; pointer-events: none; }
+.action-btn.quiz-btn { color: #DBA878; background: rgba(219, 168, 120, 0.1); }
 
 .message.user .message-content {
-  background: #E8C29C;
+  background: rgba(249,217,184,0.3);
   color: #3A332E;
-  margin-left: auto;
-  max-width: 75%;
+  margin-left: 60px;
   border-radius: 12px 4px 12px 12px;
+  border: 1px solid #EFE6DC;
 }
-
 .message.assistant .message-content {
-  background: #FFFBF5;
+  background: #FFF5EB;
   color: #3A332E;
-  margin-right: auto;
-  max-width: 85%;
+  margin-right: 60px;
   border-radius: 4px 12px 12px 12px;
+  border: 1px solid #EFE6DC;
 }
 
-.message.highlight .message-content {
-  animation: highlightPulse 0.6s ease-in-out 2;
-}
-
+.message.highlight .message-content { animation: highlightPulse 0.6s ease-in-out 2; }
 @keyframes highlightPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 194, 156, 0); }
-  50% { box-shadow: 0 0 0 6px rgba(232, 194, 156, 0.5); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(64, 158, 255, 0); }
+  50% { box-shadow: 0 0 0 6px rgba(64, 158, 255, 0.35); }
 }
 
 .message-content {
   padding: 12px 16px;
   line-height: 1.6;
   word-break: break-word;
-  text-align: left;
+  color: #3A332E;
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  font-weight: 400;
 }
-
-.message-content :deep(h1),
-.message-content :deep(h2),
-.message-content :deep(h3) {
-  margin: 12px 0 8px;
-  font-weight: 600;
-  text-align: left;
-}
-
-.message-content :deep(h1) { font-size: 20px; }
-.message-content :deep(h2) { font-size: 17px; }
-.message-content :deep(h3) { font-size: 15px; }
-.message-content :deep(p) { margin: 10px 0; text-align: left; }
-.message-content :deep(ul),
-.message-content :deep(ol) { padding-left: 20px; margin: 10px 0; text-align: left; }
-.message-content :deep(li) { margin: 6px 0; line-height: 1.7; text-align: left; }
-
-.message-content :deep(code) {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 13px;
-  font-family: 'JetBrains Mono', 'Consolas', monospace;
-}
-
-.message-content :deep(pre) {
-  background: #282c34;
-  color: #abb2bf;
-  padding: 14px 18px;
-  border-radius: 0 0 6px 6px;
-  overflow-x: auto;
-  margin: 0;
-}
-
-.message-content :deep(pre code) {
-  background: none;
-  padding: 0;
-  color: inherit;
-  font-size: 13px;
-  white-space: pre;
-  tab-size: 4;
-  -moz-tab-size: 4;
-}
-
-.message-content :deep(.code-block-wrapper) {
-  margin: 12px 0;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.message-content :deep(.code-header) {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: #21252b;
-  padding: 6px 14px;
-  border-radius: 6px 6px 0 0;
-}
-
-.message-content :deep(.code-lang) {
-  font-size: 11px;
-  color: #abb2bf;
-  text-transform: uppercase;
-}
-
-.message-content :deep(.code-copy-btn) {
-  font-size: 11px;
-  color: #abb2bf;
-  cursor: pointer;
-  padding: 2px 8px;
-  border-radius: 3px;
-  transition: all 0.15s;
-  user-select: none;
-}
-
-.message-content :deep(.code-copy-btn:hover) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.message-content :deep(blockquote) {
-  border-left: 3px solid #DBA878;
-  padding: 4px 12px;
-  margin: 8px 0;
-  color: #6B635C;
-  background: rgba(249, 217, 184, 0.1);
-}
-
-.message-content :deep(table) {
-  border-collapse: collapse;
-  margin: 8px 0;
-  width: 100%;
-}
-
-.message-content :deep(th),
-.message-content :deep(td) {
-  border: 1px solid #dcdfe6;
-  padding: 6px 10px;
-  text-align: left;
-}
-
-.message-content :deep(th) { background: #f5f7fa; font-weight: 600; }
+.message-content :deep(h1), .message-content :deep(h2), .message-content :deep(h3) { margin: 12px 0 8px; font-weight: 500; color: #3A332E; font-family: inherit; font-size: inherit; }
+.message-content :deep(p) { margin: 10px 0; color: #3A332E; font-family: inherit; }
+.message-content :deep(ul), .message-content :deep(ol) { padding-left: 20px; margin: 10px 0; color: #3A332E; font-family: inherit; }
+.message-content :deep(li) { margin: 6px 0; line-height: 1.7; color: #3A332E; font-family: inherit; }
+.message-content :deep(code) { background: #FFF5EB; padding: 2px 6px; border-radius: 3px; font-size: inherit; font-family: inherit; color: #3A332E; }
+.message-content :deep(strong), .message-content :deep(em), .message-content :deep(small), .message-content :deep(td), .message-content :deep(th) { color: #3A332E; font-family: inherit; font-weight: 500; }
+.message-content :deep(pre) { background: #2f3541; color: #f0f4f9; padding: 14px 18px; border-radius: 0 0 6px 6px; overflow-x: auto; margin: 0; }
+.message-content :deep(pre code) { background: none; padding: 0; color: inherit; font-size: 13px; white-space: pre; tab-size: 4; -moz-tab-size: 4; }
+.message-content :deep(.code-block-wrapper) { margin: 12px 0; border-radius: 6px; overflow: hidden; }
+.message-content :deep(.code-header) { display: flex; justify-content: space-between; align-items: center; background: #21252b; padding: 6px 14px; border-radius: 6px 6px 0 0; }
+.message-content :deep(.code-lang) { font-size: 11px; color: #948A80; text-transform: uppercase; }
+.message-content :deep(.code-copy-btn) { font-size: 11px; color: #948A80; cursor: pointer; padding: 2px 8px; border-radius: 3px; transition: all 0.15s; user-select: none; }
+.message-content :deep(.code-copy-btn:hover) { color: #FFFBF5; background: rgba(255, 255, 255, 0.1); }
+.message-content :deep(blockquote) { border-left: 3px solid #DBA878; padding: 4px 12px; margin: 8px 0; color: #3A332E; background: rgba(219, 168, 120, 0.08); }
+.message-content :deep(table) { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.message-content :deep(th), .message-content :deep(td) { border: 1px solid #EFE6DC; padding: 6px 10px; text-align: left; }
+.message-content :deep(th) { background: #FFF5EB; font-weight: 500; }
 .message-content :deep(strong) { font-weight: 700; }
 .message-content :deep(a) { color: #DBA878; text-decoration: none; }
 .message-content :deep(a:hover) { text-decoration: underline; }
+.message-content :deep(.term-highlight) { color: #DBA878; font-weight: 700; cursor: pointer; border-bottom: 1px dashed #DBA878; padding: 0 2px; transition: background 0.15s; }
+.message-content :deep(.term-highlight:hover) { background: rgba(219, 168, 120, 0.1); border-radius: 3px; }
+.message-content :deep(.math-block) { display: block; text-align: center; margin: 14px 0; overflow-x: auto; }
+.message-content :deep(.math-inline) { padding: 0 2px; }
 
-.cursor {
-  animation: blink 0.8s infinite;
-  font-weight: 700;
-  color: #DBA878;
-}
+.message-content :deep(.video-results) { background: rgba(249,217,184,0.1); border-radius: 8px; padding: 12px 14px; border: 1px solid #EFE6DC; }
+.message-content :deep(.video-results-header) { font-size: 14px; font-weight: 500; color: #3A332E; margin-bottom: 8px; }
+.message-content :deep(.video-summary) { font-size: 12px; color: #948A80; margin-bottom: 10px; }
+.message-content :deep(.video-card) { background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+.message-content :deep(.video-card-title) { font-size: 14px; font-weight: 500; color: #3A332E; margin-bottom: 4px; }
+.message-content :deep(.video-card-meta) { font-size: 12px; color: #948A80; margin-bottom: 4px; }
+.message-content :deep(.video-card-reason) { font-size: 12px; color: #6B635C; margin-bottom: 6px; }
+.message-content :deep(.video-card-link) { display: inline-block; font-size: 12px; color: #DBA878; text-decoration: none; border: 1px solid #DBA878; border-radius: 4px; padding: 2px 10px; }
+.message-content :deep(.video-card-link:hover) { background: #FFF5EB; }
+.message-content :deep(.video-card-embed-wrap) { position: relative; width: 100%; padding-top: 56.25%; margin-top: 8px; }
+.message-content :deep(.video-card-iframe) { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 4px; }
 
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
-}
+.cursor { animation: blink 0.8s infinite; font-weight: 700; color: #DBA878; }
+@keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
-.chat-input { display: flex; gap: 12px; align-items: flex-end; }
-
+.chat-input-wrap { background: #FFFBF5; border-radius: 12px; box-shadow: 0 4px 24px rgba(58, 51, 46, 0.08); padding: 14px; }
+.chat-input { display: flex; gap: 12px; align-items: stretch; }
 .chat-input .el-textarea { flex: 1; }
+.send-btn { min-width: 96px; border-radius: 8px; border: 1.5px solid #EFE6DC; color: #3A332E; background: transparent; font-weight: 500; }
+.send-btn:hover, .send-btn:focus { color: #3A332E; border-color: #E8C29C; background: #FFF5EB; }
+:deep(.chat-input .el-textarea__inner) { border-radius: 8px; border: 1.5px solid #EFE6DC; color: #3A332E; background: #FFFBF5; box-shadow: none; }
+:deep(.chat-input .el-textarea__inner::placeholder) { color: #948A80; }
 
-.message-content :deep(.term-highlight) {
-  color: #DBA878;
-  font-weight: 700;
-  cursor: pointer;
-  border-bottom: 1px dashed #DBA878;
-  padding: 0 2px;
-  transition: background 0.15s;
-}
+.msg-resources { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.resource-card-inline { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; background: rgba(152, 201, 179, 0.1); border: 1px solid rgba(152, 201, 179, 0.4); border-radius: 6px; font-size: 12px; }
+.resource-badge { color: #3A332E; font-weight: 500; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-type-tag { font-size: 11px; color: #948A80; background: #FFF5EB; padding: 1px 6px; border-radius: 3px; }
+.resource-jump-btn { color: #DBA878; cursor: pointer; font-size: 12px; padding: 1px 6px; border-radius: 3px; transition: all 0.15s; user-select: none; white-space: nowrap; }
+.resource-jump-btn:hover { background: rgba(219, 168, 120, 0.1); }
 
-.message-content :deep(.term-highlight:hover) {
-  background: #FFF5EB;
-  border-radius: 3px;
+@media (max-width: 1100px) {
+  .chat-shell { grid-template-columns: 1fr; }
+  .history-pane { height: auto; min-height: 240px; max-height: 280px; }
+  .chat-view { height: auto; min-height: 480px; }
 }
-
-.message-content :deep(.math-block) {
-  display: block;
-  text-align: center;
-  margin: 14px 0;
-  overflow-x: auto;
-}
-
-.message-content :deep(.math-inline) {
-  padding: 0 2px;
-}
-
-.message-content :deep(.video-results) {
-  background: #f5f7fa;
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-.message-content :deep(.video-results-header) {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 8px;
-}
-.message-content :deep(.video-summary) {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 10px;
-}
-.message-content :deep(.video-card) {
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-}
-.message-content :deep(.video-card-title) {
-  font-size: 14px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 4px;
-}
-.message-content :deep(.video-card-meta) {
-  font-size: 12px;
-  color: #909399;
-  margin-bottom: 4px;
-}
-.message-content :deep(.video-card-reason) {
-  font-size: 12px;
-  color: #606266;
-  margin-bottom: 6px;
-}
-.message-content :deep(.video-card-link) {
-  display: inline-block;
-  font-size: 12px;
-  color: #DBA878;
-  text-decoration: none;
-  border: 1px solid #DBA878;
-  border-radius: 4px;
-  padding: 2px 10px;
-}
-.message-content :deep(.video-card-link:hover) {
-  background: #FFF5EB;
-}
-.message-content :deep(.video-card-embed-wrap) {
-  position: relative; width: 100%; padding-top: 56.25%; margin-top: 8px;
-}
-.message-content :deep(.video-card-iframe) {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; border-radius: 4px;
+@media (max-width: 768px) {
+  .chat-page { padding: 14px 12px 18px; }
+  .message.user .message-content, .message.assistant .message-content { margin-left: 0; margin-right: 0; }
+  .chat-input { flex-direction: column; }
+  .send-btn { width: 100%; }
 }
 </style>
 
 <style>
+.conv-context-menu {
+  position: fixed;
+  z-index: 10020;
+  min-width: 132px;
+  background: #FFFBF5;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(58, 51, 46, 0.12);
+  padding: 6px;
+  transform: translate(8px, 8px);
+}
+.conv-context-menu .context-item {
+  width: 100%; border: none; background: transparent; text-align: left; padding: 8px 10px; border-radius: 8px; color: #3A332E; font-size: 13px; cursor: pointer;
+}
+.conv-context-menu .context-item:hover { background: #FFF5EB; }
+.conv-context-menu .context-item.danger { color: #F2B8A2; }
+
 .term-popover {
   position: fixed;
   z-index: 9999;
@@ -1262,181 +1165,28 @@ function regenerateMessage(aiIndex: number) {
   font-size: 13px;
   animation: popoverIn 0.18s ease;
 }
-
 @keyframes popoverIn {
   from { opacity: 0; transform: translate(12px, -50%) scale(0.92); }
   to { opacity: 1; transform: translate(12px, -50%) scale(1); }
 }
+.popover-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 8px; border-bottom: 1px solid #EFE6DC; cursor: grab; user-select: none; }
+.popover-header:active { cursor: grabbing; }
+.term-popover.dragging { opacity: 0.92; transition: none; }
+.term-popover.dragging .popover-header { cursor: grabbing; }
+.popover-term { font-weight: 700; color: #DBA878; font-size: 14px; }
+.popover-close { cursor: pointer; color: #948A80; font-size: 14px; padding: 2px 6px; border-radius: 4px; transition: all 0.15s; }
+.popover-close:hover { color: #6B635C; background: #FFF5EB; }
+.popover-body { padding: 10px 14px 14px; line-height: 1.7; color: #3A332E; max-height: 260px; overflow-y: auto; font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+.popover-body p { margin: 6px 0; }
+.popover-body strong { color: #3A332E; font-weight: 700; }
+.popover-body h1, .popover-body h2, .popover-body h3 { font-size: 14px; margin: 8px 0 4px; }
+.popover-body ul, .popover-body ol { padding-left: 18px; margin: 4px 0; }
+.popover-body code { background: rgba(58, 51, 46, 0.06); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+.popover-loading { color: #948A80; font-style: italic; }
+.popover-text :deep(strong) { font-weight: 700; color: #3A332E; }
 
-.popover-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 14px 8px;
-  border-bottom: 1px solid #EFE6DC;
-  cursor: grab;
-  user-select: none;
-}
-
-.popover-header:active {
-  cursor: grabbing;
-}
-
-.term-popover.dragging {
-  opacity: 0.92;
-  transition: none;
-}
-
-.term-popover.dragging .popover-header {
-  cursor: grabbing;
-}
-
-.popover-term {
-  font-weight: 700;
-  color: #DBA878;
-  font-size: 14px;
-}
-
-.popover-close {
-  cursor: pointer;
-  color: #948A80;
-  font-size: 14px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  transition: all 0.15s;
-}
-
-.popover-close:hover {
-  color: #6B635C;
-  background: #FFF5EB;
-}
-
-.popover-body {
-  padding: 10px 14px 14px;
-  line-height: 1.7;
-  color: #3A332E;
-  max-height: 260px;
-  overflow-y: auto;
-}
-
-.popover-body p {
-  margin: 6px 0;
-}
-
-.popover-body strong {
-  color: #3A332E;
-  font-weight: 700;
-}
-
-.popover-body h1, .popover-body h2, .popover-body h3 {
-  font-size: 14px;
-  margin: 8px 0 4px;
-}
-
-.popover-body ul, .popover-body ol {
-  padding-left: 18px;
-  margin: 4px 0;
-}
-
-.popover-body code {
-  background: rgba(58, 51, 46, 0.06);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-.popover-loading {
-  color: #948A80;
-  font-style: italic;
-}
-
-.popover-text :deep(strong) {
-  font-weight: 700;
-  color: #3A332E;
-}
-
-.thinking-area {
-  margin-bottom: 6px;
-}
-
-.thinking-toggle {
-  display: inline-block;
-  font-size: 12px;
-  color: #948A80;
-  cursor: pointer;
-  padding: 2px 8px;
-  border-radius: 4px;
-  transition: all 0.15s;
-  user-select: none;
-}
-
-.thinking-toggle:hover {
-  color: #DBA878;
-  background: rgba(249, 217, 184, 0.15);
-}
-
-.thinking-content {
-  margin-top: 8px;
-  padding: 10px 14px;
-  background: #FFF5EB;
-  border-left: 3px solid #EFE6DC;
-  border-radius: 4px;
-  font-size: 13px;
-  color: #6B635C;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.msg-resources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-
-.resource-card-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  background: var(--color-success-bg);
-  border: 1px solid rgba(152, 201, 179, 0.4);
-  border-radius: 6px;
-  font-size: 12px;
-}
-
-.resource-badge {
-  color: #3A332E;
-  font-weight: 500;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-type-tag {
-  font-size: 11px;
-  color: #948A80;
-  background: #FFF5EB;
-  padding: 1px 6px;
-  border-radius: 3px;
-}
-
-.resource-jump-btn {
-  color: #DBA878;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  transition: all 0.15s;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.resource-jump-btn:hover {
-  background: rgba(64, 158, 255, 0.1);
-}
+.thinking-area { margin-bottom: 6px; }
+.thinking-toggle { display: inline-block; font-size: 12px; color: #948A80; cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: all 0.15s; user-select: none; }
+.thinking-toggle:hover { color: #DBA878; background: rgba(249, 217, 184, 0.15); }
+.thinking-content { margin-top: 8px; padding: 10px 14px; background: #FFF5EB; border-left: 3px solid #EFE6DC; border-radius: 4px; font-size: 13px; color: #6B635C; line-height: 1.7; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
 </style>
