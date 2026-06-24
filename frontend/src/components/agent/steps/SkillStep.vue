@@ -224,13 +224,13 @@ const isHtmlCode = computed(() =>
   ['html', 'htm'].includes((data.value.language || '').toLowerCase()) && !!data.value.content
 )
 const previewVisible = ref(true)
-const iframeHeight = ref(600)
+const iframeHeight = ref(700)
 
 function onIframeLoad(e: Event) {
   const iframe = e.target as HTMLIFrameElement
   try {
     const h = iframe.contentDocument?.documentElement?.scrollHeight
-    if (h && h > 100) iframeHeight.value = h + 20
+    if (h && h > 200) iframeHeight.value = h + 20
   } catch {}
 }
 
@@ -410,7 +410,7 @@ function toggleExpand() {
 .code-lang-tag { font-size: 11px; color: #888; }
 .preview-btn { font-size: 12px; padding: 3px 10px; border: 1px solid #98C9B3; border-radius: 6px; background: transparent; color: #98C9B3; cursor: pointer; transition: all 0.2s; }
 .preview-btn:hover { background: #98C9B3; color: #fff; }
-.html-preview { width: calc(100% + 28px); margin-left: -14px; height: 600px; border: none; border-top: 1px solid #EFE6DC; background: #fff; display: block; border-radius: 0 0 8px 8px; }
+.html-preview { width: calc(100% + 28px); margin-left: -14px; min-height: 600px; height: auto; border: none; border-top: 1px solid #EFE6DC; background: #fff; display: block; border-radius: 0 0 8px 8px; }
 .json-block { background: #FFF5EB; color: #6B635C; padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid #EFE6DC; font-family: var(--font-mono); }
 .json-block code { font-family: var(--font-mono); }
 .markdown-body { font-size: 14px; line-height: 1.7; color: #6B635C; max-height: 500px; overflow-y: auto; }

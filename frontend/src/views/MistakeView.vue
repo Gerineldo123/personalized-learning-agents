@@ -10,6 +10,8 @@ import 'katex/dist/katex.min.css'
 const userStore = useUserStore()
 const loading = ref(false)
 const items = ref<any[]>([])
+const sortBy = ref<'time' | 'count'>('time')
+const sortOrder = ref<'desc' | 'asc'>('desc')
 const expandedId = ref<number | null>(null)
 const analyzing = ref(false)
 const analyses = ref<Record<number, any>>({})
@@ -24,10 +26,11 @@ const pendingReview = ref<Record<number, any[]>>({})
 const reviewAnswers = ref<Record<string, string>>({})
 const reviewCorrectCount = ref<Record<string, number>>({})
 const reviewAttempts = ref<Record<string, number>>({})
-const reviewAnalyses = ref<Record<string, any>>()
+const reviewAnalyses = ref<Record<string, any>>({})
 const pendingReviewRemove = ref<{ mistakeId: number; ri: number; item: any } | null>(null)
 let reviewRemoveTimer: ReturnType<typeof setTimeout> | null = null
 let undoTimer: ReturnType<typeof setTimeout> | null = null
+const redoAnswer = ref<Record<number, string>>({})
 
 function loadReviewFromStorage() {
   try {
@@ -110,7 +113,7 @@ async function loadMistakes() {
   loadReviewFromStorage()
   loading.value = true
   try {
-    const r = await api.get('/mistakes', { params: { user_id: userStore.userId } })
+    const r = await api.get('/mistakes', { params: { user_id: userStore.userId, sort: sortBy.value, order: sortOrder.value } })
     items.value = r.data.items || []
   } catch {
     items.value = []
@@ -128,6 +131,7 @@ async function toggleCard(m: any) {
     flushPendingReview(expandedId.value)
   }
   expandedId.value = m.id
+  redoAnswer.value = {}
   similarProblems.value[m.id] = undefined as any
   similarAnswers.value = {}
   similarWrongCount.value = {}
@@ -314,8 +318,36 @@ watch(() => userStore.userId, () => {
   loadMistakes()
 })
 
+watch(sortBy, () => {
+  expandedId.value = null
+  loadMistakes()
+})
+
+watch(sortOrder, () => {
+  expandedId.value = null
+  loadMistakes()
+})
+
 function isWrong(m: any): boolean {
   return m.user_answer !== m.correct_answer
+}
+
+async function selectRedoAnswer(m: any, option: string) {
+  redoAnswer.value[m.id] = option
+  if (option !== m.correct_answer) {
+    try {
+      const r = await api.post(`/mistakes/${m.id}/redo-incorrect`, null, {
+        params: { user_id: userStore.userId },
+      })
+      m.wrong_count = r.data.wrong_count
+    } catch {}
+  }
+}
+
+function redoIsCorrect(m: any): boolean | null {
+  const ans = redoAnswer.value[m.id]
+  if (!ans) return null
+  return ans === m.correct_answer
 }
 
 function getOptionText(q: any, letter: string): string {
@@ -393,7 +425,14 @@ function renderMath(text: string): string {
     <div class="header animate-up animate-delay-1">
       <h2>错题本</h2>
       <div class="ops">
-        <el-button @click="loadMistakes">刷新</el-button>
+        <el-button-group class="sort-group">
+          <el-button :type="sortBy === 'time' ? 'primary' : ''" size="small" @click="sortBy = 'time'">按时间</el-button>
+          <el-button :type="sortBy === 'count' ? 'primary' : ''" size="small" @click="sortBy = 'count'">按做错次数</el-button>
+        </el-button-group>
+        <el-button size="small" @click="sortOrder = sortOrder === 'desc' ? 'asc' : 'desc'">
+          {{ sortOrder === 'desc' ? '↓ 降序' : '↑ 升序' }}
+        </el-button>
+        <el-button @click="loadMistakes" style="margin-left:8px">刷新</el-button>
         <el-button type="danger" plain @click="clearAll">清空</el-button>
       </div>
     </div>
@@ -421,11 +460,66 @@ function renderMath(text: string): string {
             <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
               {{ isWrong(m) ? '答错' : '手动加入' }}
             </el-tag>
+            <el-tag size="small" type="danger" class="m-count-tag">
+              错{{ m.wrong_count || 1 }}次
+            </el-tag>
             <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
             <el-button size="small" text type="danger" @click="removeItem(m.id)">移除</el-button>
           </div>
 
           <div class="m-expand">
+            <div class="m-redo">
+              <div class="m-redo-header">重新作答</div>
+              <template v-if="!redoAnswer[m.id]">
+                <div class="m-options">
+                  <span
+                    v-for="opt in (m.question?.options || [])"
+                    :key="opt"
+                    class="m-opt-btn"
+                    @click.stop="selectRedoAnswer(m, opt.charAt(0))"
+                  >
+                    <span v-html="renderMath(opt)"></span>
+                  </span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="m-redo-result">
+                  <el-tag :type="redoIsCorrect(m) ? 'success' : 'danger'" size="small">
+                    {{ redoIsCorrect(m) ? '正确' : '错误' }}
+                  </el-tag>
+                  <span class="m-redo-spacer"></span>
+                  <div class="m-section">
+                    <div class="m-label">你的本次作答</div>
+                    <div :class="['m-answer', redoIsCorrect(m) ? 'correct' : 'wrong']" v-html="renderMath(getOptionText(m.question, redoAnswer[m.id]))"></div>
+                  </div>
+                  <div class="m-section" v-if="!redoIsCorrect(m)">
+                    <div class="m-label">正确答案</div>
+                    <div class="m-answer correct" v-html="renderMath(getOptionText(m.question, m.correct_answer))"></div>
+                  </div>
+                  <div class="m-section" v-if="m.user_answer !== m.correct_answer && redoAnswer[m.id] !== m.user_answer">
+                    <div class="m-label">上次答错</div>
+                    <div class="m-answer wrong" v-html="renderMath(getOptionText(m.question, m.user_answer))"></div>
+                  </div>
+                  <div class="m-section" v-if="m.question?.explanation">
+                    <div class="m-label">解析</div>
+                    <div class="m-text" v-html="renderMath(m.question.explanation)"></div>
+                  </div>
+                  <div class="m-opt-explanations" v-if="m.question?.option_explanations">
+                    <div v-for="(exp, letter) in m.question.option_explanations" :key="letter" class="m-opt-exp-item">
+                      <b :class="{ 'c-green': letter === m.correct_answer, 'c-red': letter === redoAnswer[m.id] && letter !== m.correct_answer }">{{ letter }}</b>：<span v-html="renderMath(exp)"></span>
+                    </div>
+                  </div>
+                  <div class="m-section" v-if="m.resource_title">
+                    <div class="m-label">来源套题</div>
+                    <div class="m-source">
+                      <el-tag size="small" type="info">{{ m.resource_title }}</el-tag>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div v-if="redoAnswer[m.id]">
             <div v-if="analyzing && !analyses[m.id]" class="m-loading">分析中...</div>
             <template v-else-if="analyses[m.id]">
               <div class="m-section animate-up animate-delay-1" v-if="isWrong(m)">
@@ -463,6 +557,7 @@ function renderMath(text: string): string {
                 </div>
               </div>
             </template>
+            </div>
 
             <div v-if="reviewProblems[m.id]?.length" class="m-review animate-up animate-delay-2">
               <div class="m-review-header">错题回顾</div>
@@ -598,10 +693,9 @@ function renderMath(text: string): string {
       </template>
 
       <template v-else>
-        <div v-for="group in groupedItems" :key="group.dateKey" class="m-group">
-          <div class="m-group-header">{{ group.label }}</div>
+        <template v-if="sortBy === 'count'">
           <div
-            v-for="m in group.items"
+            v-for="m in items"
             :key="m.id"
             class="m-card"
             @click="toggleCard(m)"
@@ -610,11 +704,42 @@ function renderMath(text: string): string {
               <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
                 {{ isWrong(m) ? '答错' : '手动加入' }}
               </el-tag>
+              <el-tag size="small" type="danger" class="m-count-tag">
+                错{{ m.wrong_count || 1 }}次
+              </el-tag>
               <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
               <el-button size="small" text type="danger" @click.stop="removeItem(m.id)">移除</el-button>
             </div>
+            <div class="m-meta" v-if="m.resource_title">
+              <el-tag size="small" type="info">错题来源：{{ m.resource_title }}</el-tag>
+            </div>
           </div>
-        </div>
+        </template>
+        <template v-else>
+          <div v-for="group in groupedItems" :key="group.dateKey" class="m-group">
+            <div class="m-group-header">{{ group.label }}</div>
+            <div
+              v-for="m in group.items"
+              :key="m.id"
+              class="m-card"
+              @click="toggleCard(m)"
+            >
+              <div class="m-head">
+                <el-tag size="small" :type="isWrong(m) ? 'danger' : 'warning'">
+                  {{ isWrong(m) ? '答错' : '手动加入' }}
+                </el-tag>
+                <el-tag size="small" type="danger" class="m-count-tag">
+                  错{{ m.wrong_count || 1 }}次
+                </el-tag>
+                <span class="m-q-text" v-html="renderMath(m.question?.question || '题干缺失')"></span>
+                <el-button size="small" text type="danger" @click.stop="removeItem(m.id)">移除</el-button>
+              </div>
+              <div class="m-meta" v-if="m.resource_title">
+                <el-tag size="small" type="info">错题来源：{{ m.resource_title }}</el-tag>
+              </div>
+            </div>
+          </div>
+        </template>
       </template>
     </div>
   </div>
@@ -625,6 +750,7 @@ function renderMath(text: string): string {
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .header h2 { margin: 0; color: #3A332E; font-size: 24px; font-weight: 600; }
 .ops { display: flex; gap: 8px; }
+.sort-group { display: flex; }
 .m-group { margin-bottom: 20px; }
 
 .undo-bar {
@@ -682,6 +808,9 @@ function renderMath(text: string): string {
 
 .m-head { display: flex; align-items: center; gap: 10px; }
 .m-q-text { flex: 1; color: #3A332E; font-size: 14px; line-height: 1.5; text-align: left; }
+.m-count-tag { margin-left: 4px; flex-shrink: 0; }
+
+.m-meta { margin-top: 8px; padding-top: 8px; border-top: 1px solid #EFE6DC; }
 
 .m-expand { margin-top: 14px; padding-top: 14px; border-top: 1px solid #EFE6DC; }
 
@@ -820,4 +949,29 @@ function renderMath(text: string): string {
 .m-opt-btn :deep(.math-inline) { padding: 0 2px; }
 .m-opt-exp-item :deep(.math-inline) { padding: 0 2px; }
 .m-opt-exp-item :deep(.math-block) { display: block; text-align: center; margin: 6px 0; overflow-x: auto; }
+
+.m-redo {
+  background: rgba(219,168,120,0.10);
+  border: 1.5px solid rgba(219,168,120,0.22);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.m-redo-header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #DBA878;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.m-redo .m-options { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+
+.m-redo-result { margin-top: 8px; }
+
+.m-redo-spacer { display: inline-block; width: 8px; }
+
+.m-source { margin-top: 4px; }
 </style>

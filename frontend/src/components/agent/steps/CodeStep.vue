@@ -9,13 +9,13 @@ const copied = ref(false)
 const previewVisible = ref(false)
 const data = computed(() => props.step.data as CodeData)
 const isHtml = computed(() => ['html', 'htm'].includes((data.value.language || '').toLowerCase()))
-const iframeHeight = ref(500)
+const iframeHeight = ref(700)
 
 function onIframeLoad(e: Event) {
   const iframe = e.target as HTMLIFrameElement
   try {
     const h = iframe.contentDocument?.documentElement?.scrollHeight
-    if (h && h > 100) iframeHeight.value = h
+    if (h && h > 200) iframeHeight.value = h + 20
   } catch {}
 }
 
@@ -124,7 +124,7 @@ const statusIcon = computed(() => {
 .copy-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
 .preview-btn { font-size: 12px; padding: 4px 12px; border: 1px solid var(--color-success); border-radius: var(--radius-sm); background: #3d3d4f; color: var(--color-success); cursor: pointer; transition: all var(--transition-fast); margin-right: 6px; }
 .preview-btn:hover { background: var(--color-success); color: #fff; }
-.html-preview { width: 100%; min-height: 500px; border: none; background: #fff; display: block; transition: height 0.2s; }
+.html-preview { width: 100%; min-height: 600px; border: none; background: #fff; display: block; transition: height 0.2s; }
 .code-editor { background: #1e1e2e; overflow-x: auto; }
 .code-block { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; padding: 14px; margin: 0; display: block; color: #cdd6f4; white-space: pre; tab-size: 2; }
 .copy-btn:hover { border-color: #E8C29C; color: #E8C29C; }

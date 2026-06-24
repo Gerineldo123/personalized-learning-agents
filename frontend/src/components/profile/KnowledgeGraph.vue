@@ -5,6 +5,7 @@ import * as echarts from 'echarts'
 const props = defineProps<{
   knowledgeBase: Record<string, number>   // knowledge_base only (not ability_scores)
   discipline?: string                      // 功能4: 学科门类
+  graphData?: { nodes: any[]; links: any[]; categories: any[] } | null  // 外部传入图谱数据
 }>()
 
 const emit = defineEmits<{
@@ -58,6 +59,13 @@ const nextStepNodes = computed(() => {
 })
 
 async function loadGraph() {
+  // 优先使用外部传入的图谱数据
+  if (props.graphData) {
+    graphData = props.graphData
+    renderChart()
+    return
+  }
+
   const file = resolveGraphFile(props.discipline)
 
   if (file) {
@@ -150,6 +158,9 @@ onMounted(loadGraph)
 
 // 功能4: discipline 变化时重置并重新加载
 watch(() => props.discipline, () => { graphData = null; loadGraph() })
+
+// graphData 外部传入时重新加载
+watch(() => props.graphData, () => { graphData = null; loadGraph() })
 
 // 功能2: 只响应 knowledgeBase 变化重绘（不再合并 ability_scores）
 watch(() => props.knowledgeBase, renderChart, { deep: true })

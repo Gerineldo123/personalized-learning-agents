@@ -18,4 +18,6 @@ class MistakeQuestion(Base):
     user_answer = Column(String, default="")
     correct_answer = Column(String, default="")
     analysis = Column(JSON)
+    wrong_count = Column(Integer, default=1)
+    last_wrong_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

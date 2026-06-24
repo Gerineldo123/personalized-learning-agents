@@ -789,6 +789,20 @@ const questionPanelOpen = ref(false)
 .chat-bubble :deep(code) { font-family: var(--font-mono); }
 .chat-bubble :deep(ul), .chat-bubble :deep(ol) { padding-left: 20px; margin: 4px 0; }
 
+/* ── 视频卡片 ── */
+.chat-bubble :deep(.video-results) { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; }
+.chat-bubble :deep(.video-results-header) { font-weight: 600; font-size: 14px; color: #3A332E; margin-bottom: 2px; }
+.chat-bubble :deep(.video-card) { display: block; background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px; overflow: hidden; text-decoration: none; color: inherit; transition: all 0.25s; }
+.chat-bubble :deep(.video-card:hover) { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(58,51,46,0.10); border-color: #E8C29C; }
+.chat-bubble :deep(.video-cover) { position: relative; width: 100%; padding-top: 56.25%; background: #FFF5EB; overflow: hidden; }
+.chat-bubble :deep(.video-cover img) { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.chat-bubble :deep(.video-duration) { position: absolute; bottom: 6px; right: 6px; background: rgba(58,51,46,0.75); color: #FFFBF5; font-size: 11px; padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); }
+.chat-bubble :deep(.video-info) { padding: 8px 12px 10px; }
+.chat-bubble :deep(.video-title) { font-size: 13px; font-weight: 500; line-height: 1.4; color: #3A332E; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
+.chat-bubble :deep(.video-meta) { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #948A80; }
+.chat-bubble :deep(.meta-author) { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: #6B635C; }
+.chat-bubble :deep(.meta-play) { white-space: nowrap; }
+
 /* ── 术语弹窗 ── */
 .term-popover {
   position: fixed; z-index: 9999;

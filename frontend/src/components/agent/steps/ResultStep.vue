@@ -39,7 +39,7 @@ const renderedHtml = computed(() => {
   const data = props.step.data as ResultData
   if (!data.content) return ''
 
-  // 视频搜索结果渲染为卡片
+  // 视频搜索结果渲染为卡片 (JSON 格式)
   try {
     const json = JSON.parse(data.content)
     if (json.agent === 'video' && Array.isArray(json.videos)) {
@@ -55,12 +55,22 @@ const renderedHtml = computed(() => {
     }
   } catch {}
 
+  // 提取原始HTML块（视频卡片等），避免被 markdown-it (html:false) 转义
+  const htmlBlocks: string[] = []
+  let preprocessed = data.content
+    .replace(/<div class="video-results">[\s\S]*?<\/div>\s*$/gm, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+    .replace(/<script[\s>][\s\S]*?<\/script>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+    .replace(/<style[\s>][\s\S]*?<\/style>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+
   const mathBlocks: Array<{ formula: string; display: boolean }> = []
-  let processed = data.content
+  let processed = preprocessed
     .replace(/\$\$([\s\S]*?)\$\$/g, (_m, f) => { mathBlocks.push({ formula: f.trim(), display: true }); return `\uFFF0MB${mathBlocks.length - 1}\uFFF1` })
     .replace(/\$([^$\n]+?)\$/g, (_m, f) => { mathBlocks.push({ formula: f.trim(), display: false }); return `\uFFF0MB${mathBlocks.length - 1}\uFFF1` })
 
   let html = md.render(processed)
+
+  // 还原 HTML 块
+  html = html.replace(/\uFFF0HT(\d+)\uFFF1/g, (_m, i) => htmlBlocks[+i] || '')
 
   html = html.replace(/\uFFF0MB(\d+)\uFFF1/g, (_m, i) => {
     const { formula, display } = mathBlocks[+i]
@@ -253,6 +263,14 @@ async function explainTerm(term: string, x: number, y: number) {
   transition: all 0.25s cubic-bezier(.4,0,.2,1);
 }
 .markdown-body .video-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(58,51,46,0.12); border-color: #E8C29C; }
+.markdown-body .video-cover { position: relative; width: 100%; padding-top: 56.25%; background: #FFF5EB; overflow: hidden; }
+.markdown-body .video-cover img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.markdown-body .video-duration { position: absolute; bottom: 6px; right: 6px; background: rgba(58,51,46,0.75); color: #FFFBF5; font-size: 11px; padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); }
+.markdown-body .video-info { padding: 10px 12px 12px; }
+.markdown-body .video-title { font-size: 13px; font-weight: 500; line-height: 1.4; color: #3A332E; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; margin-bottom: 8px; }
+.markdown-body .video-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #948A80; flex-wrap: wrap; }
+.markdown-body .meta-author { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: #6B635C; }
+.markdown-body .meta-play { white-space: nowrap; }
 .markdown-body .video-card-title { font-size: 13px; font-weight: 500; padding: 10px 12px 4px; color: #3A332E; }
 .markdown-body .video-card-meta { font-size: 12px; color: #948A80; padding: 0 12px 4px; }
 .markdown-body .video-card-reason { font-size: 12px; color: #6B635C; padding: 0 12px 8px; line-height: 1.5; }

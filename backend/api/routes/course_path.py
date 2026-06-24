@@ -117,9 +117,20 @@ def update_step_status(path_id: int, step_order: int, done: bool = True):
         db.commit()
         db.refresh(path)
 
-        # 步骤完成时异步更新画像
+        # 步骤完成时异步更新画像 + 直接更新知识点掌握度
         if done:
             step_title = next((s.get("title", "") for s in steps if s.get("order") == step_order), "")
+
+            # 方案二+三：步骤标题匹配知识点，滑动平均更新掌握度
+            from services.kp_service import match_kp, update_knowledge_base, set_course_kp_scores
+            matched = match_kp(step_title)
+            if matched:
+                update_knowledge_base(db, path.user_id, {kp: 0.8 for kp in matched})
+
+            # 方案三：课程整体完成时，该课所有知识点设为 0.85
+            if path.status == "completed":
+                set_course_kp_scores(db, path.user_id, path.course_name, 0.85)
+
             import asyncio as _asyncio
             from agents.profile_agent import ProfileAgent
             from agents.base import AgentState as _AgentState

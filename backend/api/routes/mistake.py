@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime, timezone
 from api.deps import get_db
 from models.mistake_question import MistakeQuestion
 from models.student import StudentProfile
+from models.resource import LearningResource
 from core.llm_client import chat_completion
 import json
 
@@ -11,28 +14,41 @@ router = APIRouter(prefix="/api/mistakes", tags=["错题本"])
 
 
 @router.get("")
-def list_mistakes(user_id: str, db: Session = Depends(get_db)):
-    items = (
-        db.query(MistakeQuestion)
+def list_mistakes(user_id: str, sort: str = "time", order: str = "desc", db: Session = Depends(get_db)):
+    q = (
+        db.query(MistakeQuestion, LearningResource.title)
+        .outerjoin(LearningResource, MistakeQuestion.resource_id == LearningResource.id)
         .filter(MistakeQuestion.user_id == user_id)
-        .order_by(MistakeQuestion.created_at.desc())
-        .limit(500)
-        .all()
     )
+    desc = order != "asc"
+    if sort == "count":
+        col1 = MistakeQuestion.wrong_count
+        col2 = func.coalesce(MistakeQuestion.last_wrong_at, MistakeQuestion.created_at)
+    else:
+        col1 = func.coalesce(MistakeQuestion.last_wrong_at, MistakeQuestion.created_at)
+        col2 = MistakeQuestion.id
+    if desc:
+        q = q.order_by(col1.desc(), col2.desc())
+    else:
+        q = q.order_by(col1.asc(), col2.asc())
+    rows = q.limit(500).all()
     return {
-        "total": len(items),
+        "total": len(rows),
         "items": [
             {
                 "id": x.id,
                 "resource_id": x.resource_id,
+                "resource_title": resource_title or "",
                 "question_id": x.question_id,
                 "reason": x.reason,
                 "question": x.question,
                 "user_answer": x.user_answer,
                 "correct_answer": x.correct_answer,
+                "wrong_count": x.wrong_count or 1,
                 "created_at": x.created_at.isoformat() if x.created_at else None,
+                "last_wrong_at": (x.last_wrong_at or x.created_at).isoformat() if (x.last_wrong_at or x.created_at) else None,
             }
-            for x in items
+            for x, resource_title in rows
         ],
     }
 
@@ -64,6 +80,8 @@ def add_mistake(
         exists.question = json.loads(question)
         exists.user_answer = user_answer
         exists.correct_answer = correct_answer
+        exists.wrong_count = (exists.wrong_count or 1) + 1
+        exists.last_wrong_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(exists)
         return {"ok": True, "id": exists.id, "updated": True}
@@ -81,6 +99,20 @@ def add_mistake(
     db.commit()
     db.refresh(item)
     return {"ok": True, "id": item.id, "updated": False}
+
+
+@router.post("/{mistake_id}/redo-incorrect")
+def redo_incorrect(mistake_id: int, user_id: str, db: Session = Depends(get_db)):
+    item = (
+        db.query(MistakeQuestion)
+        .filter(MistakeQuestion.id == mistake_id, MistakeQuestion.user_id == user_id)
+        .first()
+    )
+    if not item:
+        return {"ok": False, "error": "错题不存在"}
+    item.wrong_count = (item.wrong_count or 1) + 1
+    db.commit()
+    return {"ok": True, "wrong_count": item.wrong_count}
 
 
 @router.delete("/{mistake_id}")

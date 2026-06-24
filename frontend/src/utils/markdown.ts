@@ -60,7 +60,14 @@ export function renderMarkdownEnhanced(content: string): string {
   codeBlockSeq = 0
   const codeBlockList: Array<{ lang: string; code: string }> = []
 
-  const processed = content.replace(/```\s*(\S*?)[ \t]*\r?\n([\s\S]*?)```/g, (_m, lang, code) => {
+  // 提取原始HTML块（视频卡片等），避免被 markdown-it (html:false) 转义
+  const htmlBlocks: string[] = []
+  let preprocessed = content
+    .replace(/<div class="video-results">[\s\S]*?<\/div>\s*$/gm, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+    .replace(/<script[\s>][\s\S]*?<\/script>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+    .replace(/<style[\s>][\s\S]*?<\/style>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
+
+  const processed = preprocessed.replace(/```\s*(\S*?)[ \t]*\r?\n([\s\S]*?)```/g, (_m, lang, code) => {
     const idx = codeBlockList.length
     codeBlockList.push({ lang: lang || '', code })
     return `\uFFF0CB${idx}\uFFF1`
@@ -79,6 +86,9 @@ export function renderMarkdownEnhanced(content: string): string {
       <pre><code${cls}>${escapeHtml(code)}</code></pre>
     </div>`
   })
+
+  // 还原 HTML 块
+  html = html.replace(/\uFFF0HT(\d+)\uFFF1/g, (_m, i) => htmlBlocks[+i] || '')
 
   return html
 }

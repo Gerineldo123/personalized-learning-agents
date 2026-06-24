@@ -5,6 +5,7 @@ import * as echarts from 'echarts'
 import api from '../api'
 import ProfileQuestionnaire from '../components/profile/ProfileQuestionnaire.vue'
 import KnowledgeGraph from '../components/profile/KnowledgeGraph.vue'
+import CurriculumGraph from '../components/profile/CurriculumGraph.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -615,9 +616,10 @@ async function submitChatUpdate() {
         <!-- 知识图谱 -->
         <div class="kg-section">
           <div class="section-title">知识图谱</div>
-          <KnowledgeGraph
+          <CurriculumGraph
+            :userId="userStore.userId"
+            :major="profile.major"
             :knowledgeBase="knowledgeGraphData"
-            :discipline="profile.discipline"
             @node-click="(id) => router.push({ path: '/resources', query: { search: id } })"
           />
         </div>

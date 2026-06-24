@@ -14,7 +14,18 @@ const mode = ref<'login' | 'register'>('login')
 const phone = ref('')
 const password = ref('')
 const confirmPassword = ref('')
+const educationLevel = ref('本科')
+const grade = ref('')
+const major = ref('')
 const loading = ref(false)
+
+const GRADE_OPTIONS: Record<string, string[]> = {
+  '本科': ['大一', '大二', '大三', '大四'],
+  '硕士': ['研一', '研二', '研三'],
+  '博士': ['博一', '博二', '博三'],
+  '专科': ['大一', '大二', '大三'],
+}
+const MAJOR_OPTIONS = ['计算机科学与技术', '软件工程', '人工智能', '智能科学与技术']
 
 function validPhone(v: string) {
   return /^1[3-9]\d{9}$/.test(v)
@@ -27,30 +38,32 @@ function validPassword(v: string) {
 function validateForm() {
   if (!validPhone(phone.value)) return '请输入正确的11位手机号'
   if (!validPassword(password.value)) return '密码需为6~14位，且仅可包含大小写字母、数字和特殊符号'
-  if (mode.value === 'register' && password.value !== confirmPassword.value) return '两次输入密码不一致'
+  if (mode.value === 'register') {
+    if (password.value !== confirmPassword.value) return '两次输入密码不一致'
+    if (!grade.value) return '请选择年级'
+    if (!major.value) return '请选择专业'
+  }
   return ''
 }
 
 async function submit() {
   const err = validateForm()
-  if (err) {
-    ElMessage.warning(err)
-    return
-  }
+  if (err) { ElMessage.warning(err); return }
   loading.value = true
   try {
     const endpoint = mode.value === 'login' ? '/auth/login' : '/auth/register'
     const params: any = { phone: phone.value, password: password.value }
-    if (mode.value === 'register') params.confirm_password = confirmPassword.value
+    if (mode.value === 'register') {
+      params.confirm_password = confirmPassword.value
+      params.education_level = educationLevel.value
+      params.grade = grade.value
+      params.major = major.value
+    }
     const r = await api.post(endpoint, null, { params })
     authStore.setAuth(r.data)
     userStore.setUserId(r.data.phone)
     ElMessage.success(mode.value === 'login' ? '登录成功' : '注册成功')
-    if (r.data.first_login) {
-      router.push({ path: '/profile', query: { first: '1' } })
-    } else {
-      router.push('/')
-    }
+    router.push('/')
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || '请求失败'
     ElMessage.error(msg)
@@ -83,6 +96,23 @@ async function submit() {
         <el-form-item v-if="mode === 'register'" label="确认密码">
           <el-input v-model="confirmPassword" show-password type="password" placeholder="请再次输入密码" />
         </el-form-item>
+        <template v-if="mode === 'register'">
+          <el-form-item label="学历层次">
+            <el-radio-group v-model="educationLevel" @change="grade = ''">
+              <el-radio-button v-for="lv in Object.keys(GRADE_OPTIONS)" :key="lv" :value="lv">{{ lv }}</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="年级">
+            <el-radio-group v-model="grade">
+              <el-radio-button v-for="g in GRADE_OPTIONS[educationLevel]" :key="g" :value="g">{{ g }}</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="专业">
+            <el-select v-model="major" placeholder="请选择专业" style="width:100%">
+              <el-option v-for="m in MAJOR_OPTIONS" :key="m" :value="m" :label="m" />
+            </el-select>
+          </el-form-item>
+        </template>
       </el-form>
 
       <el-button type="primary" :loading="loading" class="submit-btn" @click="submit">

@@ -14,6 +14,7 @@ from models.course_path import CoursePath
 from models.focus import FocusSession
 from models.user import User
 from models.profile_history import ProfileHistory
+from models.curriculum import Curriculum, UserCourseStatus
 
 Base.metadata.create_all(bind=engine)
 
@@ -47,15 +48,19 @@ def _ensure_focus_columns():
 _ensure_focus_columns()
 
 
-def _ensure_mistake_analysis_column():
+def _ensure_mistake_columns():
     with engine.connect() as conn:
         cols = {c[1] for c in conn.exec_driver_sql("PRAGMA table_info(mistake_questions)").fetchall()}
         if "analysis" not in cols:
             conn.exec_driver_sql("ALTER TABLE mistake_questions ADD COLUMN analysis JSON")
-            conn.commit()
+        if "wrong_count" not in cols:
+            conn.exec_driver_sql("ALTER TABLE mistake_questions ADD COLUMN wrong_count INTEGER DEFAULT 1")
+        if "last_wrong_at" not in cols:
+            conn.exec_driver_sql("ALTER TABLE mistake_questions ADD COLUMN last_wrong_at TIMESTAMP")
+        conn.commit()
 
 
-_ensure_mistake_analysis_column()
+_ensure_mistake_columns()
 
 app = FastAPI(title="个性化学习智能体系统")
 
@@ -119,7 +124,7 @@ init_skills()
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel, curriculum
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -136,6 +141,7 @@ app.include_router(focus.router)
 app.include_router(workflow.router)
 app.include_router(weak_point.router)
 app.include_router(agent_panel.router)
+app.include_router(curriculum.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

@@ -183,6 +183,13 @@ async def submit_quiz(
         "score": req.score,
     })
 
+    # 方案二：从 resource.title + tags 匹配知识点，滑动平均更新掌握度
+    from services.kp_service import match_kp, update_knowledge_base
+    kp_text = (resource.title or "") + " " + " ".join(resource.tags or []) if resource else ""
+    matched_kps = match_kp(kp_text)
+    if matched_kps:
+        update_knowledge_base(db, req.user_id, {kp: req.score for kp in matched_kps})
+
     # 异步更新画像：根据最新答题情况重新分析知识水平和薄弱点
     import asyncio as _asyncio
     from agents.profile_agent import ProfileAgent

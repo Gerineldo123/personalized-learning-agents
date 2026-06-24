@@ -384,33 +384,78 @@ class CodeGenSkill(BaseSkill):
             if is_viz:
                 profile = context.get("profile")
                 profile_text = f"专业：{getattr(profile, 'major', '')}，年级：{getattr(profile, 'grade', '')}" if profile else ""
-                prompt = f"""你是一个算法可视化专家。请生成一个自包含的HTML文件，用动画展示以下内容：
+                prompt = f"""你是一个算法可视化与前端开发专家。请生成一个自包含的HTML文件（内嵌CSS+JS），用逐步动画展示算法或概念。
 
 主题：{user_message}
 学生背景：{profile_text or '未知'}
 
-要求：
-- 输出完整可运行的单个HTML文件（包含CSS和JavaScript）
-- 用动画逐步展示算法/概念的每个步骤
-- 提供"下一步"/"上一步"/"自动播放"控制按钮
-- 界面美观，关键步骤有文字说明
-- 不依赖外部CDN，所有代码内嵌
+━━━ 核心设计要求 ━━━
 
-严格输出规则（违反将导致错误）：
-- 直接输出HTML代码，以<!DOCTYPE html>或<html开头
-- 以</html>结尾，之后不得有任何内容
-- 禁止输出任何Markdown、注释、说明、建议或总结文字"""
+【1. 布局与尺寸】
+- body 必须使用 flex 居中布局：display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px;
+- 主容器 .main-container 必须设置 max-width:880px; width:100%; 外加圆角、阴影、内边距
+- 所有元素使用 box-sizing:border-box
+- 必须包含 @media (max-width:600px) 移动端适配
+
+【2. 视觉设计】
+- 用 CSS 变量（:root）统一管理配色，按"默认/已排序/高亮/标记"定义色系
+- 卡片风格：白色背景 + 柔和阴影 + 大圆角(16px)
+- 按钮样式：圆角药丸形(25px)、hover 变色、active 缩放反馈、disabled 半透明
+- 字体：'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif
+
+【3. 必须包含的 UI 组件】
+a) 标题区（.header）：算法名称 + 副标题 + 学科年级标签 —— 作为页面第一个可见元素
+b) 图例区：用色块+文字说明各标记含义
+c) 可视化主区域：柱状图/数组元素动画展示区（min-height:330px）
+d) 描述区：当前步骤的文字说明
+e) 进度区：步骤计数器 + 进度条
+f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
+
+【4. 动画与交互】
+- 关键状态用 CSS 类名切换（i-highlight/j-highlight/min-highlight/swap-highlight/sorted-bar）
+- 交换动画用 @keyframes + class 触发
+- 支持键盘：←→方向键导航、空格/A键自动播放、R键重置
+- 自动播放时根据步骤类型调整延迟（交换步骤1.5x、完成步骤2x）
+
+【5. JavaScript 架构】
+- 使用 IIFE 封装，不污染全局
+- 预生成所有步骤描述数组（generateAllSteps），每步包含：arr快照、i/j/minIndex标记、描述文本、阶段类型
+- renderStep(index) 函数统一驱动 DOM 更新
+- 自动播放用 setTimeout + scheduleNext 递归调度
+
+【6. 数据结构】
+步骤对象结构示例：
+{{ arr: [...], i: 0, j: 1, minIndex: 0, sortedUpTo: 0, phase: 'compare', swappedIndices: null, description: '...', icon: '🔍' }}
+阶段类型包括：initial/start_round/compare/pre_swap/swap/no_swap/complete
+
+━━━ 严格输出规则（违反将导致前端渲染异常）━━━
+⚠ 以 <!DOCTYPE html> 或 <html 开头，以 </html> 结尾
+⚠ </html> 之后不得有任何字符（包括换行、空格、文字说明）
+⚠ 禁止输出 Markdown 代码块标记（```html ```）
+⚠ 禁止输出任何解释、建议、总结或问候语
+⚠ 页面 body 内严禁出现任何介绍性/解释性/问候性文字，如"这是为您生成的..."、"这是一个...工具"、"欢迎使用..."、"本页面演示..."等。页面正文必须直接从标题区的算法名称开始。
+⚠ 必须使用内嵌样式和脚本，不依赖任何外部CDN或文件"""
 
                 resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3)
                 content = resp.choices[0].message.content.strip()
-                # 提取 HTML：找到第一个 < 到最后 </html> 之间的内容
+                # 提取 HTML：找到第一个 <!DOCTYPE html> 或 <html> 到最后 </html> 之间的内容
                 import re as _re
-                _m_start = _re.search(r'<(!DOCTYPE html|html)', content, _re.IGNORECASE)
+                # 清理可能的 Markdown 代码块包裹
+                content = _re.sub(r'^```html?\s*\n?', '', content, flags=_re.IGNORECASE)
+                content = _re.sub(r'\n?```\s*$', '', content)
+                # 提取有效 HTML 区间
+                _m_start = _re.search(r'<(!DOCTYPE\s+html|html[\s>])', content, _re.IGNORECASE)
                 _m_end = _re.search(r'</html\s*>', content, _re.IGNORECASE)
                 if _m_start and _m_end:
                     content = content[_m_start.start():_m_end.end()].strip()
                 elif _m_end:
                     content = content[:_m_end.end()].strip()
+                else:
+                    # 最终兜底：直接从第一个 < 截取到最后一个 >，去除非 HTML 的文本
+                    _first_lt = content.find('<')
+                    _last_gt = content.rfind('>')
+                    if _first_lt >= 0 and _last_gt > _first_lt:
+                        content = content[_first_lt:_last_gt + 1].strip()
 
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,
