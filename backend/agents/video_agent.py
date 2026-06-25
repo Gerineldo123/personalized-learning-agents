@@ -6,6 +6,7 @@ from core.llm_client import chat_completion
 from core.database import SessionLocal
 from models.resource import LearningResource
 from services.rag_service import index_resource
+from services.kp_service import infer_resource_tags
 
 KEYWORD_PROMPT = """你是教学视频推荐助手。根据学生画像，推荐 2~3 个 B站 搜索关键词。
 
@@ -79,6 +80,16 @@ class VideoAgent(BaseAgent):
     def _save_videos(self, state: AgentState, videos: list[dict], summary: str):
         if not videos:
             return
+        graph_tags = infer_resource_tags(
+            " ".join([state.get("user_message", ""), summary, json.dumps(videos, ensure_ascii=False)]),
+            course_name=state.get("course_name"),
+            knowledge_points=state.get("knowledge_points") or [],
+        )
+        tags = list(dict.fromkeys(
+            ["video"]
+            + [x for x in [graph_tags.get("course_name")] if x]
+            + list(graph_tags.get("knowledge_points") or [])
+        ))
         db = SessionLocal()
         try:
             for v in videos:
@@ -88,7 +99,11 @@ class VideoAgent(BaseAgent):
                     resource_type="video",
                     title=title,
                     content=v,
-                    tags=["video"],
+                    tags=tags,
+                    course_name=graph_tags.get("course_name"),
+                    knowledge_points=graph_tags.get("knowledge_points") or [],
+                    kp_weights=graph_tags.get("kp_weights") or {},
+                    tag_confidence=graph_tags.get("tag_confidence") or 0,
                 )
                 db.add(resource)
                 db.flush()

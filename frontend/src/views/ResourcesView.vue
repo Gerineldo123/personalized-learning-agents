@@ -24,11 +24,19 @@ const profile = ref<any>(null)
 const recommendedSeeds = ref<any[]>([])
 const weakPoints = ref<string[]>([])
 const typeFilter = ref('')
+const courseFilter = ref('')
+const kpFilter = ref('')
+const statusFilter = ref('')
+const curriculumCourses = ref<any[]>([])
+const kpOptions = ref<any[]>([])
 const loading = ref(false)
 const selected = ref<any>(null)
 const showGenDialog = ref(false)
 const genTopic = ref('')
 const genTypes = ref<string[]>(['article'])
+const genCourseName = ref('')
+const genKnowledgePoints = ref<string[]>([])
+const genKpOptions = ref<any[]>([])
 const genQuestionCount = ref(5)
 const genDifficulty = ref('中等')
 const genQuestionTypes = ref<string[]>(['single_choice'])
@@ -36,6 +44,7 @@ const genCodeLanguage = ref('python')
 const genLoading = ref(false)
 const starterLoading = ref(false)
 const orchestrateLoading = ref(false)
+const autoTagLoading = ref(false)
 const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
@@ -88,10 +97,16 @@ const codeLangOptions = [
   { value: 'javascript', label: 'JavaScript' },
   { value: 'c', label: 'C' },
 ]
+const statusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'not_started', label: '未开始' },
+  { value: 'learning', label: '学习中' },
+  { value: 'completed', label: '已完成' },
+]
 
 onMounted(() => {
   if (route.query.type) typeFilter.value = route.query.type as string
-  if (userStore.userId) { loadResources(); loadRecommend() }
+  if (userStore.userId) { loadResources(); loadRecommend(); loadCurriculumCourses() }
   eventStore.connect(userStore.userId || 'user_default')
   loadProfileAndSeeds()
 })
@@ -101,7 +116,7 @@ watch(() => eventStore.lastEvent, (evt) => {
 })
 
 watch(() => userStore.userId, (newId) => {
-  if (newId) { loadResources(); loadProfileAndSeeds(); loadRecommend() }
+  if (newId) { loadResources(); loadProfileAndSeeds(); loadRecommend(); loadCurriculumCourses() }
 })
 
 watch(() => route.query.type, (newType) => {
@@ -129,6 +144,40 @@ async function loadProfileAndSeeds() {
   }
 }
 
+async function loadCurriculumCourses() {
+  if (!userStore.userId) return
+  try {
+    const r = await api.get('/curriculum/graph', {
+      params: { user_id: userStore.userId, major: profile.value?.major || '' },
+    })
+    curriculumCourses.value = r.data?.nodes || []
+  } catch {
+    curriculumCourses.value = []
+  }
+}
+
+async function fetchCourseKps(courseName: string) {
+  if (!courseName) return []
+  try {
+    const r = await api.get(`/curriculum/kp/${encodeURIComponent(courseName)}`)
+    return r.data?.nodes || []
+  } catch {
+    return []
+  }
+}
+
+async function onCourseFilterChange() {
+  kpFilter.value = ''
+  kpOptions.value = await fetchCourseKps(courseFilter.value)
+  page.value = 1
+  loadResources()
+}
+
+async function onGenCourseChange() {
+  genKnowledgePoints.value = []
+  genKpOptions.value = await fetchCourseKps(genCourseName.value)
+}
+
 async function loadResources() {
   if (!userStore.userId) return
   loading.value = true
@@ -136,6 +185,9 @@ async function loadResources() {
     const offset = (page.value - 1) * pageSize.value
     const params: any = { user_id: userStore.userId, limit: pageSize.value, offset }
     if (typeFilter.value) params.resource_type = typeFilter.value
+    if (courseFilter.value) params.course_name = courseFilter.value
+    if (kpFilter.value) params.knowledge_point = kpFilter.value
+    if (statusFilter.value) params.learning_status = statusFilter.value
     const r = await api.get('/resources', { params })
     resources.value = r.data.items || []
     totalResources.value = r.data.total || 0
@@ -164,6 +216,8 @@ async function startGenerate() {
         user_id: userStore.userId,
         topic: genTopic.value.trim(),
         resource_types: genTypes.value.join(','),
+        course_name: genCourseName.value,
+        knowledge_points: genKnowledgePoints.value.join(','),
         question_count: genQuestionCount.value,
         difficulty: genDifficulty.value,
         question_types: genQuestionTypes.value.join(','),
@@ -174,24 +228,32 @@ async function startGenerate() {
     showGenDialog.value = false
     genTopic.value = ''
     genTypes.value = ['article']
+    genCourseName.value = ''
+    genKnowledgePoints.value = []
+    genKpOptions.value = []
     genQuestionCount.value = 5
     genDifficulty.value = '中等'
     genQuestionTypes.value = ['single_choice']
     genCodeLanguage.value = 'python'
     page.value = 1
     loadResources()
-  } catch { ElMessage.error('生成失败') }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '生成失败')
+  }
   finally { genLoading.value = false }
 }
 
 async function generateQuick(seed: any, type: 'article' | 'quiz') {
   try {
+    const params: any = {
+      user_id: userStore.userId,
+      topic: `${seed.course}：${seed.topic}`,
+      resource_types: type,
+    }
+    if (isKnownCourse(seed.course)) params.course_name = seed.course
+    if (seed.topic && seed.topic !== seed.course) params.knowledge_points = seed.topic
     await api.post('/resources/generate', null, {
-      params: {
-        user_id: userStore.userId,
-        topic: `${seed.course}：${seed.topic}`,
-        resource_types: type,
-      },
+      params,
     })
     ElMessage.success(`已生成${type === 'article' ? '文章' : '题库'}：${seed.course}`)
     page.value = 1
@@ -199,6 +261,10 @@ async function generateQuick(seed: any, type: 'article' | 'quiz') {
   } catch {
     ElMessage.error('快速生成失败')
   }
+}
+
+function isKnownCourse(name: string) {
+  return curriculumCourses.value.some((c: any) => c.id === name)
 }
 
 async function generateStarterPack() {
@@ -287,9 +353,44 @@ async function batchDelete() {
   } catch { ElMessage.error('删除失败') }
 }
 
+async function autoTagResources() {
+  autoTagLoading.value = true
+  try {
+    const ids = selectedIds.value.length > 0 ? selectedIds.value.join(',') : undefined
+    const r = await api.post('/resources/auto_tag', null, {
+      params: { user_id: userStore.userId, ids },
+    })
+    ElMessage.success(`已自动归类 ${r.data.updated || 0} 个资源`)
+    await loadResources()
+  } catch {
+    ElMessage.error('自动归类失败')
+  } finally {
+    autoTagLoading.value = false
+  }
+}
+
+async function completeSelectedResource() {
+  if (!selected.value) return
+  try {
+    const r = await api.post(`/resources/${selected.value.id}/complete`, null, {
+      params: { user_id: userStore.userId },
+    })
+    selected.value = r.data.resource || selected.value
+    ElMessage.success('已完成学习，知识点掌握度已更新')
+    await loadResources()
+  } catch {
+    ElMessage.error('完成状态更新失败')
+  }
+}
+
 function typeLabel(t: string) {
   const map: Record<string, string> = { article: '文章', quiz: '题库', code: '代码', mindmap: '思维导图', ppt: '课件', video: '视频', evaluation: '评估' }
   return map[t] || t
+}
+
+function statusLabel(status: string) {
+  const map: Record<string, string> = { not_started: '未开始', learning: '学习中', completed: '已完成' }
+  return map[status] || '未开始'
 }
 
 function typeTag(t: string) {
@@ -316,8 +417,20 @@ function avidFromUrl(url: string): string {
       <el-select v-model="typeFilter" placeholder="全部类型" @change="page = 1; loadResources()" style="width: 160px">
         <el-option v-for="t in resourceTypes" :key="t" :label="t || '全部'" :value="t" />
       </el-select>
+      <el-select v-model="courseFilter" placeholder="按课程筛选" clearable filterable @change="onCourseFilterChange" style="width: 200px">
+        <el-option v-for="c in curriculumCourses" :key="c.id" :label="c.id" :value="c.id" />
+      </el-select>
+      <el-select v-model="kpFilter" placeholder="按知识点筛选" clearable filterable :disabled="!courseFilter" @change="page = 1; loadResources()" style="width: 200px">
+        <el-option v-for="kp in kpOptions" :key="kp.id" :label="kp.id" :value="kp.id" />
+      </el-select>
+      <el-select v-model="statusFilter" placeholder="学习状态" @change="page = 1; loadResources()" style="width: 130px">
+        <el-option v-for="s in statusOptions" :key="s.value" :label="s.label" :value="s.value" />
+      </el-select>
       <el-button @click="loadResources" style="margin-left: 8px">刷新</el-button>
       <el-button style="margin-left: 8px" @click="toggleManageMode">{{ manageMode ? '完成管理' : '管理资源' }}</el-button>
+      <el-button style="margin-left: 8px" :loading="autoTagLoading" @click="autoTagResources">
+        {{ selectedIds.length > 0 ? '归类所选' : '自动归类' }}
+      </el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(1)">批量置顶</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(0)">取消置顶</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" type="danger" @click="batchDelete">批量删除</el-button>
@@ -398,6 +511,22 @@ function avidFromUrl(url: string): string {
 
     <div v-else-if="selected" class="detail-view animate-up animate-delay-2">
       <el-button @click="selected = null" style="margin-bottom: 16px">返回列表</el-button>
+      <div class="detail-graph-meta">
+        <div class="detail-tags">
+          <el-tag :type="typeTag(selected.resource_type)" size="small">{{ typeLabel(selected.resource_type) }}</el-tag>
+          <el-tag v-if="selected.course_name" type="success" size="small">{{ selected.course_name }}</el-tag>
+          <el-tag v-for="kp in selected.knowledge_points || []" :key="kp" type="info" size="small">{{ kp }}</el-tag>
+          <el-tag size="small" effect="plain">{{ statusLabel(selected.learning_status) }}</el-tag>
+        </div>
+        <el-button
+          v-if="selected.learning_status !== 'completed'"
+          size="small"
+          type="primary"
+          @click="completeSelectedResource"
+        >
+          标记完成并更新掌握度
+        </el-button>
+      </div>
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <MindMapViewer v-else-if="selected.resource_type === 'mindmap'" :markdown="selected.content?.markdown || ''" />
       <PptViewer v-else-if="selected.resource_type === 'ppt'" :content="selected.content" />
@@ -437,6 +566,11 @@ function avidFromUrl(url: string): string {
           <span class="card-date">{{ r.created_at?.slice(0, 10) }}</span>
         </div>
         <h4 class="card-title">{{ r.title }}</h4>
+        <div class="graph-tags">
+          <el-tag v-if="r.course_name" size="small" type="success">{{ r.course_name }}</el-tag>
+          <el-tag v-for="kp in (r.knowledge_points || []).slice(0, 2)" :key="kp" size="small" type="info">{{ kp }}</el-tag>
+          <el-tag size="small" effect="plain">{{ statusLabel(r.learning_status) }}</el-tag>
+        </div>
         <div class="card-deco"><SausageIcon :size="20" muted /></div>
       </div>
     </div>
@@ -462,6 +596,16 @@ function avidFromUrl(url: string): string {
       <el-form label-width="80px">
         <el-form-item label="主题">
           <el-input v-model="genTopic" placeholder="例如：排序算法" />
+        </el-form-item>
+        <el-form-item label="课程">
+          <el-select v-model="genCourseName" placeholder="选择课程节点（可选）" clearable filterable style="width: 100%" @change="onGenCourseChange">
+            <el-option v-for="c in curriculumCourses" :key="c.id" :label="c.id" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="知识点">
+          <el-select v-model="genKnowledgePoints" placeholder="选择知识点标签（可多选）" multiple clearable filterable :disabled="!genCourseName" style="width: 100%">
+            <el-option v-for="kp in genKpOptions" :key="kp.id" :label="kp.id" :value="kp.id" />
+          </el-select>
         </el-form-item>
         <el-form-item label="资源类型">
           <el-checkbox-group v-model="genTypes">
@@ -593,6 +737,19 @@ function avidFromUrl(url: string): string {
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .card-date { font-size: 11px; color: #948A80; }
 .card-title { margin: 0; color: #3A332E; font-size: 14px; font-weight: 500; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-tags { display: flex; gap: 6px; flex-wrap: wrap; min-height: 24px; }
+.detail-graph-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.detail-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 .pagination-box { display: flex; justify-content: center; margin-top: 24px; }
 

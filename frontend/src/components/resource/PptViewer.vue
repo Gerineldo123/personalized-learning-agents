@@ -32,6 +32,9 @@ function fullDownloadUrl(): string {
   const url = downloadUrl.value
   if (!url) return ''
   if (url.startsWith('http')) return url
+  if (url.startsWith('/static/') && window.location.port === '3000') {
+    return `${window.location.protocol}//${window.location.hostname}:18000${url}`
+  }
   return `${window.location.protocol}//${window.location.host}${url}`
 }
 </script>

@@ -5,6 +5,7 @@ from core.database import SessionLocal
 from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
+from services.kp_service import infer_resource_tags
 
 MINDMAP_PROMPT = """你是一位知识体系整理专家兼学科教师。请根据主题生成一份**知识点详尽的层级思维导图**，而非目录大纲。
 
@@ -92,9 +93,29 @@ class MindMapAgent(BaseAgent):
 
     def _save_to_db(self, state: AgentState, title: str, markdown: str):
         prev_id = state.get("resource_db_id")
+        graph_tags = infer_resource_tags(
+            f"{state.get('user_message', '')} {title} {markdown}",
+            course_name=state.get("course_name"),
+            knowledge_points=state.get("knowledge_points") or [],
+        )
+        tags = list(dict.fromkeys(
+            ["mindmap"]
+            + [x for x in [graph_tags.get("course_name")] if x]
+            + list(graph_tags.get("knowledge_points") or [])
+        ))
         db = SessionLocal()
         try:
-            resource = LearningResource(user_id=state.user_id, resource_type="mindmap", title=title, content={"markdown": markdown}, tags=["mindmap"])
+            resource = LearningResource(
+                user_id=state.user_id,
+                resource_type="mindmap",
+                title=title,
+                content={"markdown": markdown},
+                tags=tags,
+                course_name=graph_tags.get("course_name"),
+                knowledge_points=graph_tags.get("knowledge_points") or [],
+                kp_weights=graph_tags.get("kp_weights") or {},
+                tag_confidence=graph_tags.get("tag_confidence") or 0,
+            )
             db.add(resource)
             db.commit()
             index_resource(resource.id, state.user_id or "", markdown[:4000], "mindmap")

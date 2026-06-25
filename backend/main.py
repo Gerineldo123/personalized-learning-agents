@@ -15,6 +15,7 @@ from models.focus import FocusSession
 from models.user import User
 from models.profile_history import ProfileHistory
 from models.curriculum import Curriculum, UserCourseStatus
+from models.ppt_session import PptSession
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,6 +26,17 @@ def _ensure_resource_pinned_column():
         names = {c[1] for c in cols}
         if "pinned" not in names:
             conn.exec_driver_sql("ALTER TABLE learning_resources ADD COLUMN pinned INTEGER DEFAULT 0")
+        for col, typedef in [
+            ("course_name", "VARCHAR"),
+            ("knowledge_points", "JSON"),
+            ("kp_weights", "JSON"),
+            ("tag_confidence", "REAL DEFAULT 0"),
+            ("learning_status", "VARCHAR DEFAULT 'not_started'"),
+            ("progress", "REAL DEFAULT 0"),
+            ("completed_at", "TIMESTAMP"),
+        ]:
+            if col not in names:
+                conn.exec_driver_sql(f"ALTER TABLE learning_resources ADD COLUMN {col} {typedef}")
             conn.commit()
 
 
@@ -124,7 +136,7 @@ init_skills()
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel, curriculum
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel, curriculum, ppt as ppt_routes
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -142,6 +154,7 @@ app.include_router(workflow.router)
 app.include_router(weak_point.router)
 app.include_router(agent_panel.router)
 app.include_router(curriculum.router)
+app.include_router(ppt_routes.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])
 

@@ -1,6 +1,7 @@
 ﻿from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from datetime import datetime
 from api.deps import get_db
 from models.quiz_record import QuizRecord
 from models.mistake_question import MistakeQuestion
@@ -183,12 +184,22 @@ async def submit_quiz(
         "score": req.score,
     })
 
-    # 方案二：从 resource.title + tags 匹配知识点，滑动平均更新掌握度
+    # Prefer explicit graph tags; fall back to text matching for legacy resources.
     from services.kp_service import match_kp, update_knowledge_base
-    kp_text = (resource.title or "") + " " + " ".join(resource.tags or []) if resource else ""
-    matched_kps = match_kp(kp_text)
+    matched_kps = []
+    if resource:
+        matched_kps = resource.knowledge_points or []
+    if not matched_kps and resource:
+        kp_text = (resource.title or "") + " " + " ".join(resource.tags or [])
+        matched_kps = match_kp(kp_text)
     if matched_kps:
         update_knowledge_base(db, req.user_id, {kp: req.score for kp in matched_kps})
+
+    if resource:
+        resource.learning_status = "completed"
+        resource.progress = 1.0
+        resource.completed_at = datetime.utcnow()
+        db.commit()
 
     # 异步更新画像：根据最新答题情况重新分析知识水平和薄弱点
     import asyncio as _asyncio

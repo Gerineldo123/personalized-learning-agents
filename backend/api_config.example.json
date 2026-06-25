@@ -10,5 +10,17 @@
     "api_key": "your-vms-api-key",
     "api_secret": "your-vms-api-secret",
     "model": ""
+  },
+  "tavily": {
+    "base_url": "",
+    "api_key": "tvly-your-api-key",
+    "api_secret": "",
+    "model": ""
+  },
+  "ppt": {
+    "base_url": "https://docmee.cn",
+    "api_key": "your-docmee-api-key",
+    "api_secret": "",
+    "model": "docmee-aippt"
   }
 }

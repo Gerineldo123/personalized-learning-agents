@@ -14,11 +14,14 @@ const mainForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model
 const tavilyForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
 const pptForm = ref<ApiForm>({ base_url: '', api_key: '', api_secret: '', model: '' })
 const mainModels = ref<string[]>([])
+const pptModels = ref<string[]>([])
 const loadingMain = ref(false)
+const loadingPpt = ref(false)
 const savingMain = ref(false)
 const savingTavily = ref(false)
 const testingTavily = ref(false)
 const savingPpt = ref(false)
+const testingPpt = ref(false)
 const activeTab = ref('main')
 
 const mainConfigured = ref(false)
@@ -73,6 +76,10 @@ async function loadPptConfig() {
 async function savePpt() {
   savingPpt.value = true
   try {
+    if (pptForm.value.api_key) {
+      if (!pptForm.value.base_url) pptForm.value.base_url = 'https://docmee.cn'
+      if (!pptForm.value.model) pptForm.value.model = 'docmee-aippt'
+    }
     await api.post('/config/ppt', pptForm.value)
     ElMessage.success('PPT 模型配置已保存')
     pptConfigured.value = true
@@ -80,6 +87,52 @@ async function savePpt() {
     ElMessage.error('保存失败')
   } finally {
     savingPpt.value = false
+  }
+}
+
+async function fetchPptModels() {
+  if (!pptForm.value.base_url || !pptForm.value.api_key) {
+    ElMessage.warning('请先填写 PPT 模型 URL 和密钥')
+    return
+  }
+  loadingPpt.value = true
+  try {
+    await savePpt()
+    const r = await api.get('/config/ppt/models')
+    if (r.data.error) {
+      ElMessage.error(`获取失败：${r.data.error}`)
+      pptModels.value = []
+    } else {
+      pptModels.value = r.data.models || []
+      if (pptModels.value.length === 0) {
+        ElMessage.warning('未能获取模型列表，可手动输入模型名称')
+      }
+    }
+  } catch {
+    ElMessage.error('获取 PPT 模型列表失败')
+  } finally {
+    loadingPpt.value = false
+  }
+}
+
+async function testPpt() {
+  if (!pptForm.value.base_url || !pptForm.value.api_key || !pptForm.value.model) {
+    ElMessage.warning('请先填写 PPT 模型 URL、密钥和模型名')
+    return
+  }
+  testingPpt.value = true
+  try {
+    await savePpt()
+    const r = await api.post('/config/ppt/test')
+    if (r.data.ok) {
+      ElMessage.success(`PPT 模型连接成功，生成 ${r.data.slide_count || 0} 页测试课件`)
+    } else {
+      ElMessage.error(`PPT 模型测试失败：${r.data.error || '未知错误'}`)
+    }
+  } catch {
+    ElMessage.error('PPT 模型测试失败')
+  } finally {
+    testingPpt.value = false
   }
 }
 
@@ -292,20 +345,20 @@ async function fetchMainModels() {
             <el-row :gutter="24">
               <el-col :span="12">
                 <el-form-item label="Base URL">
-                  <el-input v-model="pptForm.base_url" placeholder="https://api.openai.com/v1" clearable />
+                  <el-input v-model="pptForm.base_url" placeholder="https://docmee.cn" clearable />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="模型">
                   <el-select
                     v-model="pptForm.model"
-                    placeholder="输入模型名称"
+                    placeholder="docmee-aippt"
                     style="width: 100%"
                     allow-create
                     filterable
                     clearable
                   >
-                    <el-option v-for="m in mainModels" :key="m" :label="m" :value="m" />
+                    <el-option v-for="m in pptModels" :key="m" :label="m" :value="m" />
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -314,7 +367,7 @@ async function fetchMainModels() {
             <el-row :gutter="24">
               <el-col :span="12">
                 <el-form-item label="API Key">
-                  <el-input v-model="pptForm.api_key" type="password" show-password placeholder="sk-..." clearable />
+                  <el-input v-model="pptForm.api_key" type="password" show-password placeholder="Docmee API Key" clearable />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
@@ -326,6 +379,10 @@ async function fetchMainModels() {
 
             <div class="form-footer">
               <el-button type="primary" :loading="savingPpt" @click="savePpt">保存配置</el-button>
+            </div>
+            <div class="form-footer">
+              <el-button :loading="loadingPpt" @click="fetchPptModels">获取模型列表</el-button>
+              <el-button :loading="testingPpt" @click="testPpt">测试连接</el-button>
             </div>
           </el-form>
         </el-card>

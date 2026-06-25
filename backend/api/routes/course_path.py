@@ -250,8 +250,8 @@ async def generate_path_resources(path_id: int, user_id: str):
             desc = step.get("description", "")
             topic = f"{path.course_name} - {title}：{desc}" if desc else f"{path.course_name} - {title}"
 
-            article = AgentState(user_id=user_id, user_message=topic, resource_type="article")
-            quiz = AgentState(user_id=user_id, user_message=topic, resource_type="quiz")
+            article = AgentState(user_id=user_id, user_message=topic, resource_type="article", course_name=path.course_name)
+            quiz = AgentState(user_id=user_id, user_message=topic, resource_type="quiz", course_name=path.course_name)
             agent = ContentGenAgent()
             await asyncio.gather(agent.process(article), agent.process(quiz))
 

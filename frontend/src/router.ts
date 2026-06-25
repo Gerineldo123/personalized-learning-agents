@@ -13,6 +13,7 @@ const router = createRouter({
     { path: '/config', name: 'config', component: () => import('./views/ConfigView.vue') },
     { path: '/auth', name: 'auth', component: () => import('./views/AuthView.vue') },
     { path: '/agent', name: 'agent', component: () => import('./views/AgentPanelView.vue'), meta: { fullscreen: true } },
+    { path: '/ppt', name: 'ppt', component: () => import('./views/PptView.vue') },
   ],
 })
 

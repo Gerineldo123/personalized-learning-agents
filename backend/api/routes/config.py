@@ -141,12 +141,14 @@ async def test_tavily():
 @router.get("/ppt")
 def get_ppt():
     cfg = get_ppt_config()
+    from services.ppt_model_service import is_docmee_aippt_configured
     return {
         "base_url": cfg.base_url,
         "api_key": _mask_key(cfg.api_key),
         "api_secret": _mask_key(cfg.api_secret),
         "model": cfg.model,
         "has_key": bool(cfg.api_key),
+        "is_docmee": is_docmee_aippt_configured(),
     }
 
 
@@ -158,4 +160,25 @@ def update_ppt(body: ApiConfig):
 
 @router.get("/ppt/models")
 def list_ppt_models():
+    from services.ppt_model_service import is_docmee_aippt_configured, is_ppt_model_configured
+    if is_docmee_aippt_configured():
+        return {"models": ["docmee-aippt"], "error": None}
+    if not is_ppt_model_configured():
+        return {"models": [], "error": "未配置 PPT 模型 API"}
     return _list_models("ppt")
+
+
+@router.post("/ppt/test")
+async def test_ppt_model():
+    from services.ppt_model_service import generate_ppt_json, is_ppt_model_configured
+    if not is_ppt_model_configured():
+        return {"ok": False, "error": "未配置 PPT 模型 API"}
+    try:
+        data = await generate_ppt_json("测试课件：二分查找", "测试学生画像", slide_count=4)
+        return {
+            "ok": True,
+            "title": data.get("title", ""),
+            "slide_count": len(data.get("slides", [])),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:300]}

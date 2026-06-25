@@ -6,6 +6,8 @@ from core.database import SessionLocal
 from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
+from services.kp_service import infer_resource_tags
+from services.ppt_model_service import generate_ppt_json, is_ppt_model_configured
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -224,6 +226,26 @@ class ContentGenAgent(BaseAgent):
         message = state.user_message
         profile = self._profile_text(state)
 
+        # First choice: a dedicated PPT model API configured under /api/config/ppt.
+        if is_ppt_model_configured():
+            try:
+                ppt_data = await generate_ppt_json(message, profile, user_id=state.user_id or "default")
+                safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
+                if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
+                    ppt_data = {"title": "内容已过滤", "slides": []}
+                if not ppt_data.get("pptx_url"):
+                    ppt_data = await self._attach_pptx(ppt_data)
+                self._save_resource(state, "ppt", ppt_data)
+                state["response"] = json.dumps({
+                    "agent": self.name,
+                    "resource_type": "ppt",
+                    "content": ppt_data,
+                    "model_source": "ppt_model_api",
+                }, ensure_ascii=False)
+                return
+            except Exception as exc:
+                raise RuntimeError(f"PPT API 生成失败：{exc}") from exc
+
         # 优先使用 PptGenSkill（支持 .pptx 导出）
         try:
             from agents.skills import get_skill
@@ -257,10 +279,25 @@ class ContentGenAgent(BaseAgent):
         safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
         if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
             ppt_data = {"title": "内容已过滤", "slides": []}
+        ppt_data = await self._attach_pptx(ppt_data)
         self._save_resource(state, "ppt", ppt_data)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "ppt", "content": ppt_data
         }, ensure_ascii=False)
+
+    async def _attach_pptx(self, ppt_data: dict) -> dict:
+        try:
+            from services.ppt_service import generate_pptx
+            result = await generate_pptx(ppt_data)
+            pptx_path = result.get("pptx_path", "")
+            if pptx_path:
+                import os
+                filename = os.path.basename(pptx_path)
+                ppt_data["pptx_file"] = filename
+                ppt_data["pptx_url"] = f"/static/ppt/{filename}"
+        except Exception:
+            pass
+        return ppt_data
 
     def _profile_text(self, state: AgentState) -> str:
         p = state.get("profile")
@@ -275,6 +312,21 @@ class ContentGenAgent(BaseAgent):
     def _save_resource(self, state: AgentState, resource_type: str, content):
         prev_id = state.get("resource_db_id")
         title = self._extract_title(content, resource_type)
+        text = " ".join([
+            str(state.get("user_message", "")),
+            title,
+            json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else str(content),
+        ])
+        graph_tags = infer_resource_tags(
+            text,
+            course_name=state.get("course_name"),
+            knowledge_points=state.get("knowledge_points") or [],
+        )
+        tags = list(dict.fromkeys(
+            [resource_type]
+            + [x for x in [graph_tags.get("course_name")] if x]
+            + list(graph_tags.get("knowledge_points") or [])
+        ))
         db = SessionLocal()
         try:
             resource = LearningResource(
@@ -282,7 +334,11 @@ class ContentGenAgent(BaseAgent):
                 resource_type=resource_type,
                 title=title,
                 content=content if isinstance(content, dict) else {"text": content},
-                tags=[resource_type],
+                tags=tags,
+                course_name=graph_tags.get("course_name"),
+                knowledge_points=graph_tags.get("knowledge_points") or [],
+                kp_weights=graph_tags.get("kp_weights") or {},
+                tag_confidence=graph_tags.get("tag_confidence") or 0,
             )
             db.add(resource)
             db.flush()

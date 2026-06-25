@@ -7,6 +7,7 @@ from models.student import StudentProfile
 from models.resource import LearningResource
 from models.course_path import CoursePath
 from services.safety_service import check_text, hallu_rules
+from services.kp_service import infer_resource_tags
 
 EVALUATION_PROMPT = """你是一个学习评估专家。根据学生的学习数据分析其掌握情况，并给出改进建议。
 
@@ -106,7 +107,24 @@ class EvaluationAgent(BaseAgent):
         profile.updated_at = datetime.now(timezone.utc)
 
     def _save_evaluation(self, db, user_id, report):
-        resource = LearningResource(user_id=user_id, resource_type="evaluation", title=f"学习评估报告 ({datetime.now(timezone.utc).strftime('%Y-%m-%d')})", content=report, tags=["evaluation"])
+        title = f"学习评估报告 ({datetime.now(timezone.utc).strftime('%Y-%m-%d')})"
+        graph_tags = infer_resource_tags(f"{title} {json.dumps(report, ensure_ascii=False)}")
+        tags = list(dict.fromkeys(
+            ["evaluation"]
+            + [x for x in [graph_tags.get("course_name")] if x]
+            + list(graph_tags.get("knowledge_points") or [])
+        ))
+        resource = LearningResource(
+            user_id=user_id,
+            resource_type="evaluation",
+            title=title,
+            content=report,
+            tags=tags,
+            course_name=graph_tags.get("course_name"),
+            knowledge_points=graph_tags.get("knowledge_points") or [],
+            kp_weights=graph_tags.get("kp_weights") or {},
+            tag_confidence=graph_tags.get("tag_confidence") or 0,
+        )
         db.add(resource)
 
     def _try_emit_event(self, event, data):
