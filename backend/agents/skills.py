@@ -335,6 +335,7 @@ class ArticleGenSkill(BaseSkill):
                 user_message=user_message,
                 resource_type="article",
                 profile=context.get("profile"),
+                profile_context=context.get("profile_text"),
             )
             agent = ContentGenAgent()
             await agent._generate_article(state)
@@ -376,14 +377,30 @@ class CodeGenSkill(BaseSkill):
         VIZ_KEYWORDS = ["可视化", "动画", "演示", "visuali", "animation", "animate", "步骤展示", "动态展示"]
         is_viz = any(kw in user_message.lower() for kw in VIZ_KEYWORDS)
 
+        sub_steps = [f"⏳ 正在识别{'可视化动画' if is_viz else '代码案例'}生成需求..."]
         step_id = self.emit_step(workflow_outputs, "running", "生成代码案例", {
-            "sub_steps": [f"⏳ 正在生成{'可视化动画' if is_viz else '代码案例'}..."],
+            "sub_steps": sub_steps,
+            "progress": 10,
+            "current_phase": "需求识别",
+            "progress_note": "正在分析任务描述、学生画像和输出形式",
+            "progress_indeterminate": False,
+            "progress_label": f"1/{5 if is_viz else 4} 阶段",
         })
 
         try:
             if is_viz:
                 profile = context.get("profile")
                 profile_text = f"专业：{getattr(profile, 'major', '')}，年级：{getattr(profile, 'grade', '')}" if profile else ""
+                sub_steps[-1] = "✅ 已识别为可视化动画任务"
+                sub_steps.append("⏳ 正在调用模型生成自包含 HTML/CSS/JS...")
+                self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                    "sub_steps": sub_steps,
+                    "progress": 35,
+                    "current_phase": "动画代码生成",
+                    "progress_note": "模型正在生成动画页面、交互控件和演示步骤",
+                    "progress_indeterminate": True,
+                    "progress_label": "2/5 阶段",
+                }, step_id)
                 prompt = f"""你是一个算法可视化与前端开发专家。请生成一个自包含的HTML文件（内嵌CSS+JS），用逐步动画展示算法或概念。
 
 主题：{user_message}
@@ -438,6 +455,16 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
 
                 resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3)
                 content = resp.choices[0].message.content.strip()
+                sub_steps[-1] = "✅ 动画代码生成完成"
+                sub_steps.append("⏳ 正在清理输出并校验 HTML 结构...")
+                self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                    "sub_steps": sub_steps,
+                    "progress": 75,
+                    "current_phase": "结构校验",
+                    "progress_note": "正在移除 Markdown 包裹、截取有效 HTML、准备前端预览",
+                    "progress_indeterminate": False,
+                    "progress_label": "3/5 阶段",
+                }, step_id)
                 # 提取 HTML：找到第一个 <!DOCTYPE html> 或 <html> 到最后 </html> 之间的内容
                 import re as _re
                 # 清理可能的 Markdown 代码块包裹
@@ -457,23 +484,62 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                     if _first_lt >= 0 and _last_gt > _first_lt:
                         content = content[_first_lt:_last_gt + 1].strip()
 
+                sub_steps[-1] = "✅ HTML 结构校验完成"
+                sub_steps.append("⏳ 正在生成预览卡片...")
+                self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                    "sub_steps": sub_steps,
+                    "progress": 90,
+                    "current_phase": "准备预览",
+                    "progress_note": "正在把动画页面交给前端沙箱预览",
+                    "progress_indeterminate": False,
+                    "progress_label": "4/5 阶段",
+                    "language": "html",
+                }, step_id)
+
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,
-                    "sub_steps": ["✅ 可视化动画生成完成"],
+                    "sub_steps": sub_steps[:-1] + ["✅ 可视化动画生成完成"],
+                    "progress": 100,
+                    "current_phase": "生成完成",
+                    "progress_note": "可视化动画已生成，可直接预览或查看代码",
+                    "progress_indeterminate": False,
+                    "progress_label": "5/5 阶段",
                     "language": "html",
                 }, step_id)
                 return SkillResult(success=True, data={"code": content, "type": "code"}, summary="可视化动画生成完成")
 
             # 非可视化：走原有流程
+            sub_steps[-1] = "✅ 已识别为代码案例任务"
+            sub_steps.append("⏳ 正在调用模型生成代码案例...")
+            self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                "sub_steps": sub_steps,
+                "progress": 35,
+                "current_phase": "代码生成",
+                "progress_note": "模型正在生成代码、注释和说明",
+                "progress_indeterminate": True,
+                "progress_label": "2/4 阶段",
+            }, step_id)
             state = AgentState(
                 user_id=user_id,
                 user_message=user_message,
                 resource_type="code",
                 code_language=code_lang,
                 profile=context.get("profile"),
+                profile_context=context.get("profile_text"),
             )
             agent = ContentGenAgent()
             await agent._generate_code_case(state)
+            sub_steps[-1] = "✅ 代码案例生成完成"
+            sub_steps.append("⏳ 正在解析并保存结果...")
+            self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                "sub_steps": sub_steps,
+                "progress": 85,
+                "current_phase": "结果整理",
+                "progress_note": "正在整理代码内容并同步到学习资源",
+                "progress_indeterminate": False,
+                "progress_label": "3/4 阶段",
+                "language": code_lang,
+            }, step_id)
 
             resp = json.loads(state.get("response", ""))
             content = resp.get("content", "")
@@ -481,7 +547,12 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
 
             self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                 "content": content,
-                "sub_steps": ["✅ 代码案例生成完成"],
+                "sub_steps": sub_steps[:-1] + ["✅ 代码案例生成完成"],
+                "progress": 100,
+                "current_phase": "生成完成",
+                "progress_note": "代码案例已生成并保存",
+                "progress_indeterminate": False,
+                "progress_label": "4/4 阶段",
                 "language": code_lang,
             }, step_id)
             return SkillResult(success=True, data={"code": content, "type": resource_type}, summary="代码案例生成完成")
@@ -490,6 +561,11 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
             self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                 "content": f"生成失败: {str(e)}",
                 "sub_steps": [f"❌ {str(e)}"],
+                "progress": 100,
+                "current_phase": "生成失败",
+                "progress_note": str(e),
+                "progress_indeterminate": False,
+                "progress_label": "失败",
             }, step_id)
             return SkillResult(success=False, error=str(e))
 
@@ -508,40 +584,90 @@ class QuizGenSkill(BaseSkill):
         user_id = context.get("user_id", "")
         ad = context.get("all_modules_data", {})
 
+        question_count = context.get("question_count", 5)
+        difficulty = context.get("difficulty", "中等")
+        sub_steps = ["⏳ 正在分析题库生成要求..."]
         step_id = self.emit_step(workflow_outputs, "running", "生成练习题", {
-            "sub_steps": ["⏳ 正在调用模型生成练习题..."],
+            "sub_steps": sub_steps,
+            "progress": 10,
+            "current_phase": "需求分析",
+            "progress_note": "正在整理知识点、题量、难度和学生画像",
+            "progress_indeterminate": False,
+            "progress_label": "1/5 阶段",
         })
 
         try:
+            sub_steps[-1] = "✅ 题库要求已整理"
+            sub_steps.append(f"⏳ 正在生成 {question_count} 道{difficulty}难度练习题...")
+            self.emit_step(workflow_outputs, "running", "生成练习题", {
+                "sub_steps": sub_steps,
+                "progress": 35,
+                "current_phase": "题目生成",
+                "progress_note": "模型正在生成题干、选项、答案和解析",
+                "progress_indeterminate": True,
+                "progress_label": "2/5 阶段",
+            }, step_id)
             state = AgentState(
                 user_id=user_id,
                 user_message=user_message,
                 resource_type="quiz",
-                question_count=context.get("question_count", 5),
-                difficulty=context.get("difficulty", "中等"),
+                question_count=question_count,
+                difficulty=difficulty,
                 code_language=ad.get("code_lang", "python"),
                 profile=context.get("profile"),
+                profile_context=context.get("profile_text"),
             )
             agent = ContentGenAgent()
             await agent._generate_quiz(state)
+            sub_steps[-1] = "✅ 练习题内容生成完成"
+            sub_steps.append("⏳ 正在解析 JSON、校验题目结构和选项...")
+            self.emit_step(workflow_outputs, "running", "生成练习题", {
+                "sub_steps": sub_steps,
+                "progress": 75,
+                "current_phase": "结构校验",
+                "progress_note": "正在确认题干、选项、答案和解析是否可展示",
+                "progress_indeterminate": False,
+                "progress_label": "3/5 阶段",
+            }, step_id)
 
             resp = json.loads(state.get("response", "{}"))
             quiz_data = resp.get("content", {})
+            total_questions = len(quiz_data.get("questions", []))
+            sub_steps[-1] = f"✅ 题目结构校验完成，共 {total_questions} 题"
+            sub_steps.append("⏳ 正在准备题库预览...")
+            self.emit_step(workflow_outputs, "running", "生成练习题", {
+                "sub_steps": sub_steps,
+                "progress": 90,
+                "current_phase": "准备预览",
+                "progress_note": "正在把题库转换为前端可作答格式",
+                "progress_indeterminate": False,
+                "progress_label": "4/5 阶段",
+            }, step_id)
 
             self.emit_step(workflow_outputs, "completed", "生成练习题", {
                 "content": json.dumps(quiz_data, ensure_ascii=False, indent=2),
-                "sub_steps": [f"✅ 已生成 {len(quiz_data.get('questions', []))} 道练习题"],
+                "sub_steps": sub_steps[:-1] + [f"✅ 已生成 {total_questions} 道练习题"],
+                "progress": 100,
+                "current_phase": "生成完成",
+                "progress_note": "题库已生成，可查看题目和解析",
+                "progress_indeterminate": False,
+                "progress_label": "5/5 阶段",
             }, step_id)
 
             return SkillResult(
                 success=True,
                 data={"quiz": quiz_data, "type": "quiz"},
-                summary=f"生成 {len(quiz_data.get('questions', []))} 道练习题",
+                summary=f"生成 {total_questions} 道练习题",
             )
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成练习题", {
                 "content": f"生成失败: {str(e)}",
                 "sub_steps": [f"❌ 错误: {str(e)}"],
+                "progress": 100,
+                "current_phase": "生成失败",
+                "progress_note": str(e),
+                "progress_indeterminate": False,
+                "progress_label": "失败",
             }, step_id)
             return SkillResult(success=False, error=str(e))
 
@@ -672,8 +798,7 @@ class VideoSearchSkill(BaseSkill):
         return str(n)
 
     async def execute(self, context: dict, workflow_outputs: list) -> SkillResult:
-        import httpx
-        from urllib.parse import quote
+        from services.bilibili_video_service import search_bilibili_videos
 
         user_message = context.get("user_message", "")
         ad = context.get("all_modules_data", {})
@@ -685,69 +810,17 @@ class VideoSearchSkill(BaseSkill):
             "render_type": "video_cards",
         })
 
-        BILI_SEARCH_API = "https://api.bilibili.com/x/web-interface/search/type"
-        BILI_VIDEO_URL = "https://www.bilibili.com/video/{}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            "Referer": "https://www.bilibili.com/",
-        }
-
-        videos = []
-        try:
-            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
-                # 先访问主页获取 buvid cookie，否则搜索接口返回空 body
-                await client.get("https://www.bilibili.com/")
-                r = await client.get(BILI_SEARCH_API, params={
-                    "search_type": "video", "keyword": search_keywords, "page": 1,
-                })
-                if r.status_code == 200:
-                    data = r.json()
-                    video_list = (data.get("data") or {}).get("result") or []
-                    for v in video_list[:6]:
-                        bvid = v.get("bvid", "")
-                        if not bvid:
-                            continue
-                        arcurl = v.get("arcurl", "")
-                        url = arcurl if arcurl and "video" in arcurl else BILI_VIDEO_URL.format(bvid)
-
-                        # 封面图：B站返回的 pic 字段可能缺少协议头
-                        pic = v.get("pic", "")
-                        if pic and not pic.startswith("http"):
-                            pic = "https:" + pic
-
-                        # 时长：B站搜索接口返回 duration 字段格式为 "mm:ss" 字符串
-                        duration_raw = v.get("duration", "")
-                        duration = duration_raw if isinstance(duration_raw, str) else self._format_duration(int(duration_raw or 0))
-
-                        # 清理标题中的高亮标签
-                        title = v.get("title", "").replace('<em class="keyword">', "").replace("</em>", "")
-
-                        videos.append({
-                            "title": title,
-                            "url": url,
-                            "cover": pic,
-                            "duration": duration,
-                            "author": v.get("author", ""),
-                            "play_count": self._format_play(v.get("play", 0)),
-                            "danmaku": self._format_play(v.get("danmaku", 0)),
-                            "bvid": bvid,
-                        })
-        except Exception:
-            pass
-
+        search_result = await search_bilibili_videos(search_keywords, per_keyword=6, total_limit=6)
+        videos = search_result.get("videos", [])
+        failures = search_result.get("failures", [])
+        sub_steps = []
+        if videos:
+            sub_steps.append(f"✅ 找到 {len(videos)} 个可直达视频")
+        if failures:
+            sub_steps.append(f"⚠️ {len(failures)} 个关键词未解析到具体视频")
         if not videos:
-            videos.append({
-                "title": search_keywords,
-                "url": f"https://search.bilibili.com/all?keyword={quote(search_keywords)}",
-                "cover": "",
-                "duration": "",
-                "author": "",
-                "play_count": "",
-                "danmaku": "",
-                "bvid": "",
-            })
+            sub_steps.append("⚠️ 未找到可直达播放的视频，请换更具体的关键词重试")
 
-        sub_steps = [f"✅ 找到 {len(videos)} 个相关视频"]
         self.emit_step(workflow_outputs, "completed", "搜索教学视频", {
             "content": json.dumps(videos, ensure_ascii=False),
             "sub_steps": sub_steps,
@@ -756,8 +829,8 @@ class VideoSearchSkill(BaseSkill):
 
         return SkillResult(
             success=True,
-            data={"videos": videos, "type": "video"},
-            summary=f"找到 {len(videos)} 个B站教学视频",
+            data={"videos": videos, "failures": failures, "type": "video"},
+            summary=f"找到 {len(videos)} 个B站可直达教学视频",
         )
 
 

@@ -66,7 +66,12 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 
 {hallu}
 
-学生画像信息：{profile}
+学生画像与系统模块上下文：{profile}
+
+【系统数据使用要求】
+- 上下文中包含系统已读取到的错题本、学习资源、学习路径、知识图谱和专注记录。
+- 当这些列表非空时，不要回答“没有具体错题内容”或“无法访问资源/路径/图谱”。
+- 分析错题时必须引用错题本中的题目、学生答案、正确答案和知识点。
 
 {rag_context}
 """
@@ -152,57 +157,28 @@ class ChatAgent(BaseAgent):
         state["response"] = collected
 
     def _profile_text(self, state: AgentState) -> str:
-        p = state.get("profile")
         user_id = state.get("user_id", "")
-
-        mistake_text = "无"
         try:
             from core.database import SessionLocal
-            from models.mistake_question import MistakeQuestion
+            from models.student import StudentProfile
+            from services.agent_context_service import build_agent_context, build_agent_context_text
             db = SessionLocal()
             try:
-                mistakes = db.query(MistakeQuestion).filter(
-                    MistakeQuestion.user_id == user_id
-                ).order_by(MistakeQuestion.created_at.desc()).limit(5).all()
-                if mistakes:
-                    mistake_text = "、".join([
-                        (m.question.get("question", "")[:30] if m.question else "") for m in mistakes
-                    ])
+                profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+                return build_agent_context_text(build_agent_context(db, user_id, profile))
             finally:
                 db.close()
         except Exception:
-            pass
-
-        focus_text = "无专注记录"
-        try:
-            from core.database import SessionLocal as SL2
-            from models.focus import FocusSession
-            db2 = SL2()
-            try:
-                sessions = db2.query(FocusSession).filter(
-                    FocusSession.user_id == user_id
-                ).order_by(FocusSession.started_at.desc()).limit(20).all()
-                if sessions:
-                    total = sum(s.duration_min for s in sessions)
-                    done = sum(1 for s in sessions if s.completed)
-                    focus_text = f"累计专注{total}分钟，完成{done}/{len(sessions)}次"
-            finally:
-                db2.close()
-        except Exception:
-            pass
-
-        if not p:
-            return json.dumps({"最近错题": mistake_text, "专注情况": focus_text}, ensure_ascii=False)
-
-        return json.dumps({
-            "专业": p.major,
-            "年级": p.grade,
-            "知识基础": p.knowledge_base,
-            "薄弱知识点": p.weak_points,
-            "学习目标": p.learning_goal,
-            "最近错题": mistake_text,
-            "专注情况": focus_text,
-        }, ensure_ascii=False)
+            p = state.get("profile")
+            if not p:
+                return "暂无学生画像"
+            return json.dumps({
+                "专业": p.major,
+                "年级": p.grade,
+                "知识基础": p.knowledge_base,
+                "薄弱知识点": p.weak_points,
+                "学习目标": p.learning_goal,
+            }, ensure_ascii=False)
 
     def _build_rag_context(self, state: AgentState) -> str:
         try:

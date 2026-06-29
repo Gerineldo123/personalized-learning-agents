@@ -80,42 +80,24 @@ async def _make_state(task_description: str, user_id: str, file_content: str = "
 
     profile = None
     profile_text = "暂无学生画像"
+    module_context = {}
     try:
         from core.database import SessionLocal
         from models.student import StudentProfile
-        from models.mistake_question import MistakeQuestion
-        from models.focus import FocusSession
-        import json as _json
+        from services.agent_context_service import build_agent_context, build_agent_context_text
         db = SessionLocal()
         try:
             profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
-            mistakes = db.query(MistakeQuestion).filter(
-                MistakeQuestion.user_id == user_id
-            ).order_by(MistakeQuestion.created_at.desc()).limit(5).all()
-            mistake_text = "、".join([
-                (m.question.get("question", "")[:30] if m.question else "") for m in mistakes
-            ]) or "无"
-            sessions = db.query(FocusSession).filter(
-                FocusSession.user_id == user_id
-            ).order_by(FocusSession.started_at.desc()).limit(20).all()
-            focus_text = "无专注记录"
-            if sessions:
-                total = sum(s.duration_min for s in sessions)
-                done = sum(1 for s in sessions if s.completed)
-                focus_text = f"累计专注{total}分钟，完成{done}/{len(sessions)}次"
-            profile_data = {"最近错题": mistake_text, "专注情况": focus_text}
-            if profile:
-                profile_data = {
-                    "专业": profile.major, "年级": profile.grade,
-                    "知识基础": profile.knowledge_base, "薄弱知识点": profile.weak_points,
-                    "学习目标": profile.learning_goal,
-                    "最近错题": mistake_text, "专注情况": focus_text,
-                }
-            profile_text = _json.dumps(profile_data, ensure_ascii=False)
+            module_context = build_agent_context(db, user_id, profile)
+            profile_text = build_agent_context_text(module_context)
         finally:
             db.close()
     except Exception:
         pass
+
+    all_modules_data = {"agent_context": module_context}
+    if file_content:
+        all_modules_data.update({"file_name": file_name, "file_content": file_content})
 
     return {
         "user_id": user_id,
@@ -129,7 +111,7 @@ async def _make_state(task_description: str, user_id: str, file_content: str = "
         "task_plan": [],
         "agent_feedback": {},
         "completed_tasks": [],
-        "all_modules_data": {"file_name": file_name, "file_content": file_content} if file_content else {},
+        "all_modules_data": all_modules_data,
         "workflow_outputs": [],
     }
 

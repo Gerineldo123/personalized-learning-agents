@@ -32,6 +32,18 @@ async def _llm_stream(system_prompt: str, user_prompt: str):
         yield ""
 
 
+def _has_mistake_intent(message: str) -> bool:
+    return any(keyword in message for keyword in ["错题", "错因", "错误题", "薄弱题", "错题本"])
+
+
+def _json_preview(value, limit: int = 3000) -> str:
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        text = str(value)
+    return text if len(text) <= limit else text[:limit] + "..."
+
+
 async def plan_node(state: AgentGraphState) -> AgentGraphState:
     """任务规划节点：分析任务并选择需要调用的 skills"""
     user_message = state.get("user_message", "")
@@ -66,6 +78,9 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
             )
 
         system = """你是一个AI Agent任务规划器。收到任务后，分析任务需求并选择合适的skills来完成。
+
+学生画像中包含系统已读取到的真实模块上下文，包括错题本、学习资源、学习路径、知识图谱和专注记录。
+如果任务涉及错题、资源、路径或图谱，必须优先利用这些上下文，不要要求用户重复提供系统已经有的数据。
 
 可用的Skills列表：
 """ + skills_desc + """
@@ -125,6 +140,10 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
         except Exception:
             pass
 
+        if _has_mistake_intent(user_message) and any(keyword in user_message for keyword in ["练习", "题", "巩固", "专项"]):
+            if "quiz_gen" not in selected_skills and "quiz_gen" in get_all_skills():
+                selected_skills.append("quiz_gen")
+
         wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
     else:
         thinking_content = f"分析任务：{user_message}"
@@ -159,6 +178,7 @@ async def skills_node(state: AgentGraphState) -> AgentGraphState:
         "user_id": user_id,
         "all_modules_data": ad,
         "profile": state.get("profile"),
+        "profile_text": state.get("profile_text", ""),
     }
 
     # 取出 SSE 队列（由 _agent_stream 注入到 state）
@@ -239,8 +259,14 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                 for h in history
             )
 
-        direct_prompt = f"""学生画像：{profile_text}
+        direct_prompt = f"""学生画像与系统模块上下文：{profile_text}
 任务/问题：{user_message}{history_text}{rag_context}
+
+【系统数据使用要求】
+- 学生画像字段中已包含错题本、学习资源、学习路径、知识图谱和专注记录。
+- 当相关列表非空时，禁止声称“没有具体错题内容”或“无法访问系统数据”。
+- 涉及错题分析时，必须基于错题本中的题目、学生答案、正确答案、解析和知识点给出结论。
+- 涉及学习规划/资源推荐时，必须结合当前学习路径、资源状态和知识图谱课程状态。
 
 请直接回答上述问题，使用Markdown格式，包含必要的代码块和公式。
 
@@ -324,7 +350,7 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                 skill_summary_parts.append(video_html)
 
     llm_summary = ""
-    if use_llm and has_search:
+    if use_llm and (has_search or selected_skills):
         rag_context = ""
         try:
             from services.rag_service import search_rag
@@ -335,16 +361,26 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
         except Exception:
             pass
 
-        summary_prompt = f"""将搜索结果整合为简明分析报告（300字以内）：
-
-学生画像：{profile_text}
-任务：{user_message}
-Tavily摘要：{answer}
+        search_block = ""
+        if has_search:
+            search_block = f"""Tavily摘要：{answer}
 搜索结果：
 {chr(10).join([f"- {r.get('title', '')}: {r.get('snippet', '')[:300]}" for r in results[:5]])}
+"""
+
+        summary_prompt = f"""基于系统上下文和技能结果完成用户任务，输出简明但可执行的分析报告：
+
+学生画像与系统模块上下文：{profile_text}
+任务：{user_message}
+{search_block}
+技能执行结果：{_json_preview(skill_results)}
 {rag_context}
 
-请回答任务问题并简短总结。
+要求：
+- 如果任务涉及错题，必须基于错题本中的题目、学生答案、正确答案和知识点分析薄弱点。
+- 如果已生成练习题，说明这些题如何对应错题暴露出的薄弱点。
+- 如果系统上下文中对应列表为空，才可以提示暂无对应数据。
+- 请回答任务问题并简短总结。
 
 【主动建议规则】回答末尾可附加一条建议（格式：[建议] 内容）：
 - 系统学习 → [建议] 系统学习【主题】  分析错题 → [建议] 分析错题

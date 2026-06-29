@@ -86,7 +86,6 @@ def delete_profile(user_id: str, db: Session = Depends(get_db)):
     return {"ok": True, "deleted": True, "message": "画像已删除"}
 
 
-@router.get("/config")
 def questionnaire_config():
     return {
         "education_levels": EDUCATION_LEVELS,
@@ -98,7 +97,6 @@ def questionnaire_config():
     }
 
 
-@router.get("/seed_courses")
 def seed_courses(discipline: str = "", level: str = "", major: str = ""):
     MAJOR_SEEDS: dict[str, list[str]] = {
         # === 工学 ===
@@ -364,7 +362,6 @@ def seed_courses(discipline: str = "", level: str = "", major: str = ""):
     return {"courses": DL_SEEDS.get(("工学", "大一"), [])}
 
 
-@router.get("/majors")
 def search_majors(discipline: str = "", keyword: str = ""):
     from core.majors import flat_majors, MAJORS_TREE
     if keyword:
@@ -438,7 +435,6 @@ GENERATE_PROFILE_PROMPT = """你是一个教育评估专家。根据学生的问
 只返回JSON，不要其他内容。"""
 
 
-@router.post("/generate")
 async def generate_profile_from_questionnaire(req: QuestionnaireRequest, user_id: str):
     courses_json = json.dumps([
         {

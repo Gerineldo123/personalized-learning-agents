@@ -16,6 +16,7 @@ from models.user import User
 from models.profile_history import ProfileHistory
 from models.curriculum import Curriculum, UserCourseStatus
 from models.ppt_session import PptSession
+from models.profile_onboarding import ProfileOnboardingSession
 
 Base.metadata.create_all(bind=engine)
 
@@ -47,6 +48,11 @@ def _ensure_focus_columns():
     with engine.connect() as conn:
         cols = {c[1] for c in conn.exec_driver_sql("PRAGMA table_info(student_profiles)").fetchall()}
         for col, typedef in [
+            ("current_semester", "INTEGER"),
+            ("mistake_tendency", "JSON"),
+            ("course_mastery", "JSON"),
+            ("profile_evidence", "JSON"),
+            ("resource_feedback_profile", "JSON"),
             ("focus_stamina_score", "INTEGER"),
             ("focus_peak_hours",    "JSON"),
             ("focus_interrupt_rate","REAL"),
@@ -88,6 +94,7 @@ app.add_middleware(
 import os as _os
 _static_dir = _os.path.join(_os.path.dirname(__file__), "static")
 _os.makedirs(_os.path.join(_static_dir, "ppt"), exist_ok=True)
+_os.makedirs(_os.path.join(_static_dir, "ppt_preview"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
@@ -136,7 +143,7 @@ init_skills()
 
 from services.event_service import on
 
-from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel, curriculum, ppt as ppt_routes
+from api.routes import chat, student, resource, evaluation, config, conversation, events, quiz, mistake, course_path, auth, focus, workflow, weak_point, agent_panel, curriculum, profile_onboarding, ppt as ppt_routes
 
 app.include_router(chat.router)
 app.include_router(student.router)
@@ -154,6 +161,7 @@ app.include_router(workflow.router)
 app.include_router(weak_point.router)
 app.include_router(agent_panel.router)
 app.include_router(curriculum.router)
+app.include_router(profile_onboarding.router)
 app.include_router(ppt_routes.router)
 
 print("Registered agents:", [a.name for a in get_all_agents()])

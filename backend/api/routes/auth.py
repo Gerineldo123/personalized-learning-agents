@@ -5,6 +5,12 @@ from core.database import SessionLocal
 from core.auth import create_token, require_user
 from models.user import User
 from models.student import StudentProfile
+from services.curriculum_service import (
+    infer_current_semester,
+    legacy_courses,
+    load_curriculum_by_major,
+    semester_rank,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -42,6 +48,7 @@ def _validate_password(password: str):
 def register(
     phone: str, password: str, confirm_password: str,
     education_level: str = "本科", grade: str = "", major: str = "",
+    current_semester: int | None = None,
 ):
     _validate_phone(phone)
     _validate_password(password)
@@ -59,11 +66,13 @@ def register(
 
         # 创建 StudentProfile
         discipline = _MAJOR_DISCIPLINE.get(major, "计算机")
+        resolved_semester = infer_current_semester(grade, current_semester)
         profile = StudentProfile(
             user_id=phone,
             major=major,
             grade=grade,
             education_level=education_level,
+            current_semester=resolved_semester,
             discipline=discipline,
             knowledge_base={},
             ability_scores={},
@@ -73,7 +82,7 @@ def register(
         db.commit()
 
         # 初始化培养方案 + 按年级点亮节点（复用 curriculum 路由的逻辑）
-        _init_curriculum(db, phone, major, grade)
+        _init_curriculum(db, phone, major, grade, resolved_semester)
 
         token = create_token(phone)
         return {"ok": True, "token": token, "phone": phone, "first_login": False}
@@ -81,9 +90,8 @@ def register(
         db.close()
 
 
-def _init_curriculum(db, user_id: str, major: str, grade: str):
+def _init_curriculum(db, user_id: str, major: str, grade: str, current_semester: int | None = None):
     """注册时初始化培养方案并按年级点亮已学课程"""
-    import json, os
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     from models.curriculum import Curriculum, UserCourseStatus
 
@@ -91,19 +99,8 @@ def _init_curriculum(db, user_id: str, major: str, grade: str):
     if db.query(Curriculum).filter(Curriculum.user_id == user_id).first():
         return
 
-    major_file = {
-        "计算机科学与技术": "curriculum_cs.json",
-        "软件工程": "curriculum_se.json",
-        "人工智能": "curriculum_ai.json",
-        "智能科学与技术": "curriculum_cs.json",
-    }.get(major, "curriculum_cs.json")
-
-    static_dir = os.path.join(os.path.dirname(__file__), "..", "..", "static")
-    path = os.path.join(static_dir, major_file)
-    if not os.path.exists(path):
-        return
-    with open(path, encoding="utf-8") as f:
-        courses = json.load(f)
+    curriculum = load_curriculum_by_major(major)
+    courses = legacy_courses(curriculum)
 
     # 写入培养方案
     for c in courses:
@@ -119,14 +116,16 @@ def _init_curriculum(db, user_id: str, major: str, grade: str):
         )
 
     # 按年级推算已学学期，点亮节点
-    completed_semesters = _GRADE_SEMESTER.get(grade, 0)
+    resolved_semester = infer_current_semester(grade, current_semester)
+    source_by_name = {course.get("name"): course for course in curriculum.get("courses", [])}
     for c in courses:
-        sem = c.get("semester", 0)
-        if sem == 0:
+        source_course = source_by_name.get(c["course_name"], {})
+        sem = semester_rank(source_course.get("semester", c.get("semester", 0)))
+        if sem <= 0:
             continue
-        if sem < completed_semesters:
+        if sem < resolved_semester:
             status = "completed"
-        elif sem == completed_semesters:
+        elif sem == resolved_semester:
             status = "learning"
         else:
             continue  # 未来课程不写入，默认 not_started

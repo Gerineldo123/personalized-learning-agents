@@ -223,11 +223,13 @@ function renderProcessedContent(content: string): string {
       const cards = data.videos.map((v: any) => {
         const bvMatch = (v.url || '').match(/\/video\/(BV\w+)/)
         const avMatch = (v.url || '').match(/\/video\/av(\d+)/)
+        const pageMatch = (v.url || '').match(/[?&](?:p|page)=(\d+)/)
         const bvid = bvMatch ? bvMatch[1] : ''
         const avid = avMatch ? avMatch[1] : ''
+        const pageParam = pageMatch ? `&page=${pageMatch[1]}` : ''
         const embedSrc = bvid
-          ? `//player.bilibili.com/player.html?bvid=${bvid}&autoplay=0&danmaku=0`
-          : avid ? `//player.bilibili.com/player.html?aid=${avid}&autoplay=0&danmaku=0` : ''
+          ? `//player.bilibili.com/player.html?bvid=${bvid}${pageParam}&autoplay=0&danmaku=0`
+          : avid ? `//player.bilibili.com/player.html?aid=${avid}${pageParam}&autoplay=0&danmaku=0` : ''
         const embedOrLink = embedSrc
           ? `<div class="video-card-embed-wrap"><iframe src="${embedSrc}" scrolling="no" frameborder="0" allowfullscreen class="video-card-iframe"></iframe></div>`
           : (v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">▶ 在 B 站打开</a>` : '')
@@ -314,23 +316,6 @@ function renderProcessedContent(content: string): string {
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-function formatConvTime(iso: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin}分钟前`
-  const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}小时前`
-  const diffDay = Math.floor(diffHour / 24)
-  if (diffDay < 7) return `${diffDay}天前`
-  const m = d.getMonth() + 1
-  const day = d.getDate()
-  return `${m}/${day}`
 }
 
 function formatMsgTime(iso: string): string {

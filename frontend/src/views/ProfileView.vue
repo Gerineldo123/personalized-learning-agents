@@ -3,12 +3,11 @@ import { ref, watch, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import api from '../api'
-import ProfileQuestionnaire from '../components/profile/ProfileQuestionnaire.vue'
-import KnowledgeGraph from '../components/profile/KnowledgeGraph.vue'
+import ConversationalOnboarding from '../components/profile/ConversationalOnboarding.vue'
 import CurriculumGraph from '../components/profile/CurriculumGraph.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import SausageIcon from '../components/SausageIcon.vue'
 import LoadingSausage from '../components/LoadingSausage.vue'
 
@@ -22,14 +21,14 @@ const completeness = ref(0)
 const profileHistory = ref<Array<{ trigger: string; snapshot: any; created_at: string }>>([])
 const historyChartRef = ref<HTMLElement | null>(null)
 let historyChart: echarts.ECharts | null = null
-const TRIGGER_LABELS: Record<string, string> = { quiz: '答题', focus: '专注', path_step: '路径步骤', chat: '对话', questionnaire: '问卷' }
+const TRIGGER_LABELS: Record<string, string> = { quiz: '答题', focus: '专注', path_step: '路径步骤', chat: '对话', onboarding: '对话建档', questionnaire: '旧问卷' }
 const quizStats = ref({
   total: 0,
   avg_score_percent: 0,
   latest_score_percent: null as number | null,
 })
 
-const showQuestionnaire = ref(false)
+const showOnboarding = ref(false)
 const showRebuildDialog = ref(false)
 const rebuildLoading = ref(false)
 const selectedCourse = ref<any>(null)
@@ -104,7 +103,7 @@ const onRadarResize = () => { radarChart?.resize(); historyChart?.resize() }
 const completenessHints = computed(() => {
   if (!profile.value) return []
   const p = profile.value, hints: string[] = []
-  if (!p.weak_courses?.length) hints.push('填写薄弱课程（在问卷中补充）')
+  if (!p.weak_courses?.length) hints.push('通过对话建档补充薄弱课程')
   if (!p.ability_scores || !Object.values(p.ability_scores).some(Boolean)) hints.push('完成一套题库以获得能力评分')
   if (!p.cognitive_style) hints.push('通过对话告诉我你的学习偏好')
   return hints.slice(0, 2)
@@ -189,9 +188,9 @@ const quizAnalysis = computed(() => {
   return '当前正确率偏低，建议先回到基础概念与核心例题，采用“小步快练+即时复盘”的节奏。'
 })
 
-function onQuestionnaireDone(p: any) {
+function onOnboardingDone(p: any) {
   profile.value = p
-  showQuestionnaire.value = false
+  showOnboarding.value = false
   ElMessage.success('学习画像构建完成')
   api.post('/resources/generate/starter', null, {
     params: { user_id: userStore.userId, max_courses: 3 },
@@ -201,19 +200,8 @@ function onQuestionnaireDone(p: any) {
   }).catch(() => {})
 }
 
-function onQuestionnaireCancel() {
-  showQuestionnaire.value = false
-}
-
-async function askReProfile() {
-  try {
-    await ElMessageBox.confirm('是否重新填写个人信息？', '提示', {
-      confirmButtonText: '是',
-      cancelButtonText: '否',
-      type: 'info',
-    })
-    showQuestionnaire.value = true
-  } catch {}
+function onOnboardingCancel() {
+  showOnboarding.value = false
 }
 
 async function doRebuildProfile() {
@@ -301,6 +289,22 @@ async function generatePathResources() {
 function openPathResource(resourceId: number) {
   router.push({ path: '/resources', query: { open: String(resourceId) } })
 }
+
+function openCourseResources(courseName: string) {
+  router.push({ path: '/resources', query: { course: courseName, package: '课程总览' } })
+}
+
+function openKnowledgePointResources(knowledgePoint: string, courseName?: string) {
+  router.push({
+    path: '/resources',
+    query: {
+      course: courseName || selectedCourse.value?.name || '',
+      kp: knowledgePoint,
+      package: '知识点补弱',
+    },
+  })
+}
+
 async function toggleStepDone(pathId: number, stepOrder: number, done: boolean) {
   try {
     const r = await api.patch(`/path/course/${pathId}/step/${stepOrder}`, null, {
@@ -329,7 +333,7 @@ async function fetchAiInterpret() {
   const weakNames = (profile.value.weak_courses || []).map((c: any) => c.name).join('、')
   const message = `请根据我当前的学习画像给出深度解读和个性化建议。能力评分：${JSON.stringify(scores)}；薄弱课程：${weakNames || '暂无'}；认知风格：${profile.value.cognitive_style || '未知'}；能力摘要：${profile.value.ability_summary || ''}。请用2-3段话给出有针对性的学习建议。`
   try {
-    const r = await api.post('/profile/run', null, {
+    await api.post('/profile/run', null, {
       params: { user_id: userStore.userId, message },
       timeout: 60000,
     })
@@ -390,13 +394,13 @@ async function submitChatUpdate() {
       <div class="sa-empty">
         <SausageIcon :size="72" animate />
         <p class="sa-empty-text">该用户暂无画像数据</p>
-        <el-button style="background:#F9D9B8;color:#3A332E;border:none;border-radius:8px;font-weight:500" @click="showQuestionnaire = true">开始构建画像</el-button>
+        <el-button style="background:#F9D9B8;color:#3A332E;border:none;border-radius:8px;font-weight:500" @click="showOnboarding = true">开始对话建档</el-button>
       </div>
     </div>
 
     <div v-else class="profile-layout">
       <aside class="profile-sidebar animate-up animate-delay-1">
-        <div class="sidebar-top-card" @click="askReProfile">
+        <div class="sidebar-top-card" @click="showOnboarding = true">
           <div class="sidebar-avatar">
             <SausageIcon :size="50" />
           </div>
@@ -427,7 +431,7 @@ async function submitChatUpdate() {
           </template>
         </div>
         <div class="sidebar-actions">
-          <el-button size="small" @click="showQuestionnaire = true">重新填写</el-button>
+          <el-button size="small" @click="showOnboarding = true">对话建档</el-button>
           <el-button size="small" @click="showRebuildDialog = true">智能重建</el-button>
         </div>
       </aside>
@@ -620,16 +624,17 @@ async function submitChatUpdate() {
             :userId="userStore.userId"
             :major="profile.major"
             :knowledgeBase="knowledgeGraphData"
-            @node-click="(id) => router.push({ path: '/resources', query: { search: id } })"
+            @course-click="openCourseResources"
+            @node-click="openKnowledgePointResources"
           />
         </div>
       </main>
     </div>
 
-    <ProfileQuestionnaire
-      v-if="showQuestionnaire"
-      @done="onQuestionnaireDone"
-      @cancel="onQuestionnaireCancel"
+    <ConversationalOnboarding
+      v-if="showOnboarding"
+      @done="onOnboardingDone"
+      @cancel="onOnboardingCancel"
     />
 
     <el-dialog v-model="showRebuildDialog" title="重新构建画像" width="500px">

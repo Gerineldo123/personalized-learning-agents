@@ -489,6 +489,12 @@ async def complete_ppt_session(
             db.commit()
 
             try:
+                from services.ppt_preview_service import schedule_ppt_preview
+                schedule_ppt_preview(resource.id)
+            except Exception:
+                pass
+
+            try:
                 from services.event_service import emit
                 import asyncio
                 asyncio.ensure_future(emit("resource.created", {
@@ -622,6 +628,12 @@ async def one_click_generate_ppt(
         db.add(resource)
         db.flush()
         db.commit()
+
+        try:
+            from services.ppt_preview_service import schedule_ppt_preview
+            schedule_ppt_preview(resource.id)
+        except Exception:
+            pass
 
         try:
             from services.event_service import emit

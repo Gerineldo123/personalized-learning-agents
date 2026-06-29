@@ -219,8 +219,21 @@ async function executeTask(taskDescription?: string) {
   agentStore.setTaskStatus(task.id, 'running')
   agentStore.isExecuting = true
   taskMeta.value[task.id] = {}
+  agentStore.upsertStep(task.id, {
+    stepId: `local-user-${task.id}`,
+    stepType: 'user',
+    status: 'completed',
+    title: '已提交任务',
+    data: {
+      content: text,
+      fileName: uploadedFile.value?.fileName,
+    },
+    expanded: true,
+    timestamp: Date.now(),
+  })
+  scrollToBottom()
 
-  await saveMessage('user', text)
+  const persistUserMessage = saveMessage('user', text).catch(() => {})
   const history = currentHistory()
 
   const ctrl = agentExecuteStream(
@@ -231,6 +244,7 @@ async function executeTask(taskDescription?: string) {
       agentStore.setTaskStatus(task.id, 'completed')
       const resultStep = agentStore.tasks.find((t: any) => t.id === task.id)?.steps.find((s: any) => s.stepType === 'result')
       if (resultStep) {
+        await persistUserMessage
         await saveMessage('assistant', (resultStep.data as any)?.content || '')
         await loadConversations()
       }
@@ -247,7 +261,7 @@ async function executeTask(taskDescription?: string) {
 function handleStepEvent(evt: StepEvent, taskId: number) {
   const step: AgentStep = {
     stepId: evt.step_id, stepType: evt.step_type, status: evt.status,
-    title: evt.title, agentName: evt.agent_name, data: evt.data as AgentStep['data'],
+    title: evt.title, agentName: evt.agent_name, data: evt.data as unknown as AgentStep['data'],
     expanded: evt.status === 'running', timestamp: Date.now(),
   }
   agentStore.upsertStep(taskId, step)
@@ -261,6 +275,78 @@ function handleStepEvent(evt: StepEvent, taskId: number) {
 }
 
 // ── 工作流触发 ────────────────────────────────────
+const stageTitleMap: Record<string, string> = {
+  profile_analyzed: '画像分析',
+  diagnosis_done: '学情诊断',
+  resource_planned: '资源规划',
+  resource_started: '开始生成资源',
+  resource_created: '资源生成完成',
+  resource_failed: '资源生成失败',
+  safety_reviewed: '安全审查',
+  knowledge_tagged: '知识图谱标注',
+  path_updated: '学习路径更新',
+  done: '闭环完成',
+}
+
+function stageTitle(stage: string) {
+  return stageTitleMap[stage] || stage
+}
+
+function stageAgent(stage: string, data: any) {
+  const type = data?.resource_type || ''
+  if (type === 'mindmap') return '导图智能体'
+  if (type === 'quiz') return '出题智能体'
+  if (type === 'code') return '代码智能体'
+  if (type === 'ppt') return '课件智能体'
+  if (type === 'video') return '视频智能体'
+  if (stage.includes('profile')) return '画像智能体'
+  if (stage.includes('diagnosis') || stage.includes('planned')) return '规划智能体'
+  if (stage.includes('safety')) return '审查智能体'
+  if (stage.includes('knowledge')) return '知识图谱智能体'
+  if (stage.includes('path')) return '路径智能体'
+  if (stage === 'done') return '汇总智能体'
+  return '资源智能体'
+}
+
+function formatStageData(data: any): string {
+  if (typeof data === 'string') return data
+  if (Array.isArray(data)) {
+    return data.map((item) => {
+      if (typeof item === 'string') return `- ${item}`
+      const name = item.resource_type || item.stage || item.purpose || item.title || JSON.stringify(item)
+      const desc = item.purpose || item.agent || ''
+      return `- ${name}${desc ? `：${desc}` : ''}`
+    }).join('\n')
+  }
+  if (data && typeof data === 'object') {
+    const lines: string[] = []
+    if (data.course_name) lines.push(`课程：${data.course_name}`)
+    if (data.resource_type) lines.push(`资源类型：${data.resource_type}`)
+    if (data.title) lines.push(`标题：${data.title}`)
+    if (Array.isArray(data.focus_knowledge_points)) lines.push(`重点知识点：${data.focus_knowledge_points.join('、')}`)
+    if (Array.isArray(data.knowledge_points)) lines.push(`知识点：${data.knowledge_points.join('、')}`)
+    if (data.resource_count !== undefined) lines.push(`资源数量：${data.resource_count}`)
+    if (data.total_steps !== undefined) lines.push(`路径步骤：${data.total_steps}`)
+    if (data.status) lines.push(`状态：${data.status}`)
+    if (data.error) lines.push(`错误：${data.error}`)
+    return lines.length ? lines.join('\n') : JSON.stringify(data, null, 2)
+  }
+  return String(data ?? '')
+}
+
+function resourceIcon(type: string): string {
+  const map: Record<string, string> = {
+    article: '📄',
+    quiz: '📝',
+    mindmap: '🧠',
+    code: '💻',
+    ppt: '📊',
+    video: '🎬',
+    evaluation: '📈',
+  }
+  return map[type] || '📦'
+}
+
 function triggerWorkflow(action: WorkflowType, topic: string) {
   if (agentStore.isExecuting || isStreaming.value) return
   // 切换到任务模式执行工作流
@@ -276,6 +362,7 @@ function triggerWorkflow(action: WorkflowType, topic: string) {
   taskMeta.value[task.id] = { resources: [] }
   const step_id = 'wf-' + task.id
   let fullContent = ''
+  let stageSeq = 0
 
   workflowStream(
     action, userStore.userId, topic, currentHistory(),
@@ -284,7 +371,20 @@ function triggerWorkflow(action: WorkflowType, topic: string) {
       agentStore.upsertStep(task.id, { stepId: step_id, stepType: 'result', status: 'running', title: taskTitle, data: { content: fullContent } as any, expanded: true, timestamp: Date.now() })
       scrollToBottom()
     },
-    (_stage) => {},
+    (stage, data) => {
+      stageSeq += 1
+      agentStore.upsertStep(task.id, {
+        stepId: `wf-${task.id}-${stage}-${stageSeq}`,
+        stepType: 'thinking',
+        status: stage === 'resource_failed' ? 'error' : 'completed',
+        title: stageTitle(stage),
+        agentName: stageAgent(stage, data),
+        data: { content: formatStageData(data) } as any,
+        expanded: stage === 'resource_failed' || stage === 'done',
+        timestamp: Date.now(),
+      })
+      scrollToBottom()
+    },
     async () => {
       agentStore.isExecuting = false
       agentStore.setTaskStatus(task.id, 'completed')
@@ -442,8 +542,14 @@ const questionPanelOpen = ref(false)
     <!-- 左侧：会话列表 -->
     <aside class="conv-sidebar">
       <div class="sidebar-header">
-        <h3>会话</h3>
-        <el-button size="small" type="primary" plain @click="newConversation">+ 新建</el-button>
+        <div class="sidebar-brand">
+          <div class="brand-icon">AI</div>
+          <div>
+            <h3>智能助手</h3>
+            <p>对话 / 多智能体任务</p>
+          </div>
+        </div>
+        <el-button class="new-conv-btn" size="small" type="primary" @click="newConversation">+ 新建</el-button>
       </div>
       <div class="conv-list">
         <div v-for="c in conversations" :key="c.id" class="conv-item"
@@ -461,11 +567,17 @@ const questionPanelOpen = ref(false)
     <!-- 右侧：主区域 -->
     <main class="work-area">
       <header class="task-header">
-        <div class="header-left">
-          <h2 v-if="currentConvId" class="conv-title-display">
-            {{ conversations.find(c => c.id === currentConvId)?.title || '对话' }}
-          </h2>
-          <h2 v-else class="placeholder-title">AI 智能助手</h2>
+        <div class="header-left title-block">
+          <div class="assistant-avatar">✦</div>
+          <div>
+            <h2 v-if="currentConvId" class="conv-title-display">
+              {{ conversations.find(c => c.id === currentConvId)?.title || '对话' }}
+            </h2>
+            <h2 v-else class="placeholder-title">AI 智能助手</h2>
+            <p class="header-subtitle">
+              {{ currentMode === 'chat' ? '问答辅导 · 术语解释 · 学习建议' : '任务编排 · 资源生成 · 过程追踪' }}
+            </p>
+          </div>
         </div>
         <div class="header-right">
           <!-- 模式切换 -->
@@ -490,31 +602,53 @@ const questionPanelOpen = ref(false)
 
           <!-- 未选择会话 -->
           <div v-if="!currentConvId" class="empty-state">
-            <div class="empty-icon">🤖</div>
-            <p>从左侧选择会话，或点击「+ 新建」开始</p>
+            <div class="empty-hero">
+              <div class="empty-icon">🤖</div>
+              <h3>开始一次个性化学习对话</h3>
+              <p>创建会话后，可以直接提问，也可以切换到任务模式生成学习资源。</p>
+              <button class="empty-primary-btn" @click="newConversation">创建新会话</button>
+            </div>
           </div>
 
           <!-- 对话模式 -->
           <template v-else-if="currentMode === 'chat'">
             <div v-if="currentChatMsgs.length === 0" class="empty-state">
-              <div class="empty-icon">💬</div>
-              <p>直接提问，AI 会结合你的学习画像回答</p>
+              <div class="empty-hero">
+                <div class="empty-icon">💬</div>
+                <h3>今天想解决什么学习问题？</h3>
+                <p>AI 会结合你的学习画像、历史学习记录和知识图谱给出解释。</p>
+                <div class="quick-prompts">
+                  <button @click="inputText = '请根据我的学习画像，给我一个今天的学习建议'">今日学习建议</button>
+                  <button @click="inputText = '帮我解释一个我容易混淆的知识点，并给出例题'">讲解薄弱知识点</button>
+                  <button @click="inputText = '根据我的错题，总结我最近的易错原因'">分析易错原因</button>
+                </div>
+              </div>
             </div>
             <div v-for="msg in currentChatMsgs" :key="msg.uid"
               :class="['chat-msg', msg.role]">
+              <div v-if="msg.role === 'assistant'" class="msg-avatar assistant-avatar-small">AI</div>
               <div class="chat-bubble" @click="msg.role === 'assistant' ? handleChatClick($event) : undefined">
                 <template v-if="msg.role === 'user'">{{ msg.content }}</template>
                 <template v-else-if="msg.streaming">{{ msg.content }}<span class="cursor">|</span></template>
                 <div v-else class="markdown-body" v-html="renderChatContent(msg.content)" />
               </div>
+              <div v-if="msg.role === 'user'" class="msg-avatar user-avatar-small">我</div>
             </div>
           </template>
 
           <!-- 任务模式 -->
           <template v-else>
             <div v-if="currentConvTasks.length === 0" class="empty-state">
-              <div class="empty-icon">🤖</div>
-              <p>描述任务，Agent 将展示思考与执行过程</p>
+              <div class="empty-hero">
+                <div class="empty-icon">🤖</div>
+                <h3>把复杂学习需求交给多智能体</h3>
+                <p>输入目标后，系统会展示规划、检索、生成、审查和结果沉淀过程。</p>
+                <div class="quick-prompts">
+                  <button @click="inputText = '围绕我当前薄弱知识点，生成一套学习资源包'">生成资源包</button>
+                  <button @click="inputText = '为我规划一条本周学习路径，并说明顺序理由'">规划学习路径</button>
+                  <button @click="inputText = '分析我的错题并生成针对性练习'">错题补弱任务</button>
+                </div>
+              </div>
             </div>
             <!-- 任务选择标签（多个任务时显示） -->
             <div v-if="currentConvTasks.length > 1" class="task-tabs">
@@ -537,7 +671,7 @@ const questionPanelOpen = ref(false)
             <!-- 资源卡片 -->
             <div v-if="currentTask && taskMeta[currentTask.id]?.resources?.length" class="resource-area">
               <div v-for="r in taskMeta[currentTask.id].resources" :key="r.resource_id" class="resource-card-inline">
-                <span>{{ r.resource_type === 'quiz' ? '📝' : r.resource_type === 'mindmap' ? '🧠' : '📄' }} {{ r.title || '学习资源' }}</span>
+                <span>{{ resourceIcon(r.resource_type) }} {{ r.title || '学习资源' }}</span>
                 <a :href="`/resources?open=${r.resource_id}`" target="_blank" class="resource-jump">查看 →</a>
               </div>
             </div>
@@ -564,6 +698,10 @@ const questionPanelOpen = ref(false)
 
       <!-- 输入区 -->
       <div class="input-area">
+        <div class="input-hint">
+          <span>{{ currentMode === 'chat' ? '对话模式：适合概念解释、答疑、学习建议' : '任务模式：适合生成资源、分析错题、规划路径' }}</span>
+          <span class="input-hotkey">Enter 发送 · Shift + Enter 换行</span>
+        </div>
         <div v-if="uploadedFile" class="file-preview">
           <span class="file-name">📄 {{ uploadedFile.fileName }}</span>
           <span class="file-size">{{ formatSize(uploadedFile.size) }}</span>
@@ -607,34 +745,62 @@ const questionPanelOpen = ref(false)
 </template>
 
 <style scoped>
-.agent-panel { display: flex; height: calc(100vh - 48px); background: #FFF5EB; overflow: hidden; }
+.agent-panel {
+  display: flex;
+  height: calc(100vh - 48px);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(249, 217, 184, 0.75), transparent 28%),
+    radial-gradient(circle at 92% 12%, rgba(232, 194, 156, 0.32), transparent 26%),
+    linear-gradient(180deg, #FFF5EB 0%, #FFFBF5 58%, #FFF5EB 100%);
+  overflow: hidden;
+  padding: 14px;
+  gap: 14px;
+  box-sizing: border-box;
+}
 .agent-panel.dark { background: var(--bg-page); color: var(--text-regular); }
 
 /* ── 侧边栏 ── */
 .conv-sidebar {
-  width: 240px; min-width: 240px;
-  background: #FFFBF5;
-  border-right: 1px solid #EFE6DC;
+  width: 276px; min-width: 276px;
+  background: rgba(255, 251, 245, 0.9);
+  border: 1px solid rgba(232, 194, 156, 0.75);
+  border-radius: 22px;
+  box-shadow: 0 16px 48px rgba(58, 51, 46, 0.10);
+  backdrop-filter: blur(14px);
   display: flex; flex-direction: column;
+  overflow: hidden;
 }
 .sidebar-header {
-  padding: 16px;
+  padding: 18px;
   display: flex; align-items: center; justify-content: space-between;
-  border-bottom: 1px solid #EFE6DC;
+  border-bottom: 1px solid rgba(239, 230, 220, 0.85);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.sidebar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-icon {
+  width: 36px; height: 36px; border-radius: 13px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #3A332E, #7C5C3C);
+  color: #FFFBF5; font-size: 13px; font-weight: 800; letter-spacing: 0.04em;
+  box-shadow: 0 8px 18px rgba(58, 51, 46, 0.18);
   flex-shrink: 0;
 }
-.sidebar-header h3 { margin: 0; font-size: 15px; font-weight: 600; color: #3A332E; }
-.conv-list { flex: 1; overflow-y: auto; padding: 8px; }
+.sidebar-header h3 { margin: 0; font-size: 16px; font-weight: 700; color: #3A332E; }
+.sidebar-header p { margin: 2px 0 0; color: #948A80; font-size: 11px; white-space: nowrap; }
+.new-conv-btn { border-radius: 999px; box-shadow: 0 8px 16px rgba(64, 158, 255, 0.18); }
+.conv-list { flex: 1; overflow-y: auto; padding: 12px; }
 .conv-item {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 12px 13px;
+  border-radius: 16px;
   cursor: pointer;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
   transition: all 0.25s cubic-bezier(.4,0,.2,1);
   border: 1px solid transparent;
+  background: rgba(255, 245, 235, 0.58);
 }
-.conv-item:hover { background: #FFF5EB; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(58,51,46,0.08); }
-.conv-item.active { background: #FFF5EB; border-color: #F9D9B8; box-shadow: 0 2px 8px rgba(58,51,46,0.08); }
+.conv-item:hover { background: #FFFBF5; transform: translateY(-2px); box-shadow: 0 8px 20px rgba(58,51,46,0.09); }
+.conv-item.active { background: #FFFBF5; border-color: #E8C29C; box-shadow: 0 10px 24px rgba(58,51,46,0.10); }
 .conv-item-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; color: #3A332E; }
 .conv-item-meta { display: flex; align-items: center; justify-content: space-between; }
 .conv-item-time { font-size: 11px; color: #948A80; }
@@ -646,57 +812,126 @@ const questionPanelOpen = ref(false)
 }
 
 /* ── 主区域 ── */
-.work-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: #FFF5EB; }
+.work-area {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+  background: rgba(255, 251, 245, 0.76);
+  border: 1px solid rgba(232, 194, 156, 0.72);
+  border-radius: 24px;
+  box-shadow: 0 18px 52px rgba(58, 51, 46, 0.11);
+  backdrop-filter: blur(14px);
+}
 .work-content { flex: 1; display: flex; overflow: hidden; }
 
 .task-header {
-  padding: 14px 24px;
-  background: #FFFBF5;
-  border-bottom: 1px solid #EFE6DC;
+  padding: 16px 22px;
+  background: linear-gradient(135deg, rgba(255, 251, 245, 0.94), rgba(255, 245, 235, 0.82));
+  border-bottom: 1px solid rgba(239, 230, 220, 0.9);
   display: flex; align-items: center; justify-content: space-between;
-  flex-shrink: 0; min-height: 58px;
+  flex-shrink: 0; min-height: 68px;
 }
 .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.title-block { gap: 12px; }
+.assistant-avatar {
+  width: 42px; height: 42px; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #F9D9B8, #E8C29C);
+  color: #3A332E; font-size: 18px; font-weight: 800;
+  box-shadow: 0 10px 22px rgba(219, 168, 120, 0.25);
+  flex-shrink: 0;
+}
 .conv-title-display { margin: 0; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3A332E; }
 .placeholder-title { margin: 0; font-size: 16px; color: #948A80; }
+.header-subtitle { margin: 3px 0 0; color: #948A80; font-size: 12px; }
 .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
-.mode-switch { display: flex; background: #FFF5EB; border-radius: 10px; padding: 3px; gap: 2px; border: 1px solid #EFE6DC; }
+.mode-switch { display: flex; background: rgba(255, 245, 235, 0.8); border-radius: 999px; padding: 4px; gap: 3px; border: 1px solid #EFE6DC; }
 .mode-btn {
-  padding: 5px 14px; border: none; border-radius: 8px;
+  padding: 7px 16px; border: none; border-radius: 999px;
   cursor: pointer; font-size: 13px; color: #948A80;
   background: transparent; transition: all 0.25s cubic-bezier(.4,0,.2,1); white-space: nowrap;
 }
-.mode-btn.active { background: #FFFBF5; color: #3A332E; box-shadow: 0 1px 4px rgba(58,51,46,0.1); font-weight: 600; }
+.mode-btn.active { background: #FFFBF5; color: #3A332E; box-shadow: 0 6px 14px rgba(58,51,46,0.10); font-weight: 700; }
 .mode-btn:hover:not(.active) { color: #3A332E; background: rgba(249,217,184,0.3); }
 
 /* ── 内容滚动区 ── */
-.main-scroll { flex: 1; overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 16px; }
+.main-scroll { flex: 1; overflow-y: auto; padding: 28px 34px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
+.main-scroll::-webkit-scrollbar, .conv-list::-webkit-scrollbar { width: 8px; }
+.main-scroll::-webkit-scrollbar-thumb, .conv-list::-webkit-scrollbar-thumb { background: rgba(199, 179, 154, 0.7); border-radius: 999px; }
+.main-scroll::-webkit-scrollbar-track, .conv-list::-webkit-scrollbar-track { background: transparent; }
 
 /* ── 空状态 ── */
-.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #948A80; gap: 12px; padding: 48px 0; }
-.empty-icon { font-size: 48px; opacity: 0.7; }
-.empty-state p { font-size: 14px; color: #948A80; margin: 0; }
+.empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: #948A80; padding: 48px 0; }
+.empty-hero {
+  width: min(620px, 100%);
+  padding: 38px 36px;
+  border: 1px solid rgba(232, 194, 156, 0.65);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 14% 12%, rgba(249, 217, 184, 0.38), transparent 30%),
+    linear-gradient(135deg, rgba(255, 251, 245, 0.96), rgba(255, 245, 235, 0.82));
+  box-shadow: 0 18px 52px rgba(58, 51, 46, 0.09);
+  text-align: center;
+}
+.empty-icon {
+  width: 72px; height: 72px; margin: 0 auto 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 38px; border-radius: 24px;
+  background: #FFFBF5;
+  box-shadow: 0 10px 26px rgba(58, 51, 46, 0.09);
+}
+.empty-state h3 { margin: 0 0 8px; color: #3A332E; font-size: 22px; font-weight: 800; }
+.empty-state p { font-size: 14px; color: #6B635C; margin: 0; line-height: 1.8; }
+.quick-prompts {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
+  margin-top: 22px;
+}
+.quick-prompts button,
+.empty-primary-btn {
+  border: 1px solid #E8C29C;
+  background: #FFFBF5;
+  color: #7C5C3C;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.quick-prompts button:hover,
+.empty-primary-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(58,51,46,0.10);
+  border-color: #DBA878;
+  color: #3A332E;
+}
+.empty-primary-btn { margin-top: 20px; background: linear-gradient(135deg, #F9D9B8, #E8C29C); font-weight: 700; }
 
 /* ── 对话气泡 ── */
-.chat-msg { display: flex; animation: fadeIn 0.3s cubic-bezier(.4,0,.2,1); }
+.chat-msg { display: flex; align-items: flex-start; gap: 10px; animation: fadeIn 0.3s cubic-bezier(.4,0,.2,1); }
 .chat-msg.user { justify-content: flex-end; }
 .chat-msg.assistant { justify-content: flex-start; }
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; flex-shrink: 0;
+  box-shadow: 0 6px 14px rgba(58,51,46,0.09);
+}
+.assistant-avatar-small { background: linear-gradient(135deg, #3A332E, #7C5C3C); color: #FFFBF5; }
+.user-avatar-small { background: linear-gradient(135deg, #F9D9B8, #E8C29C); color: #3A332E; }
 .chat-bubble {
-  max-width: 72%; padding: 12px 16px;
-  border-radius: 12px;
+  max-width: min(760px, 72%); padding: 13px 17px;
+  border-radius: 18px;
   font-size: 14px; line-height: 1.7; word-break: break-word;
 }
 .chat-msg.user .chat-bubble {
-  background: #F9D9B8; color: #3A332E;
-  border-bottom-right-radius: 4px;
+  background: linear-gradient(135deg, #F9D9B8, #E8C29C); color: #3A332E;
+  border-bottom-right-radius: 6px;
   white-space: pre-wrap;
-  box-shadow: 0 2px 8px rgba(58,51,46,0.10);
+  box-shadow: 0 10px 24px rgba(58,51,46,0.11);
 }
 .chat-msg.assistant .chat-bubble {
-  background: #FFFBF5; border: 1px solid #EFE6DC;
-  border-bottom-left-radius: 4px;
-  box-shadow: 0 2px 8px rgba(58,51,46,0.06);
+  background: rgba(255, 251, 245, 0.96); border: 1px solid #EFE6DC;
+  border-bottom-left-radius: 6px;
+  box-shadow: 0 10px 24px rgba(58,51,46,0.08);
   animation: bubbleFadeUp 0.3s cubic-bezier(.4,0,.2,1);
 }
 .cursor { animation: blink 1s step-end infinite; }
@@ -755,13 +990,25 @@ const questionPanelOpen = ref(false)
 
 /* ── 输入区 ── */
 .input-area {
-  padding: 14px 24px 16px;
-  background: #FFFBF5;
-  border-top: 1px solid #EFE6DC;
+  padding: 12px 22px 18px;
+  background: rgba(255, 251, 245, 0.94);
+  border-top: 1px solid rgba(239, 230, 220, 0.9);
   display: flex; flex-direction: column; gap: 8px;
   flex-shrink: 0;
 }
-.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.input-hint {
+  display: flex; justify-content: space-between; gap: 12px;
+  color: #948A80; font-size: 12px; padding: 0 2px;
+}
+.input-hotkey { white-space: nowrap; }
+.input-row {
+  display: flex; gap: 10px; align-items: flex-end;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 18px;
+  padding: 10px;
+  box-shadow: 0 10px 28px rgba(58, 51, 46, 0.08);
+}
 .file-preview {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 14px; background: #FFF5EB;
@@ -771,14 +1018,30 @@ const questionPanelOpen = ref(false)
 .file-size { color: #948A80; flex-shrink: 0; }
 .upload-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; cursor: pointer;
-  border: 1px solid #EFE6DC; border-radius: 8px;
+  width: 42px; height: 42px; cursor: pointer;
+  border: 1px solid #EFE6DC; border-radius: 14px;
   background: #FFFBF5; font-size: 16px; flex-shrink: 0;
   transition: all 0.25s cubic-bezier(.4,0,.2,1);
 }
 .upload-btn:hover { border-color: #E8C29C; background: #FFF5EB; transform: translateY(-1px); }
 .upload-btn.disabled { cursor: not-allowed; opacity: 0.4; }
 .upload-btn input { display: none; }
+.input-row :deep(.el-textarea__inner) {
+  min-height: 44px !important;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: #3A332E;
+  resize: none;
+  padding: 8px 10px;
+}
+.input-row :deep(.el-textarea__inner::placeholder) { color: #B0A296; }
+.input-row :deep(.el-button) {
+  min-width: 86px;
+  height: 42px;
+  border-radius: 14px;
+  font-weight: 700;
+}
 
 /* ── 气泡内 Markdown ── */
 .chat-bubble .markdown-body { white-space: normal; }
@@ -817,4 +1080,21 @@ const questionPanelOpen = ref(false)
 .popover-close { cursor: pointer; color: #948A80; font-size: 14px; padding: 2px 6px; border-radius: 6px; transition: all 0.2s; }
 .popover-close:hover { color: var(--color-danger); }
 .popover-body { padding: 12px 14px; font-size: 13px; color: #6B635C; line-height: 1.6; }
+
+@media (max-width: 1024px) {
+  .agent-panel { flex-direction: column; height: auto; min-height: calc(100vh - 48px); overflow-y: auto; }
+  .conv-sidebar { width: 100%; min-width: 0; max-height: 260px; }
+  .work-area { min-height: 640px; }
+}
+
+@media (max-width: 720px) {
+  .agent-panel { padding: 10px; gap: 10px; }
+  .task-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .header-right { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .main-scroll { padding: 18px 14px; }
+  .chat-bubble { max-width: calc(100vw - 120px); }
+  .input-hint { flex-direction: column; gap: 2px; }
+  .input-row { align-items: stretch; }
+  .input-row :deep(.el-button) { min-width: 70px; }
+}
 </style>

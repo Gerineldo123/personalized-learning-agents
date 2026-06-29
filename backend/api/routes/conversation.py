@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from api.deps import get_db
 from models.conversation import Conversation, ChatMessage
 
@@ -43,6 +43,48 @@ def create_conversation(user_id: str, title: str = "新对话", db: Session = De
     db.commit()
     db.refresh(conv)
     return {"id": conv.id, "title": conv.title}
+
+
+@router.get("/weekly-usage")
+def weekly_usage(user_id: str, db: Session = Depends(get_db)):
+    today = datetime.now(timezone.utc).date()
+    days = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    labels = [f"{day.month}/{day.day}" for day in days]
+    buckets = {
+        day.isoformat(): {"morning": 0, "afternoon": 0, "evening": 0}
+        for day in days
+    }
+    start_at = datetime.combine(days[0], datetime.min.time())
+    rows = (
+        db.query(ChatMessage)
+        .join(Conversation, Conversation.id == ChatMessage.conversation_id)
+        .filter(
+            Conversation.user_id == user_id,
+            ChatMessage.role == "user",
+            ChatMessage.created_at >= start_at,
+        )
+        .all()
+    )
+    for message in rows:
+        created_at = message.created_at
+        if not created_at:
+            continue
+        day_key = created_at.date().isoformat()
+        if day_key not in buckets:
+            continue
+        hour = created_at.hour
+        if hour < 12:
+            buckets[day_key]["morning"] += 1
+        elif hour < 18:
+            buckets[day_key]["afternoon"] += 1
+        else:
+            buckets[day_key]["evening"] += 1
+    return {
+        "days": labels,
+        "morning": [buckets[day.isoformat()]["morning"] for day in days],
+        "afternoon": [buckets[day.isoformat()]["afternoon"] for day in days],
+        "evening": [buckets[day.isoformat()]["evening"] for day in days],
+    }
 
 
 @router.get("/{conv_id}/messages")

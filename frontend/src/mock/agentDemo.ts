@@ -165,7 +165,7 @@ function fibonacci(n) {
 ]
 
 export function runDemo(
-  taskId: number,
+  _taskId: number,
   onStep: (step: AgentStep) => void,
   onDone: () => void,
 ) {
@@ -185,14 +185,14 @@ export function runDemo(
     const step: AgentStep = {
       stepId,
       stepType: raw.stepType,
-      status: 'pending',
+      status: 'running',
       title: raw.title,
       data: raw.updates[0]?.data || {},
       expanded: false,
       timestamp: Date.now(),
     }
 
-    raw.updates.forEach((update, ui) => {
+    raw.updates.forEach((update, _ui) => {
       subTimer.push(
         setTimeout(() => {
           const updated: AgentStep = {

@@ -7,7 +7,6 @@ const props = defineProps<{ step: AgentStep }>()
 const expanded = ref(props.step.status === 'running')
 const displayedContent = ref('')
 
-const data = props.step.data as ThinkingData
 let charIndex = 0
 let timer: ReturnType<typeof setInterval> | null = null
 

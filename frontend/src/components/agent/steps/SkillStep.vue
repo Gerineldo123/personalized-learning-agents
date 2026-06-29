@@ -27,6 +27,31 @@ const isPptViewer = computed(() => {
   return data.value.render_type === 'ppt_viewer'
 })
 
+const progressValue = computed(() => {
+  const raw = Number(data.value.progress ?? 0)
+  if (!Number.isFinite(raw)) return 0
+  return Math.max(0, Math.min(100, raw))
+})
+
+const hasProgress = computed(() => {
+  return data.value.progress !== undefined || !!data.value.current_phase || !!data.value.progress_note
+})
+
+const currentPhase = computed(() => data.value.current_phase || (props.step.status === 'running' ? '处理中' : '完成'))
+const progressNote = computed(() => data.value.progress_note || '')
+const isProgressIndeterminate = computed(() => props.step.status === 'running' && !!data.value.progress_indeterminate)
+const progressLabel = computed(() => {
+  if (data.value.progress_label) return data.value.progress_label
+  if (isProgressIndeterminate.value) return '生成中'
+  return `${Math.round(progressValue.value)}%`
+})
+
+function progressStatus() {
+  if (props.step.status === 'error') return 'exception'
+  if (props.step.status === 'completed') return 'success'
+  return undefined
+}
+
 interface VideoItem {
   title: string
   url: string
@@ -255,6 +280,23 @@ function toggleExpand() {
         <span class="badge-name">{{ data.skill_name }}</span>
       </div>
 
+      <div v-if="hasProgress" class="skill-progress">
+        <div class="progress-head">
+          <span class="progress-phase">{{ currentPhase }}</span>
+          <span class="progress-percent">{{ progressLabel }}</span>
+        </div>
+        <el-progress
+          :percentage="Math.round(progressValue)"
+          :stroke-width="8"
+          :show-text="false"
+          :status="progressStatus()"
+          :indeterminate="isProgressIndeterminate"
+          striped
+          striped-flow
+        />
+        <div v-if="progressNote" class="progress-note">{{ progressNote }}</div>
+      </div>
+
       <!-- 子步骤列表 -->
       <div v-if="data.sub_steps && data.sub_steps.length > 0" class="sub-steps">
         <div
@@ -381,6 +423,36 @@ function toggleExpand() {
 .skill-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; margin-top: 10px; background: linear-gradient(135deg, #F9D9B8 0%, #E8C29C 100%); border-radius: 20px; font-size: 12px; color: #3A332E; }
 .badge-icon { font-size: 14px; }
 .badge-name { font-weight: 500; }
+.skill-progress {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #FFFBF5;
+  border: 1px solid #EFE6DC;
+  border-radius: 10px;
+}
+.progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.progress-phase {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3A332E;
+}
+.progress-percent {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #7C5C3C;
+}
+.progress-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #948A80;
+  line-height: 1.5;
+}
 .sub-steps { margin-top: 10px; padding: 8px 12px; background: #FFF5EB; border-radius: 8px; border: 1px solid #EFE6DC; }
 .sub-step-item { font-size: 13px; color: #6B635C; line-height: 1.8; padding: 2px 0; }
 .sub-step-running { color: #FBCFA8; font-style: italic; }

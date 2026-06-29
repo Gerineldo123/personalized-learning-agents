@@ -22,6 +22,122 @@ def _safe_json_loads(raw: str) -> dict:
     return json.loads(preprocessed)
 
 
+def _normalize_choice_options(options) -> list[str]:
+    if not isinstance(options, list) or len(options) != 4:
+        return []
+    normalized: list[str] = []
+    expected_keys = ["A", "B", "C", "D"]
+    for index, option in enumerate(options):
+        key = expected_keys[index]
+        if isinstance(option, dict):
+            raw_key = str(option.get("key") or key).strip().upper()[:1] or key
+            text = str(option.get("text") or option.get("label") or "").strip()
+            if raw_key in expected_keys:
+                key = raw_key
+        else:
+            text = str(option or "").strip()
+            if len(text) >= 2 and text[0].upper() in expected_keys and text[1] in ".．、)） ":
+                key = text[0].upper()
+                text = text[2:].strip()
+        if not text:
+            return []
+        normalized.append(f"{key}. {text}")
+    if {item[0] for item in normalized} != set(expected_keys):
+        return []
+    return sorted(normalized, key=lambda item: expected_keys.index(item[0]))
+
+
+def _normalize_answer_key(answer, options: list[str]) -> str:
+    raw = str(answer or "").strip()
+    if raw[:1].upper() in {"A", "B", "C", "D"}:
+        return raw[:1].upper()
+    for option in options:
+        if raw and (raw == option or raw == option[2:].strip()):
+            return option[0]
+    return ""
+
+
+def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
+    if not isinstance(quiz_data, dict):
+        raise ValueError("题库生成结果不是合法 JSON 对象")
+    questions = quiz_data.get("questions")
+    if not isinstance(questions, list):
+        raise ValueError("题库生成结果缺少 questions 数组")
+
+    normalized_questions: list[dict] = []
+    for item in questions:
+        if not isinstance(item, dict):
+            continue
+        raw_type = str(item.get("type") or "").strip().lower()
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        explanation = str(item.get("explanation") or "").strip()
+        if not question or not answer:
+            continue
+
+        if raw_type in {"coding", "code"}:
+            test_cases = item.get("test_cases") if isinstance(item.get("test_cases"), list) else []
+            if not item.get("function_signature") or len(test_cases) < 2:
+                continue
+            normalized_questions.append({
+                **item,
+                "type": "coding",
+                "question": question,
+                "answer": answer,
+                "explanation": explanation,
+                "test_cases": test_cases,
+            })
+            continue
+
+        if raw_type in {"fill_blank", "blank", "short_answer", "short-answer", "简答题", "填空题"}:
+            normalized_questions.append({
+                **item,
+                "type": "fill_blank",
+                "question": question,
+                "answer": answer,
+                "explanation": explanation,
+            })
+            continue
+
+        options = _normalize_choice_options(item.get("options"))
+        answer_key = _normalize_answer_key(answer, options)
+        if not options or not answer_key:
+            continue
+        normalized_questions.append({
+            **item,
+            "type": "single_choice",
+            "question": question,
+            "options": options,
+            "answer": answer_key,
+            "explanation": explanation,
+        })
+
+    normalized_questions = normalized_questions[:question_count]
+    if not normalized_questions:
+        raise ValueError("题库生成失败：没有可作答的有效题目")
+    for index, question in enumerate(normalized_questions, start=1):
+        question["id"] = index
+    return {
+        **quiz_data,
+        "questions": normalized_questions,
+    }
+
+
+def _normalize_requested_question_types(raw_types) -> str:
+    values = [item.strip().lower() for item in str(raw_types or "").split(",") if item.strip()]
+    normalized: list[str] = []
+    for value in values:
+        if value in {"single_choice", "choice", "multiple_choice"}:
+            normalized.append("single_choice")
+        elif value in {"fill_blank", "blank", "short_answer"}:
+            normalized.append("fill_blank")
+        elif value in {"coding", "code"}:
+            normalized.append("coding")
+    if not normalized:
+        normalized = ["single_choice"]
+    return ",".join(dict.fromkeys(normalized))
+
+
 _MATH_DISPLAY = re.compile(r'\$\$([^$]+)\$\$')
 _MATH_INLINE = re.compile(r'\$([^$]+)\$')
 
@@ -60,7 +176,7 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
 题型要求：{question_types}
 编程语言：{code_lang}
 
-返回JSON格式（根据题型要求混合生成，每种题型示例如下）：
+返回JSON格式（只允许 single_choice、fill_blank、coding 三种 type；每种题型示例如下）：
 {{
   "title": "题目集标题",
   "questions": [
@@ -100,10 +216,13 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
 - 优先考察概念理解、原理推导、应用分析、综合判断。
 - 题干要与知识点强相关，避免泛化空题。
 - single_choice：选项应具有区分度，干扰项要合理。
+- single_choice：必须提供4个options，格式为["A. xxx","B. xxx","C. xxx","D. xxx"]，answer只能是"A"/"B"/"C"/"D"。
 - fill_blank：答案应为简短精确的词/短语/表达式，answer字段为标准答案。
 - coding：编程题使用{{code_lang}}语言，必须提供可直接运行的完整函数，test_cases至少2个，input格式为函数参数字符串（如"nums, k"），expected为str(返回值)。同时提供answer字段的标准解法。
 - explanation 给出关键理由，而不是仅重复答案。
 - 按照题型要求"{question_types}"分配题目，若包含多种题型则均衡分布。
+- 不要生成 multiple_choice、short_answer 或其它未列出的 type。
+- 数学公式必须使用 LaTeX，并用 $...$ 包裹；例如 $\\lim_{{h\\to 0}} \\frac{{f(x_0+h)-f(x_0)}}{{h}}$。
 
 生成 {question_count} 道题，整体难度按"{difficulty}"控制。{hallu}
 只返回JSON，不要其他内容。"""
@@ -176,7 +295,7 @@ class ContentGenAgent(BaseAgent):
         question_count = max(3, min(question_count, 30))
         difficulty = str(state.get("difficulty", "中等") or "中等")
         raw_types = state.get("question_types", "single_choice")
-        question_types = str(raw_types) if raw_types else "single_choice"
+        question_types = _normalize_requested_question_types(raw_types)
         code_lang = str(state.get("code_language", "python") or "python")
         resp = await chat_completion([
             {"role": "user", "content": QUIZ_PROMPT.format(
@@ -195,7 +314,7 @@ class ContentGenAgent(BaseAgent):
         if safe_quiz != json.dumps(quiz_data, ensure_ascii=False):
             quiz_data = {"title": "内容已过滤", "questions": []}
         elif isinstance(quiz_data, dict) and isinstance(quiz_data.get("questions"), list):
-            quiz_data["questions"] = quiz_data["questions"][:question_count]
+            quiz_data = _normalize_quiz_data(quiz_data, question_count)
         self._save_resource(state, "quiz", quiz_data)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "quiz", "content": quiz_data
@@ -259,11 +378,20 @@ class ContentGenAgent(BaseAgent):
                 }, [])
                 if result.success and result.data.get("ppt_json"):
                     ppt_data = result.data["ppt_json"]
+                    pptx_url = result.data.get("pptx_url", "")
+                    if pptx_url:
+                        ppt_data["pptx_url"] = pptx_url
+                        try:
+                            import os
+                            ppt_data["pptx_file"] = os.path.basename(pptx_url)
+                        except Exception:
+                            pass
+                    self._save_resource(state, "ppt", ppt_data)
                     state["response"] = json.dumps({
                         "agent": self.name,
                         "resource_type": "ppt",
                         "content": ppt_data,
-                        "pptx_url": result.data.get("pptx_url", ""),
+                        "pptx_url": pptx_url,
                         "skill_used": "ppt_gen",
                     }, ensure_ascii=False)
                     return
@@ -300,6 +428,9 @@ class ContentGenAgent(BaseAgent):
         return ppt_data
 
     def _profile_text(self, state: AgentState) -> str:
+        profile_context = state.get("profile_context")
+        if profile_context:
+            return str(profile_context)
         p = state.get("profile")
         if not p:
             return "暂无学生画像"
@@ -344,10 +475,18 @@ class ContentGenAgent(BaseAgent):
             db.flush()
             db.commit()
 
+            if resource_type == "ppt":
+                try:
+                    from services.ppt_preview_service import schedule_ppt_preview
+                    schedule_ppt_preview(resource.id)
+                except Exception:
+                    pass
+
             text = json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else str(content)
             index_resource(resource.id, state.user_id or "", text[:4000], resource_type)
             if not prev_id:
                 state["resource_db_id"] = resource.id
+            state["resource_title"] = title
         finally:
             db.close()
 

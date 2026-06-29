@@ -24,6 +24,7 @@ const activeAgents = computed(() => {
     deep_search: '🔍', code_analysis: '💻', mindmap_gen: '🧠', quiz_gen: '📝', video_search: '🎬',
   }
   for (const step of props.steps) {
+    if (step.stepType === 'user') continue
     // 来自 agent_name 字段
     const name = step.agentName || (
       step.stepType === 'thinking' ? '规划智能体' :
@@ -64,15 +65,19 @@ function skillAgentLabel(skillName: string): string {
 
 function getStepIcon(stepType: string): string {
   const icons: Record<string, string> = {
-    thinking: '🦉', search: '🔍', code: '💻', memory: '📝',
+    user: '👤', thinking: '🦉', search: '🔍', code: '💻', memory: '📝',
     scrape: '🌐', skill: '⚡', result: '✅',
   }
   return icons[stepType] || '📌'
 }
+
+function userStepData(step: AgentStep) {
+  return step.data as { content: string; fileName?: string }
+}
 </script>
 
 <template>
-  <div class="timeline" v-if="steps.length > 0">
+  <div class="timeline" v-if="steps.length > 0 || isExecuting">
     <!-- 智能体协作状态栏 -->
     <div v-if="activeAgents.length > 0" class="agent-collab-bar">
       <span class="collab-label">智能体协作</span>
@@ -91,6 +96,7 @@ function getStepIcon(stepType: string): string {
       v-for="(step, index) in steps"
       :key="step.stepId"
       class="timeline-node"
+      :class="{ 'wide-node': step.stepType === 'code' }"
     >
       <div class="timeline-line-col">
         <div class="timeline-dot" :class="{ running: step.status === 'running', completed: step.status === 'completed', error: step.status === 'error' }">
@@ -102,7 +108,17 @@ function getStepIcon(stepType: string): string {
       <div class="timeline-card-wrapper">
         <!-- 智能体标签 -->
         <div v-if="step.agentName" class="step-agent-badge">{{ step.agentName }}</div>
-        <ThinkingStep v-if="step.stepType === 'thinking'" :step="step" />
+        <div v-if="step.stepType === 'user'" class="user-step-card">
+          <div class="user-step-header">
+            <span class="user-step-icon">👤</span>
+            <span class="user-step-title">{{ step.title }}</span>
+          </div>
+          <div class="user-step-content">
+            <div v-if="userStepData(step).fileName" class="user-file">📎 {{ userStepData(step).fileName }}</div>
+            <div class="user-text">{{ userStepData(step).content }}</div>
+          </div>
+        </div>
+        <ThinkingStep v-else-if="step.stepType === 'thinking'" :step="step" />
         <SearchStep v-else-if="step.stepType === 'search'" :step="step" />
         <CodeStep v-else-if="step.stepType === 'code'" :step="step" />
         <MemoryStep v-else-if="step.stepType === 'memory'" :step="step" />
@@ -124,7 +140,11 @@ function getStepIcon(stepType: string): string {
 </template>
 
 <style scoped>
-.timeline { max-width: 900px; margin: 0 auto; }
+.timeline {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
 
 .agent-collab-bar {
   display: flex; align-items: center; gap: 12px;
@@ -170,7 +190,41 @@ function getStepIcon(stepType: string): string {
   background: repeating-linear-gradient(to bottom, #E8C29C 0px, #E8C29C 4px, transparent 4px, transparent 8px);
 }
 .timeline-card-wrapper { flex: 1; min-width: 0; padding-bottom: 16px; }
+.timeline-node.wide-node .timeline-card-wrapper { width: 100%; }
 .executing-indicator { padding: 20px; color: #948A80; font-style: italic; animation: fade-pulse 1.5s ease-in-out infinite; font-size: 13px; }
+.user-step-card {
+  background: linear-gradient(135deg, #FFF8F0 0%, #FFFBF5 100%);
+  border: 1px solid #F1D7BA;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.user-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(249, 217, 184, 0.28);
+  color: #3A332E;
+}
+.user-step-icon { font-size: 16px; }
+.user-step-title { font-size: 14px; font-weight: 600; }
+.user-step-content { padding: 12px 14px 14px; }
+.user-file {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #FFF5EB;
+  border: 1px solid #EFE6DC;
+  font-size: 12px;
+  color: #6B635C;
+}
+.user-text {
+  color: #3A332E;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(249,217,184,0.7); } 50% { box-shadow: 0 0 0 8px rgba(249,217,184,0); } }
 @keyframes fade-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }

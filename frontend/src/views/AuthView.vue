@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
@@ -17,6 +17,8 @@ const confirmPassword = ref('')
 const educationLevel = ref('本科')
 const grade = ref('')
 const major = ref('')
+const currentSemester = ref(1)
+const majorOptions = ref<string[]>(['计算机科学与技术', '软件工程', '人工智能', '智能科学与技术'])
 const loading = ref(false)
 
 const GRADE_OPTIONS: Record<string, string[]> = {
@@ -26,6 +28,19 @@ const GRADE_OPTIONS: Record<string, string[]> = {
   '专科': ['大一', '大二', '大三'],
 }
 const MAJOR_OPTIONS = ['计算机科学与技术', '软件工程', '人工智能', '智能科学与技术']
+const SEMESTER_BY_GRADE: Record<string, number> = {
+  '大一': 1,
+  '大二': 3,
+  '大三': 5,
+  '大四': 7,
+  '研一': 1,
+  '研二': 3,
+  '研三': 5,
+  '博一': 1,
+  '博二': 3,
+  '博三': 5,
+}
+const SEMESTER_OPTIONS = Array.from({ length: 8 }, (_, index) => index + 1)
 
 function validPhone(v: string) {
   return /^1[3-9]\d{9}$/.test(v)
@@ -46,6 +61,24 @@ function validateForm() {
   return ''
 }
 
+function syncCurrentSemester() {
+  currentSemester.value = SEMESTER_BY_GRADE[grade.value] || 1
+}
+
+async function loadMajors() {
+  try {
+    const r = await api.get('/curriculum/majors')
+    const names = (r.data || []).map((item: any) => item.major_name).filter(Boolean)
+    if (names.length) majorOptions.value = names
+  } catch {
+    majorOptions.value = MAJOR_OPTIONS
+  }
+}
+
+watch(grade, syncCurrentSemester)
+
+onMounted(loadMajors)
+
 async function submit() {
   const err = validateForm()
   if (err) { ElMessage.warning(err); return }
@@ -58,6 +91,7 @@ async function submit() {
       params.education_level = educationLevel.value
       params.grade = grade.value
       params.major = major.value
+      params.current_semester = currentSemester.value
     }
     const r = await api.post(endpoint, null, { params })
     authStore.setAuth(r.data)
@@ -98,7 +132,7 @@ async function submit() {
         </el-form-item>
         <template v-if="mode === 'register'">
           <el-form-item label="学历层次">
-            <el-radio-group v-model="educationLevel" @change="grade = ''">
+            <el-radio-group v-model="educationLevel" @change="grade = ''; currentSemester = 1">
               <el-radio-button v-for="lv in Object.keys(GRADE_OPTIONS)" :key="lv" :value="lv">{{ lv }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
@@ -107,9 +141,14 @@ async function submit() {
               <el-radio-button v-for="g in GRADE_OPTIONS[educationLevel]" :key="g" :value="g">{{ g }}</el-radio-button>
             </el-radio-group>
           </el-form-item>
+          <el-form-item label="当前学期">
+            <el-select v-model="currentSemester" placeholder="请选择当前学期" style="width:100%">
+              <el-option v-for="s in SEMESTER_OPTIONS" :key="s" :value="s" :label="`第 ${s} 学期`" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="专业">
             <el-select v-model="major" placeholder="请选择专业" style="width:100%">
-              <el-option v-for="m in MAJOR_OPTIONS" :key="m" :value="m" :label="m" />
+              <el-option v-for="m in majorOptions" :key="m" :value="m" :label="m" />
             </el-select>
           </el-form-item>
         </template>

@@ -22,30 +22,127 @@ export function escapeHtml(str: string): string {
 
 /**
  * 渲染纯文本中的行内数学公式（非 Markdown 场景，如 QuizCard 的题面/选项/解析）
- * 处理 $...$ 和 $$...$$ 分隔的 LaTeX 公式，用 KaTeX 渲染为 HTML
+ * 处理 $...$ / $$...$$ 分隔的 LaTeX，也会识别题库中常见的裸数学表达式。
  */
 export function renderMathInline(text: string): string {
   if (!text) return ''
-  const escaped = escapeHtml(text)
+  const normalizedText = normalizeMathDelimiters(text)
   // Step 1: $$ display math blocks
   const displayPlaceholders: string[] = []
-  let step1 = escaped.replace(/\$\$([^$]+)\$\$/g, (_m, formula) => {
+  let step1 = normalizedText.replace(/\$\$([^$]+)\$\$/g, (_m, formula) => {
     try {
-      const html = katex.renderToString(formula.trim(), { throwOnError: false, strict: 'ignore', displayMode: true })
+      const html = renderKatexFormula(formula, true)
       const idx = displayPlaceholders.length
       displayPlaceholders.push(html)
       return `\uFFF0DM${idx}\uFFF1`
     } catch { return _m }
   })
   // Step 2: $ inline math (single $, not followed by another $)
+  const inlinePlaceholders: string[] = []
   let step2 = step1.replace(/\$([^$]+)\$/g, (_m, formula) => {
     try {
-      return katex.renderToString(formula.trim(), { throwOnError: false, strict: 'ignore' })
+      const html = renderKatexFormula(formula, false)
+      const idx = inlinePlaceholders.length
+      inlinePlaceholders.push(html)
+      return `\uFFF0IM${idx}\uFFF1`
     } catch { return _m }
   })
+  step2 = renderLooseMathSegments(step2)
   // Restore display blocks
+  step2 = step2.replace(/\uFFF0IM(\d+)\uFFF1/g, (_m, idx) => inlinePlaceholders[+idx] || _m)
   step2 = step2.replace(/\uFFF0DM(\d+)\uFFF1/g, (_m, idx) => displayPlaceholders[+idx] || _m)
   return step2
+}
+
+const MATH_SYMBOLS = new Set('∫∑√∞≤≥≠≈→←↦∀∃εεδδθλπμΩαβγΔ')
+
+function renderKatexFormula(formula: string, displayMode = false): string {
+  return katex.renderToString(normalizeFormulaForKatex(formula), {
+    throwOnError: false,
+    strict: 'ignore',
+    displayMode,
+    trust: false,
+  })
+}
+
+function normalizeFormulaForKatex(formula: string): string {
+  const subscriptMap: Record<string, string> = {
+    '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+    '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+  }
+  return String(formula || '')
+    .trim()
+    .replace(/[₀-₉]+/g, (m) => `_{${Array.from(m).map(ch => subscriptMap[ch] || ch).join('')}}`)
+    .replace(/([A-Za-z])(\d+)/g, '$1_{$2}')
+    .replace(/lim_/g, '\\lim_')
+    .replace(/→|↦/g, '\\to ')
+    .replace(/←/g, '\\leftarrow ')
+    .replace(/∞/g, '\\infty ')
+    .replace(/≤/g, '\\le ')
+    .replace(/≥/g, '\\ge ')
+    .replace(/≠/g, '\\ne ')
+    .replace(/≈/g, '\\approx ')
+    .replace(/∫/g, '\\int ')
+    .replace(/∑/g, '\\sum ')
+    .replace(/√/g, '\\sqrt')
+    .replace(/∀/g, '\\forall ')
+    .replace(/∃/g, '\\exists ')
+    .replace(/ε/g, '\\varepsilon ')
+    .replace(/δ/g, '\\delta ')
+    .replace(/θ/g, '\\theta ')
+    .replace(/λ/g, '\\lambda ')
+    .replace(/π/g, '\\pi ')
+    .replace(/μ/g, '\\mu ')
+}
+
+function isLooseMathChar(ch: string): boolean {
+  return /[A-Za-z0-9\s+\-*/=<>^_{}()[\].,|\\']/.test(ch) || MATH_SYMBOLS.has(ch)
+}
+
+function shouldRenderLooseMath(segment: string): boolean {
+  const value = segment.trim()
+  if (value.length < 2) return false
+  if (/^https?:\/\//i.test(value)) return false
+  return (
+    /\\[a-zA-Z]+/.test(value) ||
+    /lim_\{/.test(value) ||
+    /[∫∑√∞≤≥≠≈→←↦∀∃εεδδθλπμΩαβγΔ]/.test(value) ||
+    /[A-Za-z]\s*'\s*\(/.test(value) ||
+    /[A-Za-z]\([^)]*\)/.test(value) ||
+    /[_^]/.test(value) ||
+    (/[+\-*/=<>]/.test(value) && /[A-Za-z0-9]/.test(value))
+  )
+}
+
+function renderLooseMathSegments(text: string): string {
+  let output = ''
+  let index = 0
+  while (index < text.length) {
+    const ch = text[index]
+    if (!isLooseMathChar(ch)) {
+      output += escapeHtml(ch)
+      index += 1
+      continue
+    }
+    let end = index
+    while (end < text.length && isLooseMathChar(text[end])) end += 1
+    const segment = text.slice(index, end)
+    if (shouldRenderLooseMath(segment)) {
+      const match = segment.match(/^(\s*)([\s\S]*?)(\s*)$/)
+      const leading = match?.[1] || ''
+      const body = match?.[2] || segment
+      const trailing = match?.[3] || ''
+      try {
+        output += escapeHtml(leading) + renderKatexFormula(body) + escapeHtml(trailing)
+      } catch {
+        output += escapeHtml(segment)
+      }
+    } else {
+      output += escapeHtml(segment)
+    }
+    index = end
+  }
+  return output
 }
 
 export const codeBlockStore: Record<string, string> = {}

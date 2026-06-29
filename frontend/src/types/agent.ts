@@ -1,5 +1,10 @@
-export type StepType = 'thinking' | 'search' | 'memory' | 'code' | 'scrape' | 'skill' | 'result'
+export type StepType = 'user' | 'thinking' | 'search' | 'memory' | 'code' | 'scrape' | 'skill' | 'result'
 export type StepStatus = 'running' | 'completed' | 'error'
+
+export interface UserData {
+  content: string
+  fileName?: string
+}
 
 export interface ThinkingData {
   content: string
@@ -36,6 +41,11 @@ export interface SkillData {
   sub_steps: string[]
   language?: string
   render_type?: string
+  progress?: number
+  current_phase?: string
+  progress_note?: string
+  progress_indeterminate?: boolean
+  progress_label?: string
 }
 
 export interface ResultData {
@@ -48,7 +58,7 @@ export interface AgentStep {
   status: StepStatus
   title: string
   agentName?: string
-  data: ThinkingData | SearchData | MemoryData | CodeData | ScrapeData | SkillData | ResultData
+  data: UserData | ThinkingData | SearchData | MemoryData | CodeData | ScrapeData | SkillData | ResultData
   expanded: boolean
   timestamp: number
 }

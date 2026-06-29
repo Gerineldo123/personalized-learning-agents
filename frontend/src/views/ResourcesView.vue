@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { useUserStore } from '../stores/user'
@@ -23,6 +23,7 @@ const pageSize = ref(12)
 const profile = ref<any>(null)
 const recommendedSeeds = ref<any[]>([])
 const weakPoints = ref<string[]>([])
+const weakPointItems = ref<any[]>([])
 const typeFilter = ref('')
 const courseFilter = ref('')
 const kpFilter = ref('')
@@ -30,6 +31,7 @@ const statusFilter = ref('')
 const curriculumCourses = ref<any[]>([])
 const kpOptions = ref<any[]>([])
 const loading = ref(false)
+const detailLoading = ref(false)
 const selected = ref<any>(null)
 const showGenDialog = ref(false)
 const genTopic = ref('')
@@ -41,13 +43,45 @@ const genQuestionCount = ref(5)
 const genDifficulty = ref('中等')
 const genQuestionTypes = ref<string[]>(['single_choice'])
 const genCodeLanguage = ref('python')
+const graphCourseName = ref('')
+const graphKnowledgePoints = ref<string[]>([])
+const graphKpOptions = ref<any[]>([])
+const graphPackageType = ref('知识点补弱')
+const graphPackageLoading = ref(false)
 const genLoading = ref(false)
 const starterLoading = ref(false)
 const orchestrateLoading = ref(false)
+const demoLoading = ref(false)
 const autoTagLoading = ref(false)
+const feedbackLoading = ref(false)
 const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
+const courseKpCache = ref<Record<string, any[]>>({})
+let weakPointHydrateSeq = 0
+type GenerationStatus = 'idle' | 'running' | 'success' | 'error'
+const generationProgress = ref<{
+  visible: boolean
+  jobId: string
+  title: string
+  message: string
+  percent: number
+  status: GenerationStatus
+  current: number
+  total: number
+  logs: string[]
+}>({
+  visible: false,
+  jobId: '',
+  title: '',
+  message: '',
+  percent: 0,
+  status: 'idle',
+  current: 0,
+  total: 0,
+  logs: [],
+})
+let generationProgressTimer: number | null = null
 
 function markdownSource(content: any): string {
   if (typeof content === 'string') return content
@@ -79,6 +113,18 @@ function handleDetailClick(e: MouseEvent) {
   }
 }
 
+function updateSelectedContent(content: any) {
+  if (selected.value) selected.value.content = content
+}
+
+function normalizeGraphName(value: string) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase()
+}
+
+function courseDisplayName(seed: any) {
+  return seed?.course || seed?.course_name || seed?.label || seed?.topic || ''
+}
+
 const resourceTypes = ['', 'article', 'quiz', 'code', 'mindmap', 'ppt', 'video', 'evaluation']
 const genTypeOptions = [
   { value: 'article', label: '文章' },
@@ -103,20 +149,181 @@ const statusOptions = [
   { value: 'learning', label: '学习中' },
   { value: 'completed', label: '已完成' },
 ]
+const graphPackageOptions = [
+  '课程总览',
+  '阶段复习',
+  '先修补弱',
+  '后继预习',
+  '知识点补弱',
+  '专项练习',
+  '实操案例',
+  'PPT课件',
+  '完整资源包',
+]
+const feedbackOptions = [
+  { value: 'too_hard', label: '太难' },
+  { value: 'too_easy', label: '太简单' },
+  { value: 'helpful', label: '有帮助' },
+  { value: 'irrelevant', label: '不相关' },
+]
 
-onMounted(() => {
+function makeGenerationJobId() {
+  return `resource_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function clearGenerationTimer() {
+  if (generationProgressTimer !== null) {
+    window.clearInterval(generationProgressTimer)
+    generationProgressTimer = null
+  }
+}
+
+function startGenerationFallbackTimer() {
+  clearGenerationTimer()
+  generationProgressTimer = window.setInterval(() => {
+    if (!generationProgress.value.visible || generationProgress.value.status !== 'running') return
+    if (generationProgress.value.percent >= 90) return
+    const step = generationProgress.value.percent < 45 ? 3 : generationProgress.value.percent < 75 ? 2 : 1
+    generationProgress.value.percent = Math.min(90, generationProgress.value.percent + step)
+  }, 1400)
+}
+
+function beginGenerationProgress(title: string, message: string, total = 0) {
+  const jobId = makeGenerationJobId()
+  generationProgress.value = {
+    visible: true,
+    jobId,
+    title,
+    message,
+    percent: 3,
+    status: 'running',
+    current: 0,
+    total,
+    logs: [message],
+  }
+  startGenerationFallbackTimer()
+  return jobId
+}
+
+function appendGenerationLog(message: string) {
+  if (!message) return
+  const logs = generationProgress.value.logs
+  if (logs[logs.length - 1] === message) return
+  generationProgress.value.logs = [...logs, message].slice(-5)
+}
+
+function updateGenerationProgress(data: any) {
+  if (!data || data.user_id !== userStore.userId) return
+  if (generationProgress.value.jobId && data.job_id && data.job_id !== generationProgress.value.jobId) return
+  if (!generationProgress.value.visible) {
+    generationProgress.value.visible = true
+    generationProgress.value.jobId = data.job_id || ''
+    generationProgress.value.title = '学习资源生成进度'
+  }
+  generationProgress.value.jobId = data.job_id || generationProgress.value.jobId
+  generationProgress.value.message = data.message || generationProgress.value.message
+  generationProgress.value.percent = Math.max(
+    generationProgress.value.percent,
+    Number.isFinite(Number(data.progress)) ? Number(data.progress) : generationProgress.value.percent,
+  )
+  generationProgress.value.current = Number(data.current || generationProgress.value.current || 0)
+  generationProgress.value.total = Number(data.total || generationProgress.value.total || 0)
+  appendGenerationLog(data.message || '')
+  if (data.status === 'completed') {
+    generationProgress.value.status = 'success'
+    generationProgress.value.percent = 100
+    clearGenerationTimer()
+  } else if (data.status === 'failed') {
+    generationProgress.value.status = 'error'
+    generationProgress.value.percent = Math.max(generationProgress.value.percent, 8)
+    clearGenerationTimer()
+  } else {
+    generationProgress.value.status = 'running'
+  }
+}
+
+function finishGenerationProgress(message = '资源生成完成') {
+  if (!generationProgress.value.visible) return
+  generationProgress.value.status = 'success'
+  generationProgress.value.percent = 100
+  generationProgress.value.message = message
+  appendGenerationLog(message)
+  clearGenerationTimer()
+}
+
+function failGenerationProgress(message = '资源生成失败') {
+  if (!generationProgress.value.visible) return
+  generationProgress.value.status = 'error'
+  generationProgress.value.message = message
+  appendGenerationLog(message)
+  clearGenerationTimer()
+}
+
+function closeGenerationProgress() {
+  clearGenerationTimer()
+  generationProgress.value.visible = false
+}
+
+function generationProgressStatus() {
+  if (generationProgress.value.status === 'success') return 'success'
+  if (generationProgress.value.status === 'error') return 'exception'
+  return undefined
+}
+
+function generationStatusText() {
+  const map: Record<GenerationStatus, string> = {
+    idle: '等待中',
+    running: '生成中',
+    success: '已完成',
+    error: '失败',
+  }
+  return map[generationProgress.value.status]
+}
+
+function generationStatusTagType() {
+  if (generationProgress.value.status === 'success') return 'success'
+  if (generationProgress.value.status === 'error') return 'danger'
+  return 'warning'
+}
+
+onMounted(async () => {
   if (route.query.type) typeFilter.value = route.query.type as string
-  if (userStore.userId) { loadResources(); loadRecommend(); loadCurriculumCourses() }
+  if (userStore.userId) {
+    await loadProfileAndSeeds()
+    await loadCurriculumCourses()
+    await applyGraphQuery()
+    loadResources()
+    loadRecommend()
+  }
   eventStore.connect(userStore.userId || 'user_default')
-  loadProfileAndSeeds()
+})
+
+onUnmounted(() => {
+  clearGenerationTimer()
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
-  if (evt?.event === 'resource.created') loadResources()
+  if (!evt) return
+  if (evt.event === 'resource.generation_progress') {
+    updateGenerationProgress(evt.data)
+    return
+  }
+  if (evt.event === 'resource.created' && (!evt.data?.user_id || evt.data.user_id === userStore.userId)) {
+    loadResources()
+    if (evt.data?.job_id && evt.data.job_id === generationProgress.value.jobId) {
+      finishGenerationProgress('资源已生成并刷新列表')
+    }
+  }
 })
 
-watch(() => userStore.userId, (newId) => {
-  if (newId) { loadResources(); loadProfileAndSeeds(); loadRecommend(); loadCurriculumCourses() }
+watch(() => userStore.userId, async (newId) => {
+  if (newId) {
+    await loadProfileAndSeeds()
+    await loadCurriculumCourses()
+    await applyGraphQuery()
+    loadResources()
+    loadRecommend()
+  }
 })
 
 watch(() => route.query.type, (newType) => {
@@ -124,6 +331,10 @@ watch(() => route.query.type, (newType) => {
   page.value = 1
   loadResources()
 })
+
+watch(() => route.query, () => {
+  void applyGraphQuery().then(() => loadResources())
+}, { deep: true })
 
 async function loadProfileAndSeeds() {
   if (!userStore.userId) return
@@ -137,10 +348,12 @@ async function loadProfileAndSeeds() {
       goal: c.goal || '扎实基础',
     }))
     weakPoints.value = profile.value?.weak_points || []
+    if (curriculumCourses.value.length > 0) void hydrateWeakPointItems()
   } catch {
     profile.value = null
     recommendedSeeds.value = []
     weakPoints.value = []
+    weakPointItems.value = []
   }
 }
 
@@ -151,19 +364,61 @@ async function loadCurriculumCourses() {
       params: { user_id: userStore.userId, major: profile.value?.major || '' },
     })
     curriculumCourses.value = r.data?.nodes || []
+    await hydrateWeakPointItems()
   } catch {
     curriculumCourses.value = []
+    weakPointItems.value = weakPoints.value.map((pt) => ({ label: pt, topic: pt, course: '', knowledgePoint: '' }))
   }
 }
 
 async function fetchCourseKps(courseName: string) {
   if (!courseName) return []
+  if (courseKpCache.value[courseName]) return courseKpCache.value[courseName]
   try {
     const r = await api.get(`/curriculum/kp/${encodeURIComponent(courseName)}`)
-    return r.data?.nodes || []
+    const nodes = r.data?.nodes || []
+    courseKpCache.value = { ...courseKpCache.value, [courseName]: nodes }
+    return nodes
   } catch {
     return []
   }
+}
+
+async function findCourseByKnowledgePoint(point: string) {
+  const target = normalizeGraphName(point)
+  if (!target) return ''
+  for (const course of curriculumCourses.value) {
+    const courseName = course.id || course.name
+    if (!courseName) continue
+    const nodes = await fetchCourseKps(courseName)
+    const matched = nodes.some((kp: any) => {
+      const kpName = kp.id || kp.name || ''
+      const normalized = normalizeGraphName(kpName)
+      return normalized === target || normalized.includes(target) || target.includes(normalized)
+    })
+    if (matched) return courseName
+  }
+  return ''
+}
+
+async function hydrateWeakPointItems() {
+  const seq = ++weakPointHydrateSeq
+  const points = weakPoints.value.filter(Boolean).slice(0, 12)
+  if (points.length === 0) {
+    weakPointItems.value = []
+    return
+  }
+  const items = []
+  for (const point of points) {
+    const course = await findCourseByKnowledgePoint(point)
+    items.push({
+      label: point,
+      topic: point,
+      course,
+      knowledgePoint: course ? point : '',
+    })
+  }
+  if (seq === weakPointHydrateSeq) weakPointItems.value = items
 }
 
 async function onCourseFilterChange() {
@@ -176,6 +431,42 @@ async function onCourseFilterChange() {
 async function onGenCourseChange() {
   genKnowledgePoints.value = []
   genKpOptions.value = await fetchCourseKps(genCourseName.value)
+}
+
+async function onGraphCourseChange() {
+  graphKnowledgePoints.value = []
+  graphKpOptions.value = await fetchCourseKps(graphCourseName.value)
+}
+
+async function applyGraphQuery() {
+  const course = String(route.query.course || '')
+  const kp = String(route.query.kp || '')
+  const pkg = String(route.query.package || '')
+  const search = String(route.query.search || '')
+
+  if (course) {
+    courseFilter.value = course
+    graphCourseName.value = course
+    genCourseName.value = course
+    graphKpOptions.value = await fetchCourseKps(course)
+    kpOptions.value = graphKpOptions.value
+    genKpOptions.value = graphKpOptions.value
+    if (kp) {
+      kpFilter.value = kp
+      graphKnowledgePoints.value = [kp]
+      genKnowledgePoints.value = [kp]
+    }
+    if (pkg && graphPackageOptions.includes(pkg)) {
+      graphPackageType.value = pkg
+    }
+    page.value = 1
+    return
+  }
+
+  if (search) {
+    genTopic.value = search
+    showGenDialog.value = true
+  }
 }
 
 async function loadResources() {
@@ -210,6 +501,11 @@ async function startGenerate() {
   if (!genTopic.value.trim()) { ElMessage.warning('请输入主题'); return }
   if (genTypes.value.length === 0) { ElMessage.warning('请选择类型'); return }
   genLoading.value = true
+  const jobId = beginGenerationProgress(
+    '手动生成学习资源',
+    `准备生成：${genTypes.value.map(typeLabel).join('、')}`,
+    genTypes.value.length,
+  )
   try {
     await api.post('/resources/generate', null, {
       params: {
@@ -222,8 +518,10 @@ async function startGenerate() {
         difficulty: genDifficulty.value,
         question_types: genQuestionTypes.value.join(','),
         code_language: genCodeLanguage.value,
+        job_id: jobId,
       }
     })
+    finishGenerationProgress('手动学习资源生成完成')
     ElMessage.success('资源生成完成')
     showGenDialog.value = false
     genTopic.value = ''
@@ -238,27 +536,41 @@ async function startGenerate() {
     page.value = 1
     loadResources()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '生成失败')
+    const message = e?.response?.data?.detail || '生成失败'
+    failGenerationProgress(message)
+    ElMessage.error(message)
   }
   finally { genLoading.value = false }
 }
 
 async function generateQuick(seed: any, type: 'article' | 'quiz') {
+  const courseName = seed.course || seed.course_name || ''
+  const topicText = seed.topic || seed.knowledgePoint || seed.label || courseName
+  const knowledgePoint = seed.knowledgePoint || (topicText && topicText !== courseName ? topicText : '')
+  const requestTopic = courseName && topicText ? `${courseName}：${topicText}` : topicText
+  const jobId = beginGenerationProgress(
+    '快速生成学习资源',
+    `准备生成${type === 'article' ? '文章' : '题库'}：${courseDisplayName(seed)}`,
+    1,
+  )
   try {
     const params: any = {
       user_id: userStore.userId,
-      topic: `${seed.course}：${seed.topic}`,
+      topic: requestTopic,
       resource_types: type,
+      job_id: jobId,
     }
-    if (isKnownCourse(seed.course)) params.course_name = seed.course
-    if (seed.topic && seed.topic !== seed.course) params.knowledge_points = seed.topic
+    if (courseName && isKnownCourse(courseName)) params.course_name = courseName
+    if (knowledgePoint) params.knowledge_points = knowledgePoint
     await api.post('/resources/generate', null, {
       params,
     })
-    ElMessage.success(`已生成${type === 'article' ? '文章' : '题库'}：${seed.course}`)
+    finishGenerationProgress('快速生成完成')
+    ElMessage.success(`已生成${type === 'article' ? '文章' : '题库'}：${courseDisplayName(seed)}`)
     page.value = 1
     loadResources()
   } catch {
+    failGenerationProgress('快速生成失败')
     ElMessage.error('快速生成失败')
   }
 }
@@ -269,35 +581,81 @@ function isKnownCourse(name: string) {
 
 async function generateStarterPack() {
   starterLoading.value = true
+  const jobId = beginGenerationProgress('入门资源包生成', '正在根据画像生成入门文章和题库', 6)
   try {
     const r = await api.post('/resources/generate/starter', null, {
-      params: { user_id: userStore.userId, max_courses: 3 },
+      params: { user_id: userStore.userId, max_courses: 3, job_id: jobId },
       timeout: 180000,
     })
+    finishGenerationProgress('入门资源包生成完成')
     ElMessage.success(`已生成 ${r.data.generated || 0} 个资源`)
     page.value = 1
     await loadResources()
   } catch {
+    failGenerationProgress('入门资源包生成失败')
     ElMessage.error('入门资源包生成失败')
   } finally {
     starterLoading.value = false
   }
 }
 
-async function generateOrchestrated(topic: string) {
+async function generateOrchestrated(topic: string, options: { courseName?: string; knowledgePoints?: string[] } = {}) {
   orchestrateLoading.value = true
+  const jobId = beginGenerationProgress('多智能体协同生成', '正在启动文章、导图、题库、代码、PPT和视频生成', 6)
   try {
     await api.post('/resources/generate/orchestrate', null, {
-      params: { user_id: userStore.userId, topic },
+      params: {
+        user_id: userStore.userId,
+        topic,
+        course_name: options.courseName || '',
+        knowledge_points: (options.knowledgePoints || []).join(','),
+        job_id: jobId,
+      },
       timeout: 300000,
     })
-    ElMessage.success('多智能体协同生成完成（文章+思维导图+题库+视频）')
+    finishGenerationProgress('多智能体协同生成完成')
+    ElMessage.success('多智能体协同生成完成（文章+导图+题库+代码+PPT+视频）')
     page.value = 1
     await loadResources()
   } catch {
+    failGenerationProgress('协同生成失败')
     ElMessage.error('协同生成失败')
   } finally {
     orchestrateLoading.value = false
+  }
+}
+
+async function generateGraphPackage() {
+  if (!graphCourseName.value) { ElMessage.warning('请先选择课程节点'); return }
+  graphPackageLoading.value = true
+  const jobId = beginGenerationProgress(
+    '图谱资源包生成',
+    `正在生成${graphPackageType.value}：${graphCourseName.value}`,
+    0,
+  )
+  try {
+    const r = await api.post('/resources/generate/graph_package', null, {
+      params: {
+        user_id: userStore.userId,
+        course_name: graphCourseName.value,
+        knowledge_points: graphKnowledgePoints.value.join(','),
+        package_type: graphPackageType.value,
+        job_id: jobId,
+      },
+      timeout: 300000,
+    })
+    finishGenerationProgress('图谱资源包生成完成')
+    ElMessage.success(`已生成 ${r.data.generated || 0} 个图谱资源`)
+    courseFilter.value = graphCourseName.value
+    kpFilter.value = graphKnowledgePoints.value[0] || ''
+    page.value = 1
+    await loadResources()
+  } catch (e: any) {
+    const message = e?.response?.data?.detail || '图谱资源包生成失败'
+    failGenerationProgress(message)
+    ElMessage.error(message)
+  } finally {
+    graphPackageLoading.value = false
   }
 }
 
@@ -311,9 +669,25 @@ async function loadRecommend() {
   }
 }
 
-function viewResource(r: any) {
+async function viewResource(r: any) {
   if (manageMode.value) { toggleSelect(r.id); return }
-  selected.value = r
+  if (!r?.id || r.content) {
+    selected.value = r
+    return
+  }
+  detailLoading.value = true
+  try {
+    const resp = await api.get(`/resources/${r.id}`)
+    if (resp.data?.found) {
+      selected.value = resp.data
+    } else {
+      ElMessage.warning('资源不存在或已被删除')
+    }
+  } catch {
+    ElMessage.error('资源详情加载失败')
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 function toggleManageMode() {
@@ -369,6 +743,18 @@ async function autoTagResources() {
   }
 }
 
+async function generateDataStructureDemo() {
+  demoLoading.value = true
+  try {
+    await generateOrchestrated('数据结构：排序算法、树与二叉树、图的个性化学习闭环', {
+      courseName: '数据结构',
+      knowledgePoints: ['排序算法', '树与二叉树', '图'],
+    })
+  } finally {
+    demoLoading.value = false
+  }
+}
+
 async function completeSelectedResource() {
   if (!selected.value) return
   try {
@@ -380,6 +766,22 @@ async function completeSelectedResource() {
     await loadResources()
   } catch {
     ElMessage.error('完成状态更新失败')
+  }
+}
+
+async function submitResourceFeedback(feedback: string) {
+  if (!selected.value || !userStore.userId) return
+  feedbackLoading.value = true
+  try {
+    await api.post(`/resources/${selected.value.id}/feedback`, {
+      user_id: userStore.userId,
+      feedback,
+    })
+    ElMessage.success('反馈已记录，后续推荐会参考该偏好')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '反馈提交失败')
+  } finally {
+    feedbackLoading.value = false
   }
 }
 
@@ -409,6 +811,27 @@ function avidFromUrl(url: string): string {
   const av = url.match(/\/video\/av(\d+)/)
   return av ? av[1] : ''
 }
+
+function biliPageFromUrl(url: string): string {
+  if (!url) return ''
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.searchParams.get('p') || parsed.searchParams.get('page') || ''
+  } catch {
+    const page = url.match(/[?&](?:p|page)=(\d+)/)
+    return page ? page[1] : ''
+  }
+}
+
+function biliPlayerSrc(url: string): string {
+  const bvid = bvidFromUrl(url)
+  const aid = avidFromUrl(url)
+  const page = biliPageFromUrl(url)
+  const pageParam = page ? `&page=${page}` : ''
+  if (bvid) return `//player.bilibili.com/player.html?bvid=${bvid}${pageParam}&autoplay=0&danmaku=0`
+  if (aid) return `//player.bilibili.com/player.html?aid=${aid}${pageParam}&autoplay=0&danmaku=0`
+  return ''
+}
 </script>
 
 <template>
@@ -437,6 +860,75 @@ function avidFromUrl(url: string): string {
       <el-button type="primary" @click="showGenDialog = true" style="margin-left: auto">+ 手动生成</el-button>
     </div>
 
+    <div v-if="generationProgress.visible" class="generation-progress-card animate-up animate-delay-1">
+      <div class="generation-progress-head">
+        <div>
+          <div class="generation-progress-title">{{ generationProgress.title || '学习资源生成进度' }}</div>
+          <div class="generation-progress-message">{{ generationProgress.message }}</div>
+        </div>
+        <div class="generation-progress-actions">
+          <el-tag :type="generationStatusTagType()" size="small">{{ generationStatusText() }}</el-tag>
+          <el-button
+            v-if="generationProgress.status === 'success' || generationProgress.status === 'error'"
+            size="small"
+            text
+            @click="closeGenerationProgress"
+          >
+            收起
+          </el-button>
+        </div>
+      </div>
+      <el-progress
+        :percentage="generationProgress.percent"
+        :status="generationProgressStatus()"
+        :stroke-width="12"
+        striped
+        striped-flow
+      />
+      <div class="generation-progress-meta">
+        <span v-if="generationProgress.total > 0">
+          {{ generationProgress.current }} / {{ generationProgress.total }} 项完成
+        </span>
+        <span v-else>正在等待后端返回生成阶段</span>
+      </div>
+      <div v-if="generationProgress.logs.length > 0" class="generation-progress-logs">
+        <span v-for="(log, idx) in generationProgress.logs" :key="idx">{{ log }}</span>
+      </div>
+    </div>
+
+    <div v-if="!selected" class="demo-banner animate-up animate-delay-2">
+      <div>
+        <div class="demo-title">赛题演示主线：数据结构学习闭环</div>
+        <div class="demo-desc">一次生成文章、思维导图、题库、代码案例、PPT 课件和视频推荐，并自动绑定知识图谱标签。</div>
+      </div>
+      <el-button type="primary" :loading="demoLoading || orchestrateLoading" @click="generateDataStructureDemo">
+        一键生成闭环资源
+      </el-button>
+    </div>
+
+    <div v-if="!selected" class="graph-gen-panel animate-up animate-delay-2">
+      <div class="graph-gen-head">
+        <div>
+          <div class="graph-gen-title">图谱驱动生成</div>
+          <div class="graph-gen-desc">从培养方案课程节点和课内知识点出发，一键生成绑定图谱标签的资源包。</div>
+        </div>
+        <el-button type="primary" :loading="graphPackageLoading" @click="generateGraphPackage">
+          生成图谱资源包
+        </el-button>
+      </div>
+      <div class="graph-gen-form">
+        <el-select v-model="graphCourseName" placeholder="选择课程节点" clearable filterable style="min-width: 220px" @change="onGraphCourseChange">
+          <el-option v-for="c in curriculumCourses" :key="c.id" :label="c.name || c.id" :value="c.id" />
+        </el-select>
+        <el-select v-model="graphKnowledgePoints" placeholder="选择知识点（可选）" multiple clearable filterable :disabled="!graphCourseName" style="min-width: 260px">
+          <el-option v-for="kp in graphKpOptions" :key="kp.id" :label="kp.id" :value="kp.id" />
+        </el-select>
+        <el-select v-model="graphPackageType" placeholder="资源包类型" style="min-width: 160px">
+          <el-option v-for="pkg in graphPackageOptions" :key="pkg" :label="pkg" :value="pkg" />
+        </el-select>
+      </div>
+    </div>
+
     <!-- 为你推荐区 -->
     <div v-if="recommendItems.length > 0 && !selected" class="recommend-banner animate-up animate-delay-2">
       <div class="recommend-head">
@@ -445,7 +937,7 @@ function avidFromUrl(url: string): string {
         <el-button size="small" text @click="loadRecommend" style="margin-left:auto">刷新</el-button>
       </div>
       <div class="recommend-list">
-        <div v-for="r in recommendItems" :key="r.id" class="recommend-item" @click="selected = r">
+        <div v-for="r in recommendItems" :key="r.id" class="recommend-item" @click="viewResource(r)">
           <el-tag :type="typeTag(r.resource_type)" size="small">{{ typeLabel(r.resource_type) }}</el-tag>
           <span class="recommend-item-title">{{ r.title }}</span>
         </div>
@@ -453,28 +945,28 @@ function avidFromUrl(url: string): string {
     </div>
 
     <!-- 薄弱知识点专项推荐 -->
-    <div v-if="weakPoints.length > 0 && !selected" class="weak-banner animate-up animate-delay-2">
+    <div v-if="weakPointItems.length > 0 && !selected" class="weak-banner animate-up animate-delay-2">
       <div class="weak-banner-head">
         <span class="weak-banner-title">薄弱知识点专项推荐</span>
         <span class="weak-banner-hint">基于你的学习画像和答题记录自动生成</span>
       </div>
       <div class="weak-tags">
         <el-tag
-          v-for="pt in weakPoints.slice(0, 8)"
-          :key="pt"
+          v-for="item in weakPointItems.slice(0, 8)"
+          :key="item.label"
           type="warning"
           size="small"
           class="weak-tag"
-          @click="generateQuick({ course: pt, topic: pt }, 'article')"
-        >{{ pt }} → 生成讲解</el-tag>
+          @click="generateQuick(item, 'article')"
+        >{{ item.label }} → 生成讲解</el-tag>
         <el-tag
-          v-for="pt in weakPoints.slice(0, 4)"
-          :key="'q_' + pt"
+          v-for="item in weakPointItems.slice(0, 4)"
+          :key="'q_' + item.label"
           type="danger"
           size="small"
           class="weak-tag"
-          @click="generateQuick({ course: pt, topic: pt }, 'quiz')"
-        >{{ pt }} → 生成题库</el-tag>
+          @click="generateQuick(item, 'quiz')"
+        >{{ item.label }} → 生成题库</el-tag>
       </div>
     </div>
 
@@ -496,7 +988,14 @@ function avidFromUrl(url: string): string {
           <div class="seed-actions">
             <el-button size="small" @click="generateQuick(s, 'article')">生成文章</el-button>
             <el-button size="small" type="warning" @click="generateQuick(s, 'quiz')">生成题库</el-button>
-            <el-button size="small" type="primary" :loading="orchestrateLoading" @click="generateOrchestrated(`${s.course}：${s.topic}`)">协同生成</el-button>
+            <el-button
+              size="small"
+              type="primary"
+              :loading="orchestrateLoading"
+              @click="generateOrchestrated(`${s.course}：${s.topic}`, { courseName: isKnownCourse(s.course) ? s.course : '', knowledgePoints: s.topic && s.topic !== s.course ? [s.topic] : [] })"
+            >
+              协同生成
+            </el-button>
           </div>
         </div>
       </div>
@@ -507,7 +1006,9 @@ function avidFromUrl(url: string): string {
       </div>
     </div>
 
-    <div v-if="loading" class="loading-box"><LoadingSausage text="加载资源..." /></div>
+    <div v-if="loading || detailLoading" class="loading-box">
+      <LoadingSausage :text="detailLoading ? '加载资源详情...' : '加载资源...'" />
+    </div>
 
     <div v-else-if="selected" class="detail-view animate-up animate-delay-2">
       <el-button @click="selected = null" style="margin-bottom: 16px">返回列表</el-button>
@@ -527,15 +1028,31 @@ function avidFromUrl(url: string): string {
           标记完成并更新掌握度
         </el-button>
       </div>
+      <div class="resource-feedback-box">
+        <span class="feedback-title">资源反馈</span>
+        <el-button
+          v-for="item in feedbackOptions"
+          :key="item.value"
+          size="small"
+          :loading="feedbackLoading"
+          @click="submitResourceFeedback(item.value)"
+        >
+          {{ item.label }}
+        </el-button>
+      </div>
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
       <MindMapViewer v-else-if="selected.resource_type === 'mindmap'" :markdown="selected.content?.markdown || ''" />
-      <PptViewer v-else-if="selected.resource_type === 'ppt'" :content="selected.content" />
+      <PptViewer
+        v-else-if="selected.resource_type === 'ppt'"
+        :content="selected.content"
+        :resource-id="selected.id"
+        :user-id="userStore.userId"
+        @updated="updateSelectedContent"
+      />
       <div v-else-if="selected.resource_type === 'video'" class="video-viewer">
-        <div v-if="bvidFromUrl(selected.content?.url) || avidFromUrl(selected.content?.url)" class="video-embed-wrap">
+        <div v-if="biliPlayerSrc(selected.content?.url)" class="video-embed-wrap">
           <iframe
-            :src="bvidFromUrl(selected.content?.url)
-              ? `//player.bilibili.com/player.html?bvid=${bvidFromUrl(selected.content?.url)}&autoplay=0&danmaku=0`
-              : `//player.bilibili.com/player.html?aid=${avidFromUrl(selected.content?.url)}&autoplay=0&danmaku=0`"
+            :src="biliPlayerSrc(selected.content?.url)"
             scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"
             class="bili-iframe"
           />
@@ -638,7 +1155,13 @@ function avidFromUrl(url: string): string {
       </el-form>
       <template #footer>
         <el-button @click="showGenDialog = false">取消</el-button>
-        <el-button type="success" :loading="orchestrateLoading" @click="() => { if (!genTopic.trim()) { ElMessage.warning('请输入主题'); return } showGenDialog = false; generateOrchestrated(genTopic.trim()) }">多智能体协同生成</el-button>
+        <el-button
+          type="success"
+          :loading="orchestrateLoading"
+          @click="() => { if (!genTopic.trim()) { ElMessage.warning('请输入主题'); return } showGenDialog = false; generateOrchestrated(genTopic.trim(), { courseName: genCourseName, knowledgePoints: genKnowledgePoints }) }"
+        >
+          多智能体协同生成
+        </el-button>
         <el-button type="primary" :loading="genLoading" @click="startGenerate">生成</el-button>
       </template>
     </el-dialog>
@@ -649,6 +1172,79 @@ function avidFromUrl(url: string): string {
 .resources-view { max-width: 1280px; padding: 28px 20px 34px; margin: 0 auto; box-sizing: border-box; background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%); }
 .toolbar { display: flex; align-items: center; margin-bottom: 20px; padding-top: 4px; flex-wrap: wrap; gap: 4px; }
 .loading-box { height: 200px; }
+
+.generation-progress-card {
+  background: #FFFBF5;
+  border: 1.5px solid #E8C29C;
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 16px rgba(58, 51, 46, 0.08);
+}
+.generation-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.generation-progress-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3A332E;
+  margin-bottom: 4px;
+}
+.generation-progress-message {
+  color: #6B635C;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.generation-progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.generation-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  color: #948A80;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.generation-progress-logs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.generation-progress-logs span {
+  max-width: 100%;
+  padding: 3px 8px;
+  color: #7C5C3C;
+  background: #FFF5EB;
+  border: 1px solid #EFE6DC;
+  border-radius: 999px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(135deg, #FFFBF5 0%, #FFF0DF 100%);
+  border: 1.5px solid #E8C29C;
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 16px rgba(58, 51, 46, 0.06);
+}
+.demo-title { font-weight: 600; color: #3A332E; margin-bottom: 6px; }
+.demo-desc { color: #6B635C; font-size: 13px; line-height: 1.6; }
 
 .starter-panel {
   background: #FFFBF5;
@@ -665,6 +1261,25 @@ function avidFromUrl(url: string): string {
 }
 .starter-head h3 { margin: 0; color: #3A332E; font-size: 20px; font-weight: 500; }
 .starter-desc { margin: 0 0 14px; color: #6B635C; font-size: 13px; line-height: 1.7; }
+
+.graph-gen-panel {
+  margin-bottom: 16px;
+  background: #FFFBF5;
+  border: 1.5px solid #E8C29C;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 3px 12px rgba(58,51,46,0.06);
+}
+.graph-gen-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.graph-gen-title { font-size: 16px; font-weight: 700; color: #3A332E; margin-bottom: 4px; }
+.graph-gen-desc { color: #6B635C; font-size: 13px; }
+.graph-gen-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
 .seed-grid {
   display: grid;
@@ -750,6 +1365,22 @@ function avidFromUrl(url: string): string {
   margin-bottom: 12px;
 }
 .detail-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.resource-feedback-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #FFFBF5;
+  border: 1px dashed #E8C29C;
+  border-radius: 10px;
+}
+.feedback-title {
+  font-size: 12px;
+  color: #7C5C3C;
+  margin-right: 2px;
+}
 
 .pagination-box { display: flex; justify-content: center; margin-top: 24px; }
 

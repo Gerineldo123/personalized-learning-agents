@@ -10,7 +10,7 @@ interface QuizQuestion {
   type: string
   question: string
   // single_choice
-  options?: string[]
+  options?: Array<string | { key?: string; text?: string; label?: string }>
   // fill_blank / single_choice
   answer: string
   explanation: string
@@ -104,7 +104,7 @@ onMounted(async () => {
 
 function initCodeAnswers() {
   for (const q of props.content.questions || []) {
-    if (q.type === 'coding' && !codeAnswers.value[q.id]) {
+    if (effectiveType(q) === 'coding' && !codeAnswers.value[q.id]) {
       codeAnswers.value[q.id] = q.function_signature ? q.function_signature + '\n    pass' : ''
     }
   }
@@ -163,22 +163,24 @@ function restartQuiz() {
 
 function isCorrect(q: QuizQuestion): boolean | null {
   if (!answers.value[q.id]) return null
-  if (q.type === 'single_choice') return q.answer === answers.value[q.id]
-  if (q.type === 'fill_blank') return answers.value[q.id].trim().toLowerCase() === q.answer.trim().toLowerCase()
-  if (q.type === 'coding') return (judgeResults.value[q.id]?.score ?? 0) >= 1.0
+  const type = effectiveType(q)
+  if (type === 'single_choice') return choiceAnswerKey(q) === answers.value[q.id]
+  if (type === 'fill_blank') return answers.value[q.id].trim().toLowerCase() === q.answer.trim().toLowerCase()
+  if (type === 'coding') return (judgeResults.value[q.id]?.score ?? 0) >= 1.0
   return null
 }
 
 const correctCount = computed(() => {
   let count = 0
   for (const q of props.content.questions || []) {
-    if (q.type === 'coding') {
+    const type = effectiveType(q)
+    if (type === 'coding') {
       const r = judgeResults.value[q.id]
       if (r && r.score >= 1.0) count++
-    } else if (q.type === 'fill_blank') {
+    } else if (type === 'fill_blank') {
       if ((answers.value[q.id] || '').trim().toLowerCase() === q.answer.trim().toLowerCase()) count++
     } else {
-      if (answers.value[q.id] === q.answer) count++
+      if (answers.value[q.id] === choiceAnswerKey(q)) count++
     }
   }
   return count
@@ -186,6 +188,52 @@ const correctCount = computed(() => {
 
 const totalCount = computed(() => props.content.questions?.length || 0)
 const latestScorePct = computed(() => latestScore.value == null ? null : Math.round(latestScore.value * 100))
+
+function normalizedOptions(q: QuizQuestion): Array<{ key: string; text: string; label: string }> {
+  const rawOptions = Array.isArray(q.options) ? q.options : []
+  return rawOptions.map((opt, index) => {
+    const fallbackKey = String.fromCharCode(65 + index)
+    if (typeof opt === 'string') {
+      const trimmed = opt.trim()
+      const key = /^[A-D][.．、)） ]/.test(trimmed) ? trimmed[0] : fallbackKey
+      const text = /^[A-D][.．、)） ]/.test(trimmed) ? trimmed.slice(2).trim() : trimmed
+      return { key, text, label: `${key}. ${text}` }
+    }
+    const key = String(opt.key || fallbackKey).slice(0, 1).toUpperCase()
+    const text = String(opt.text || opt.label || '').trim()
+    return { key, text, label: `${key}. ${text}` }
+  }).filter(opt => /^[A-D]$/.test(opt.key) && opt.label.length > 3)
+}
+
+function effectiveType(q: QuizQuestion): string {
+  const type = String(q.type || '').toLowerCase()
+  if (type === 'coding') return 'coding'
+  if (type === 'fill_blank' || type === 'short_answer') return 'fill_blank'
+  if (normalizedOptions(q).length === 4) return 'single_choice'
+  return 'fill_blank'
+}
+
+function typeLabel(q: QuizQuestion): string {
+  const type = effectiveType(q)
+  if (type === 'coding') return '编程题'
+  if (type === 'fill_blank') return q.type === 'short_answer' ? '简答题' : '填空题'
+  return '选择题'
+}
+
+function typeTag(q: QuizQuestion): string {
+  const type = effectiveType(q)
+  if (type === 'coding') return 'success'
+  if (type === 'fill_blank') return 'warning'
+  return ''
+}
+
+function choiceAnswerKey(q: QuizQuestion): string {
+  const raw = String(q.answer || '').trim()
+  const leading = raw.slice(0, 1).toUpperCase()
+  if (/^[A-D]$/.test(leading)) return leading
+  const match = normalizedOptions(q).find(opt => raw === opt.label || raw === opt.text)
+  return match?.key || raw
+}
 
 async function markToMistake(q: QuizQuestion) {
   if (!props.userId || !props.resourceId) return
@@ -246,24 +294,25 @@ async function submitQuiz() {
 
     <div v-for="q in content.questions" :key="q.id" class="quiz-question">
       <div class="question-meta">
-        <el-tag size="small" :type="q.type === 'coding' ? 'success' : q.type === 'fill_blank' ? 'warning' : ''">
-          {{ q.type === 'coding' ? '编程题' : q.type === 'fill_blank' ? '填空题' : '选择题' }}
+        <el-tag size="small" :type="typeTag(q)">
+          {{ typeLabel(q) }}
         </el-tag>
       </div>
       <div class="question-text" v-html="renderMathInline(`${q.id}. ${q.question}`)" />
 
       <!-- 单选题 -->
-      <template v-if="q.type === 'single_choice'">
+      <template v-if="effectiveType(q) === 'single_choice'">
         <el-radio-group v-model="answers[q.id]" :disabled="showExplanation[q.id]"
           @change="(val: string) => selectAnswer(q.id, val)">
-          <el-radio v-for="opt in q.options" :key="opt" :value="opt.charAt(0)">
-            <span v-html="renderMathInline(opt)" />
+          <el-radio v-for="opt in normalizedOptions(q)" :key="opt.key" :value="opt.key">
+            <span class="option-key">{{ opt.key }}.</span>
+            <span v-html="renderMathInline(opt.text)" />
           </el-radio>
         </el-radio-group>
       </template>
 
       <!-- 填空题 -->
-      <template v-else-if="q.type === 'fill_blank'">
+      <template v-else-if="effectiveType(q) === 'fill_blank'">
         <div class="fill-blank-row">
           <el-input v-model="answers[q.id]" :disabled="showExplanation[q.id]" placeholder="输入答案..." style="width:320px" @keyup.enter="confirmFillBlank(q)" />
           <el-button v-if="!showExplanation[q.id]" size="small" type="primary" @click="confirmFillBlank(q)">确认</el-button>
@@ -271,7 +320,7 @@ async function submitQuiz() {
       </template>
 
       <!-- 编程题 -->
-      <template v-else-if="q.type === 'coding'">
+      <template v-else-if="effectiveType(q) === 'coding'">
         <div class="coding-block">
           <el-input
             v-model="codeAnswers[q.id]"
@@ -307,9 +356,9 @@ async function submitQuiz() {
       <!-- 解析区 -->
       <div v-if="showExplanation[q.id]" class="quiz-result">
         <el-tag :type="isCorrect(q) ? 'success' : 'danger'" size="small">
-          {{ isCorrect(q) ? '正确' : (q.type === 'coding' ? `通过率 ${Math.round((judgeResults[q.id]?.score ?? 0) * 100)}%` : '错误') }}
+          {{ isCorrect(q) ? '正确' : (effectiveType(q) === 'coding' ? `通过率 ${Math.round((judgeResults[q.id]?.score ?? 0) * 100)}%` : '错误') }}
         </el-tag>
-        <p v-if="q.type !== 'coding'" class="explanation">
+        <p v-if="effectiveType(q) !== 'coding'" class="explanation">
           正确答案：<strong>{{ q.answer }}</strong>
         </p>
         <p class="explanation" v-html="renderMathInline(q.explanation)" />
@@ -331,6 +380,9 @@ async function submitQuiz() {
 .quiz-question { margin-bottom: 24px; }
 .question-meta { margin-bottom: 6px; }
 .question-text { margin-bottom: 12px; line-height: 1.6; }
+.question-text :deep(.katex) { font-size: 1.08em; }
+.option-key { margin-right: 4px; font-weight: 600; color: var(--text-regular); }
+.quiz-question :deep(.katex) { color: var(--text-primary); }
 .fill-blank-row { display: flex; gap: 8px; align-items: center; }
 .coding-block { display: flex; flex-direction: column; gap: 8px; }
 .code-editor :deep(textarea) { font-family: var(--font-mono); font-size: 13px; }

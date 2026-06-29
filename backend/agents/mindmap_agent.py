@@ -121,6 +121,7 @@ class MindMapAgent(BaseAgent):
             index_resource(resource.id, state.user_id or "", markdown[:4000], "mindmap")
             if not prev_id:
                 state["resource_db_id"] = resource.id
+            state["resource_title"] = title
         finally:
             db.close()
 

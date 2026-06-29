@@ -16,7 +16,6 @@ const menuItems = [
   { path: '/agent', label: 'AI 智能助手', icon: 'ChatDotRound' },
   { path: '/profile', label: '学习画像', icon: 'UserFilled' },
   { path: '/resources', label: '学习资源', icon: 'Document' },
-  { path: '/ppt', label: 'PPT课件', icon: 'DataAnalysis' },
   { path: '/mistakes', label: '错题本', icon: 'CollectionTag' },
   { path: '/learning-path', label: '学习路径', icon: 'Promotion' },
   { path: '/path', label: '专注淀粉肠', icon: 'Food' },

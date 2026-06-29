@@ -1,0 +1,57 @@
+{
+  "course_name": "数据结构",
+  "audience": "高等院校计算机类专业本科生",
+  "demo_goal": "围绕线性表、树与二叉树、图、查找与排序等核心知识点，展示画像诊断、资源生成、路径规划和掌握度更新闭环。",
+  "chapters": [
+    {
+      "title": "线性表",
+      "objectives": ["解释顺序表与链表的存储差异", "能分析插入、删除、查找操作复杂度"],
+      "knowledge_points": ["线性表"],
+      "sample_tasks": ["比较数组和链表在随机访问、插入删除场景下的适用性"]
+    },
+    {
+      "title": "栈与队列",
+      "objectives": ["掌握后进先出和先进先出结构", "能用栈/队列解决表达式求值、层序遍历等问题"],
+      "knowledge_points": ["栈与队列"],
+      "sample_tasks": ["用栈判断括号序列是否合法", "用队列模拟广度优先搜索"]
+    },
+    {
+      "title": "树与二叉树",
+      "objectives": ["理解树、二叉树、遍历、哈夫曼树等概念", "能写出递归和非递归遍历过程"],
+      "knowledge_points": ["树与二叉树"],
+      "sample_tasks": ["根据前序和中序序列还原二叉树", "分析二叉搜索树退化原因"]
+    },
+    {
+      "title": "图",
+      "objectives": ["掌握邻接矩阵、邻接表和图遍历", "理解最短路径和最小生成树基本思想"],
+      "knowledge_points": ["图"],
+      "sample_tasks": ["用邻接表实现 BFS/DFS", "比较 Dijkstra 与 Floyd 的适用场景"]
+    },
+    {
+      "title": "查找算法与哈希表",
+      "objectives": ["掌握顺序查找、二分查找、二叉搜索树查找", "理解哈希冲突与装载因子"],
+      "knowledge_points": ["查找算法", "哈希表"],
+      "sample_tasks": ["分析二分查找边界条件", "设计链地址法解决哈希冲突"]
+    },
+    {
+      "title": "排序算法",
+      "objectives": ["比较插入、选择、交换、归并、快速排序", "能从时间复杂度、稳定性、空间复杂度选择算法"],
+      "knowledge_points": ["排序算法"],
+      "sample_tasks": ["解释快速排序最坏情况", "判断各类排序算法的稳定性"]
+    }
+  ],
+  "resource_plan": [
+    {"type": "article", "purpose": "概念讲解与例题推导"},
+    {"type": "mindmap", "purpose": "把课程节点组织成层级知识结构"},
+    {"type": "quiz", "purpose": "检测知识点掌握度并生成错题"},
+    {"type": "code", "purpose": "提供可运行的算法练习案例"},
+    {"type": "ppt", "purpose": "生成可下载课件并在学习资源中预览"},
+    {"type": "video", "purpose": "推荐外部教学视频辅助学习"}
+  ],
+  "acceptance_checks": [
+    "每个资源都应带有 course_name=数据结构",
+    "每个资源至少绑定一个知识点标签",
+    "完成资源或提交测验后，StudentProfile.knowledge_base 中对应知识点分数变化",
+    "学习路径步骤能引用同一批知识点，形成可解释闭环"
+  ]
+}

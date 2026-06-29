@@ -3,9 +3,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from datetime import datetime
 import json
+import uuid
 from api.deps import get_db
 from models.resource import LearningResource
 from models.student import StudentProfile
+from models.profile_history import ProfileHistory
 from agents.base import AgentState
 from agents.content_gen_agent import ContentGenAgent
 from agents.mindmap_agent import MindMapAgent
@@ -15,6 +17,12 @@ from agents.orchestrator_agent import OrchestratorAgent
 from services.event_service import emit
 from services.rag_service import search_rag
 from services.kp_service import infer_resource_tags, update_knowledge_base
+from services.curriculum_service import build_relation_context, load_curriculum_by_major
+from services.ppt_preview_service import (
+    cleanup_ppt_preview,
+    get_ppt_preview_status,
+    start_ppt_preview,
+)
 import asyncio
 
 router = APIRouter(prefix="/api/resources", tags=["资源"])
@@ -25,6 +33,59 @@ class ResourceTagRequest(BaseModel):
     course_name: str | None = None
     knowledge_points: list[str] = Field(default_factory=list)
     kp_weights: dict[str, float] | None = None
+
+
+class ResourceFeedbackRequest(BaseModel):
+    user_id: str
+    feedback: str
+    note: str | None = None
+
+
+GRAPH_PACKAGE_TYPES: dict[str, list[str]] = {
+    "课程总览": ["article", "mindmap", "quiz", "ppt"],
+    "阶段复习": ["article", "quiz", "mindmap"],
+    "先修补弱": ["article", "quiz"],
+    "后继预习": ["article", "video"],
+    "知识点补弱": ["article", "quiz", "mindmap"],
+    "专项练习": ["quiz"],
+    "实操案例": ["code", "article"],
+    "PPT课件": ["ppt"],
+    "完整资源包": ["article", "mindmap", "quiz", "code", "ppt", "video"],
+}
+
+RESOURCE_TYPE_LABELS: dict[str, str] = {
+    "article": "文章",
+    "quiz": "题库",
+    "code": "代码案例",
+    "mindmap": "思维导图",
+    "ppt": "PPT课件",
+    "video": "视频推荐",
+    "evaluation": "学习评估",
+}
+
+
+def _generation_job_id(job_id: str | None = None) -> str:
+    return job_id.strip() if job_id and job_id.strip() else uuid.uuid4().hex
+
+
+async def _emit_generation_progress(
+    user_id: str,
+    job_id: str,
+    progress: int,
+    message: str,
+    status: str = "running",
+    **extra,
+):
+    payload = {
+        "user_id": user_id,
+        "job_id": job_id,
+        "progress": max(0, min(100, int(progress))),
+        "message": message,
+        "status": status,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    payload.update(extra)
+    await emit("resource.generation_progress", payload)
 
 
 def _as_list(value) -> list:
@@ -100,6 +161,60 @@ def _serialize_resource(resource: LearningResource, include_content: bool = True
     if include_content:
         data["content"] = resource.content
     return data
+
+
+def _equal_kp_weights(knowledge_points: list[str]) -> dict[str, float]:
+    if not knowledge_points:
+        return {}
+    weight = round(1 / len(knowledge_points), 4)
+    return {kp: weight for kp in knowledge_points}
+
+
+def _package_topic(
+    package_type: str,
+    course_name: str,
+    knowledge_points: list[str],
+    relation_context: dict,
+) -> str:
+    kp_text = "、".join(knowledge_points)
+    if package_type == "先修补弱":
+        prereqs = "、".join(relation_context.get("prerequisites") or [])
+        return f"{course_name}先修补弱：{prereqs or kp_text or '核心基础'}"
+    if package_type == "后继预习":
+        successors = "、".join(relation_context.get("successors") or [])
+        return f"{course_name}后继预习：{successors or kp_text or '进阶内容'}"
+    if kp_text:
+        return f"{course_name}：{kp_text}（{package_type}）"
+    return f"{course_name}（{package_type}）"
+
+
+def _attach_relation_context(
+    db: Session,
+    user_id: str,
+    since_id: int,
+    course_name: str,
+    knowledge_points: list[str],
+    relation_context: dict,
+) -> list[int]:
+    resources = db.query(LearningResource).filter(
+        LearningResource.user_id == user_id,
+        LearningResource.id > since_id,
+    ).all()
+    updated_ids: list[int] = []
+    kp_weights = _equal_kp_weights(knowledge_points)
+    for resource in resources:
+        resource.course_name = course_name
+        resource.knowledge_points = knowledge_points
+        resource.kp_weights = kp_weights
+        resource.tag_confidence = 1.0 if knowledge_points else max(resource.tag_confidence or 0, 0.7)
+        tags = [resource.resource_type, course_name, *knowledge_points]
+        resource.tags = list(dict.fromkeys(_as_list(resource.tags) + [tag for tag in tags if tag]))
+        content = dict(resource.content) if isinstance(resource.content, dict) else {"text": resource.content}
+        content["relation_context"] = relation_context
+        resource.content = content
+        updated_ids.append(resource.id)
+    db.commit()
+    return updated_ids
 
 
 @router.get("")
@@ -205,6 +320,28 @@ def get_resource(resource_id: int, db: Session = Depends(get_db)):
     if not resource:
         return {"found": False}
     return {"found": True, **_serialize_resource(resource)}
+
+
+@router.get("/{resource_id}/ppt_preview")
+def get_resource_ppt_preview(resource_id: int, user_id: str | None = Query(None)):
+    result = get_ppt_preview_status(resource_id, user_id)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return result
+
+
+@router.post("/{resource_id}/ppt_preview")
+def create_resource_ppt_preview(
+    resource_id: int,
+    user_id: str | None = Query(None),
+    force: bool = Query(True),
+):
+    result = start_ppt_preview(resource_id, user_id, force=force)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    if not result.get("ok", True):
+        raise HTTPException(status_code=400, detail=result.get("error") or "无法生成 PPT 预览")
+    return result
 
 
 @router.post("/auto_tag")
@@ -325,6 +462,274 @@ async def complete_resource(
     return {"ok": True, "resource": _serialize_resource(resource)}
 
 
+@router.post("/{resource_id}/feedback")
+async def feedback_resource(
+    resource_id: int,
+    req: ResourceFeedbackRequest,
+    db: Session = Depends(get_db),
+):
+    allowed = {"too_hard", "too_easy", "helpful", "irrelevant"}
+    if req.feedback not in allowed:
+        raise HTTPException(status_code=400, detail="不支持的资源反馈类型")
+
+    resource = db.query(LearningResource).filter(
+        LearningResource.id == resource_id,
+        LearningResource.user_id == req.user_id,
+    ).first()
+    if not resource:
+        return {"ok": False, "message": "资源不存在"}
+
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == req.user_id).first()
+    if not profile:
+        profile = StudentProfile(user_id=req.user_id)
+        db.add(profile)
+        db.flush()
+
+    feedback_profile = dict(profile.resource_feedback_profile or {})
+    counts = dict(feedback_profile.get("counts") or {})
+    counts[req.feedback] = counts.get(req.feedback, 0) + 1
+    by_type = dict(feedback_profile.get("by_resource_type") or {})
+    type_counts = dict(by_type.get(resource.resource_type) or {})
+    type_counts[req.feedback] = type_counts.get(req.feedback, 0) + 1
+    by_type[resource.resource_type] = type_counts
+    feedback_profile.update({
+        "counts": counts,
+        "by_resource_type": by_type,
+        "last_feedback": {
+            "resource_id": resource.id,
+            "resource_type": resource.resource_type,
+            "course_name": resource.course_name,
+            "knowledge_points": _as_list(resource.knowledge_points),
+            "feedback": req.feedback,
+            "note": req.note or "",
+            "created_at": datetime.utcnow().isoformat(),
+        },
+    })
+    profile.resource_feedback_profile = feedback_profile
+
+    evidence = dict(profile.profile_evidence or {})
+    evidence["resource_feedback_profile"] = "学习资源反馈"
+    profile.profile_evidence = evidence
+
+    db.add(ProfileHistory(
+        user_id=req.user_id,
+        trigger="resource_feedback",
+        snapshot={
+            "resource_feedback_profile": feedback_profile,
+            "preferred_format": profile.preferred_format or [],
+        },
+        delta={
+            "feedback": req.feedback,
+            "resource_id": resource.id,
+            "resource_type": resource.resource_type,
+        },
+    ))
+    db.commit()
+
+    await emit("resource.feedback", {
+        "user_id": req.user_id,
+        "resource_id": resource.id,
+        "feedback": req.feedback,
+    })
+    await emit("profile.updated", {"user_id": req.user_id})
+    return {"ok": True, "resource_feedback_profile": feedback_profile}
+
+
+@router.post("/generate/graph_package")
+async def generate_graph_package(
+    user_id: str,
+    course_name: str,
+    knowledge_points: str = "",
+    package_type: str = "知识点补弱",
+    job_id: str = "",
+    db: Session = Depends(get_db),
+):
+    if package_type not in GRAPH_PACKAGE_TYPES:
+        raise HTTPException(status_code=400, detail="不支持的资源包类型")
+    if not course_name.strip():
+        raise HTTPException(status_code=400, detail="请选择课程节点")
+
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+    kp_list = [kp.strip() for kp in knowledge_points.split(",") if kp.strip()]
+    curriculum = load_curriculum_by_major(profile.major if profile else "")
+    relation_context = build_relation_context(curriculum, course_name.strip())
+    topic = _package_topic(package_type, course_name.strip(), kp_list, relation_context)
+    before_id = db.query(LearningResource.id).filter(
+        LearningResource.user_id == user_id
+    ).order_by(LearningResource.id.desc()).limit(1).scalar() or 0
+    types = GRAPH_PACKAGE_TYPES[package_type]
+    job_id = _generation_job_id(job_id)
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        5,
+        f"已提交{package_type}生成任务",
+        package_type=package_type,
+        course_name=course_name.strip(),
+        knowledge_points=kp_list,
+        types=types,
+        current=0,
+        total=len(types),
+    )
+
+    if package_type == "完整资源包":
+        state = AgentState(
+            user_id=user_id,
+            user_message=topic,
+            profile=profile,
+            course_name=course_name.strip(),
+            knowledge_points=kp_list,
+        )
+        try:
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                18,
+                "多智能体正在规划并生成完整资源包",
+                package_type=package_type,
+                current=0,
+                total=len(types),
+            )
+            await OrchestratorAgent().process(state)
+            failures = state.get("orchestration_failures") or []
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                88,
+                "资源内容已生成，正在写入图谱标签",
+                package_type=package_type,
+                current=len(types),
+                total=len(types),
+            )
+        except Exception as exc:
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                100,
+                f"完整资源包生成失败：{exc}",
+                status="failed",
+                package_type=package_type,
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+    else:
+        async def gen_one(rtype: str):
+            state = AgentState(
+                user_id=user_id,
+                user_message=topic,
+                resource_type=rtype,
+                question_count=8 if rtype == "quiz" else 5,
+                difficulty="中等",
+                question_types="single_choice,fill_blank",
+                code_language="python",
+                course_name=course_name.strip(),
+                knowledge_points=kp_list,
+                profile=profile,
+            )
+            if rtype == "mindmap":
+                await MindMapAgent().process(state)
+            elif rtype == "video":
+                await VideoAgent().process(state)
+            elif rtype == "evaluation":
+                await EvaluationAgent().process(state)
+            else:
+                await ContentGenAgent().process(state)
+
+        completed_count = 0
+        progress_lock = asyncio.Lock()
+
+        async def gen_one_with_progress(rtype: str):
+            nonlocal completed_count
+            label = RESOURCE_TYPE_LABELS.get(rtype, rtype)
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                8,
+                f"正在生成{label}",
+                package_type=package_type,
+                resource_type=rtype,
+                current=completed_count,
+                total=len(types),
+            )
+            await gen_one(rtype)
+            async with progress_lock:
+                completed_count += 1
+                progress = 10 + round(completed_count / max(1, len(types)) * 78)
+                await _emit_generation_progress(
+                    user_id,
+                    job_id,
+                    progress,
+                    f"{label}生成完成",
+                    package_type=package_type,
+                    resource_type=rtype,
+                    current=completed_count,
+                    total=len(types),
+                )
+
+        failures = []
+        try:
+            await asyncio.gather(*[gen_one_with_progress(t) for t in types])
+        except Exception as exc:
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                100,
+                f"图谱资源包生成失败：{exc}",
+                status="failed",
+                package_type=package_type,
+            )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        94,
+        "正在同步课程与知识点标签",
+        package_type=package_type,
+        current=len(types),
+        total=len(types),
+    )
+    updated_ids = _attach_relation_context(
+        db,
+        user_id,
+        before_id,
+        course_name.strip(),
+        kp_list,
+        relation_context,
+    )
+    await emit("resource.created", {
+        "user_id": user_id,
+        "topic": topic,
+        "types": types,
+        "package_type": package_type,
+        "course_name": course_name,
+        "knowledge_points": kp_list,
+        "job_id": job_id,
+    })
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        100,
+        "图谱资源包生成完成",
+        status="completed",
+        package_type=package_type,
+        course_name=course_name,
+        knowledge_points=kp_list,
+        current=len(types),
+        total=len(types),
+    )
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "package_type": package_type,
+        "course_name": course_name,
+        "knowledge_points": kp_list,
+        "types": types,
+        "generated": len(updated_ids),
+        "ids": updated_ids,
+        "failures": failures,
+    }
+
+
 @router.post("/generate")
 async def generate_resource(
     user_id: str,
@@ -336,6 +741,7 @@ async def generate_resource(
     difficulty: str = "中等",
     question_types: str = "single_choice",
     code_language: str = "python",
+    job_id: str = "",
     db: Session = Depends(get_db),
 ):
     types = [t.strip() for t in resource_types.split(",") if t.strip()]
@@ -344,6 +750,17 @@ async def generate_resource(
     kp_list = [kp.strip() for kp in knowledge_points.split(",") if kp.strip()]
 
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+    job_id = _generation_job_id(job_id)
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        5,
+        "已提交学习资源生成任务",
+        topic=topic,
+        types=types,
+        current=0,
+        total=len(types),
+    )
 
     async def gen_one(rtype: str):
         state = AgentState(
@@ -368,24 +785,77 @@ async def generate_resource(
             state["resource_type"] = rtype
             await ContentGenAgent().process(state)
 
+    completed_count = 0
+    progress_lock = asyncio.Lock()
+
+    async def gen_one_with_progress(rtype: str):
+        nonlocal completed_count
+        label = RESOURCE_TYPE_LABELS.get(rtype, rtype)
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            8,
+            f"正在生成{label}",
+            topic=topic,
+            resource_type=rtype,
+            current=completed_count,
+            total=len(types),
+        )
+        await gen_one(rtype)
+        async with progress_lock:
+            completed_count += 1
+            progress = 10 + round(completed_count / max(1, len(types)) * 82)
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                progress,
+                f"{label}生成完成",
+                topic=topic,
+                resource_type=rtype,
+                current=completed_count,
+                total=len(types),
+            )
+
     try:
-        await asyncio.gather(*[gen_one(t) for t in types])
+        await asyncio.gather(*[gen_one_with_progress(t) for t in types])
     except Exception as exc:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            100,
+            f"资源生成失败：{exc}",
+            status="failed",
+            topic=topic,
+            types=types,
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     await emit("resource.created", {
         "user_id": user_id,
         "topic": topic,
         "types": types,
+        "job_id": job_id,
     })
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        100,
+        "学习资源生成完成",
+        status="completed",
+        topic=topic,
+        types=types,
+        current=len(types),
+        total=len(types),
+    )
 
-    return {"ok": True, "types": types}
+    return {"ok": True, "job_id": job_id, "types": types}
 
 
 @router.post("/generate/starter")
 async def generate_starter_resources(
     user_id: str,
     max_courses: int = 3,
+    job_id: str = "",
     db: Session = Depends(get_db),
 ):
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
@@ -410,6 +880,16 @@ async def generate_starter_resources(
         ]
 
     seeds = seeds[:max(1, min(max_courses, 5))]
+    job_id = _generation_job_id(job_id)
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        5,
+        "已提交入门资源包生成任务",
+        topic="starter_pack",
+        current=0,
+        total=len(seeds) * 2,
+    )
 
     async def gen_seed(seed: dict):
         topic = seed["topic"]
@@ -418,16 +898,69 @@ async def generate_starter_resources(
         content_agent = ContentGenAgent()
         await asyncio.gather(content_agent.process(article), content_agent.process(quiz))
 
-    await asyncio.gather(*[gen_seed(s) for s in seeds])
+    completed_count = 0
+    progress_lock = asyncio.Lock()
+
+    async def gen_seed_with_progress(seed: dict):
+        nonlocal completed_count
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            8,
+            f"正在为 {seed['course']} 生成文章和题库",
+            topic="starter_pack",
+            course_name=seed["course"],
+            current=completed_count,
+            total=len(seeds) * 2,
+        )
+        await gen_seed(seed)
+        async with progress_lock:
+            completed_count += 2
+            progress = 10 + round(completed_count / max(1, len(seeds) * 2) * 82)
+            await _emit_generation_progress(
+                user_id,
+                job_id,
+                progress,
+                f"{seed['course']} 入门资源生成完成",
+                topic="starter_pack",
+                course_name=seed["course"],
+                current=completed_count,
+                total=len(seeds) * 2,
+            )
+
+    try:
+        await asyncio.gather(*[gen_seed_with_progress(s) for s in seeds])
+    except Exception as exc:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            100,
+            f"入门资源包生成失败：{exc}",
+            status="failed",
+            topic="starter_pack",
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     await emit("resource.created", {
         "user_id": user_id,
         "topic": "starter_pack",
         "types": ["article", "quiz"],
+        "job_id": job_id,
     })
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        100,
+        "入门资源包生成完成",
+        status="completed",
+        topic="starter_pack",
+        current=len(seeds) * 2,
+        total=len(seeds) * 2,
+    )
 
     return {
         "ok": True,
+        "job_id": job_id,
         "courses": [s["course"] for s in seeds],
         "generated": len(seeds) * 2,
     }
@@ -468,11 +1001,22 @@ async def batch_delete_resources(
     if not id_list:
         return {"ok": True, "deleted": 0}
 
+    ppt_ids = [
+        item.id for item in db.query(LearningResource.id).filter(
+            LearningResource.user_id == user_id,
+            LearningResource.id.in_(id_list),
+            LearningResource.resource_type == "ppt",
+        ).all()
+    ]
+
     deleted = db.query(LearningResource).filter(
         LearningResource.user_id == user_id,
         LearningResource.id.in_(id_list),
     ).delete(synchronize_session=False)
     db.commit()
+
+    for resource_id in ppt_ids:
+        cleanup_ppt_preview(resource_id)
 
     await emit("resource.deleted", {
         "user_id": user_id,
@@ -485,11 +1029,84 @@ async def batch_delete_resources(
 async def generate_orchestrated(
     user_id: str,
     topic: str,
+    course_name: str = "",
+    knowledge_points: str = "",
+    job_id: str = "",
     db: Session = Depends(get_db),
 ):
-    """多智能体协同编排：一次调用生成 article+mindmap+quiz+video 四种资源"""
+    """多智能体协同编排：一次调用生成 article+mindmap+quiz+code+ppt+video 六种资源"""
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
-    state = AgentState(user_id=user_id, user_message=topic, profile=profile)
-    await OrchestratorAgent().process(state)
-    await emit("resource.created", {"user_id": user_id, "topic": topic, "types": ["article", "mindmap", "quiz", "video"]})
-    return {"ok": True, "types": ["article", "mindmap", "quiz", "video"]}
+    kp_list = [kp.strip() for kp in knowledge_points.split(",") if kp.strip()]
+    job_id = _generation_job_id(job_id)
+    types = ["article", "mindmap", "quiz", "code", "ppt", "video"]
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        5,
+        "已提交多智能体协同生成任务",
+        topic=topic,
+        types=types,
+        current=0,
+        total=len(types),
+    )
+    state = AgentState(
+        user_id=user_id,
+        user_message=topic,
+        profile=profile,
+        course_name=course_name.strip() or None,
+        knowledge_points=kp_list,
+    )
+    try:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            18,
+            "多智能体正在并行规划文章、导图、题库、代码、PPT和视频",
+            topic=topic,
+            types=types,
+            current=0,
+            total=len(types),
+        )
+        await OrchestratorAgent().process(state)
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            92,
+            "多智能体生成完成，正在刷新资源列表",
+            topic=topic,
+            types=types,
+            current=len(types),
+            total=len(types),
+        )
+    except Exception as exc:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            100,
+            f"多智能体协同生成失败：{exc}",
+            status="failed",
+            topic=topic,
+            types=types,
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await emit("resource.created", {"user_id": user_id, "topic": topic, "types": types, "job_id": job_id})
+    await _emit_generation_progress(
+        user_id,
+        job_id,
+        100,
+        "多智能体协同生成完成",
+        status="completed",
+        topic=topic,
+        types=types,
+        current=len(types),
+        total=len(types),
+    )
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "types": types,
+        "resources": state.get("generated_resources") or [],
+        "failures": state.get("orchestration_failures") or [],
+        "course_name": state.get("course_name"),
+        "knowledge_points": state.get("knowledge_points") or [],
+    }

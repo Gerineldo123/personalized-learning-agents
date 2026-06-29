@@ -1,14 +1,15 @@
 import json
-import httpx
-from urllib.parse import quote
-from agents.base import BaseAgent, AgentState
-from core.llm_client import chat_completion
-from core.database import SessionLocal
-from models.resource import LearningResource
-from services.rag_service import index_resource
-from services.kp_service import infer_resource_tags
 
-KEYWORD_PROMPT = """你是教学视频推荐助手。根据学生画像，推荐 2~3 个 B站 搜索关键词。
+from agents.base import BaseAgent, AgentState
+from core.database import SessionLocal
+from core.llm_client import chat_completion
+from models.resource import LearningResource
+from services.bilibili_video_service import search_bilibili_videos
+from services.kp_service import infer_resource_tags
+from services.rag_service import index_resource
+
+
+KEYWORD_PROMPT = """你是教学视频推荐助手。请根据学生画像和当前学习需求，推荐 2~3 个 B 站搜索关键词。
 
 学生画像：
 - 专业：{major}，年级：{grade}
@@ -17,24 +18,21 @@ KEYWORD_PROMPT = """你是教学视频推荐助手。根据学生画像，推荐
 - 学习目标：{learning_goal}
 
 要求：
-1. 关键词要精准、组合（如"导数 链式法则 例题"），便于搜到高质量中文教学视频
-2. 每个关键词说明为什么选择它（结合画像）
+1. 关键词要精准、可检索，尽量包含课程名、知识点和教学场景，例如“数据结构 二叉树 遍历 动画讲解”。
+2. 每个关键词说明选择原因，原因需要结合学生画像和学习目标。
 
 只返回 JSON：
 {{
   "keywords": [
     {{"query": "搜索词", "reason": "推荐理由"}}
   ],
-  "search_summary": "一句话概括"
+  "search_summary": "一句话概括推荐方向"
 }}"""
-
-BILI_SEARCH_API = "https://api.bilibili.com/x/web-interface/search/type"
-BILI_VIDEO_URL = "https://www.bilibili.com/video/{}"
 
 
 class VideoAgent(BaseAgent):
     name = "video"
-    description = "根据学生画像搜索 B站教学视频，返回直达播放链接"
+    description = "根据学生画像搜索 B 站教学视频，返回具体视频直达链接"
 
     async def process(self, state: AgentState) -> AgentState:
         profile = state.get("profile")
@@ -64,17 +62,26 @@ class VideoAgent(BaseAgent):
         try:
             kw_result = json.loads(raw)
         except json.JSONDecodeError:
-            kw_result = {"keywords": [], "search_summary": "搜索失败"}
+            kw_result = {"keywords": [], "search_summary": "关键词生成失败"}
 
-        keywords = kw_result.get("keywords", [])
-        videos = await self._search_bilibili(keywords[:3])
+        search_result = await search_bilibili_videos(
+            kw_result.get("keywords", [])[:3],
+            per_keyword=2,
+            total_limit=5,
+        )
+        videos = search_result.get("videos", [])
+        failures = search_result.get("failures", [])
 
         self._save_videos(state, videos, kw_result.get("search_summary", ""))
-        state["response"] = json.dumps({
-            "agent": "video",
-            "videos": videos,
-            "search_summary": kw_result.get("search_summary", ""),
-        }, ensure_ascii=False)
+        state["response"] = json.dumps(
+            {
+                "agent": "video",
+                "videos": videos,
+                "failures": failures,
+                "search_summary": kw_result.get("search_summary", ""),
+            },
+            ensure_ascii=False,
+        )
         return state
 
     def _save_videos(self, state: AgentState, videos: list[dict], summary: str):
@@ -92,13 +99,15 @@ class VideoAgent(BaseAgent):
         ))
         db = SessionLocal()
         try:
-            for v in videos:
-                title = v.get("title") or "视频推荐"
+            first_id = None
+            first_title = ""
+            for video in videos:
+                title = video.get("title") or "视频推荐"
                 resource = LearningResource(
                     user_id=state.user_id,
                     resource_type="video",
                     title=title,
-                    content=v,
+                    content=video,
                     tags=tags,
                     course_name=graph_tags.get("course_name"),
                     knowledge_points=graph_tags.get("knowledge_points") or [],
@@ -107,66 +116,13 @@ class VideoAgent(BaseAgent):
                 )
                 db.add(resource)
                 db.flush()
+                if first_id is None:
+                    first_id = resource.id
+                    first_title = title
                 index_resource(resource.id, state.user_id or "", title, "video")
             db.commit()
+            if first_id is not None:
+                state["resource_db_id"] = first_id
+                state["resource_title"] = first_title
         finally:
             db.close()
-
-    async def _search_bilibili(self, keywords: list[dict]) -> list[dict]:
-        results = []
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            "Referer": "https://www.bilibili.com/",
-        }
-        async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
-            await client.get("https://www.bilibili.com/")
-            for kw in keywords:
-                query = kw.get("query", "")
-                if not query:
-                    continue
-                try:
-                    r = await client.get(BILI_SEARCH_API, params={
-                        "search_type": "video", "keyword": query, "page": 1,
-                    })
-                    r.raise_for_status()
-                    data = r.json()
-                    video_list = (data.get("data") or {}).get("result") or []
-                    found = False
-                    for v in video_list[:3]:
-                        bvid = v.get("bvid", "")
-                        if not bvid:
-                            continue
-                        found = True
-                        arcurl = v.get("arcurl", "")
-                        url = arcurl if arcurl and "video" in arcurl else BILI_VIDEO_URL.format(bvid)
-                        pic = v.get("pic", "")
-                        if pic and not pic.startswith("http"):
-                            pic = "https:" + pic
-                        results.append({
-                            "title": v.get("title", query).replace('<em class="keyword">', "").replace("</em>", ""),
-                            "url": url,
-                            "cover": pic,
-                            "duration": v.get("duration", ""),
-                            "source": f"B站 · {v.get('author', '') or ''} · {self._fmt_play(v.get('play', 0))}播放",
-                            "reason": kw.get("reason", ""),
-                        })
-                    if not found:
-                        results.append({
-                            "title": query,
-                            "url": f"https://search.bilibili.com/all?keyword={quote(query)}",
-                            "source": "B站",
-                            "reason": kw.get("reason", "") + " (未找到匹配视频)",
-                        })
-                except Exception:
-                    results.append({
-                        "title": query,
-                        "url": f"https://search.bilibili.com/all?keyword={quote(query)}",
-                        "source": "B站",
-                        "reason": kw.get("reason", ""),
-                    })
-        return results[:5]
-
-    def _fmt_play(self, n: int) -> str:
-        if n >= 10000:
-            return f"{n / 10000:.1f}万"
-        return str(n)

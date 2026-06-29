@@ -13,6 +13,77 @@ import json
 router = APIRouter(prefix="/api/mistakes", tags=["错题本"])
 
 
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _question_text(question_payload) -> str:
+    if isinstance(question_payload, dict):
+        return " ".join(str(question_payload.get(key) or "") for key in ("question", "title", "stem", "explanation"))
+    return str(question_payload or "")
+
+
+def _extract_mistake_kps(db: Session, resource_id: int, question_payload) -> tuple[list[str], LearningResource | None]:
+    resource = db.query(LearningResource).filter(LearningResource.id == resource_id).first()
+    points: list[str] = []
+    if isinstance(question_payload, dict):
+        raw = question_payload.get("knowledge_points") or question_payload.get("knowledge_point") or question_payload.get("kp")
+        if isinstance(raw, list):
+            points.extend(str(item) for item in raw if item)
+        elif raw:
+            points.append(str(raw))
+    if resource:
+        points.extend(str(item) for item in _as_list(resource.knowledge_points) if item)
+    if not points:
+        try:
+            from services.kp_service import match_kp
+            text = _question_text(question_payload)
+            if resource:
+                text = " ".join([text, resource.title or "", " ".join(_as_list(resource.tags))])
+            points.extend(match_kp(text))
+        except Exception:
+            pass
+    return list(dict.fromkeys(points))[:8], resource
+
+
+def _update_profile_from_mistake(db: Session, user_id: str, knowledge_points: list[str]):
+    if not knowledge_points:
+        return
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+    if not profile:
+        return
+    try:
+        from services.recommendation_service import upsert_weak_points_batch
+        upsert_weak_points_batch(user_id, knowledge_points)
+    except Exception:
+        pass
+    existing = list(profile.weak_points or [])
+    for point in knowledge_points:
+        if point not in existing:
+            existing.append(point)
+    profile.weak_points = existing[-20:]
+    tendency = dict(profile.mistake_tendency or {})
+    by_point = dict(tendency.get("by_knowledge_point") or {})
+    for point in knowledge_points:
+        by_point[point] = int(by_point.get(point, 0) or 0) + 1
+    tendency["by_knowledge_point"] = by_point
+    tendency["updated_from"] = "mistake_book"
+    profile.mistake_tendency = tendency
+
+
+async def _emit_mistake_event(user_id: str, mistake_id: int, resource_id: int, knowledge_points: list[str], updated: bool):
+    from services.event_service import emit
+    event = "mistake.updated" if updated else "mistake.created"
+    await emit(event, {
+        "user_id": user_id,
+        "mistake_id": mistake_id,
+        "resource_id": resource_id,
+        "knowledge_points": knowledge_points,
+    })
+    if knowledge_points:
+        await emit("profile.updated", {"user_id": user_id})
+
+
 @router.get("")
 def list_mistakes(user_id: str, sort: str = "time", order: str = "desc", db: Session = Depends(get_db)):
     q = (
@@ -54,7 +125,7 @@ def list_mistakes(user_id: str, sort: str = "time", order: str = "desc", db: Ses
 
 
 @router.post("/add")
-def add_mistake(
+async def add_mistake(
     user_id: str,
     resource_id: int,
     question_id: int,
@@ -64,7 +135,8 @@ def add_mistake(
     correct_answer: str,
     db: Session = Depends(get_db),
 ):
-    import json
+    question_payload = json.loads(question)
+    knowledge_points, _resource = _extract_mistake_kps(db, resource_id, question_payload)
 
     exists = (
         db.query(MistakeQuestion)
@@ -77,13 +149,15 @@ def add_mistake(
     )
     if exists:
         exists.reason = reason
-        exists.question = json.loads(question)
+        exists.question = question_payload
         exists.user_answer = user_answer
         exists.correct_answer = correct_answer
         exists.wrong_count = (exists.wrong_count or 1) + 1
         exists.last_wrong_at = datetime.now(timezone.utc)
+        _update_profile_from_mistake(db, user_id, knowledge_points)
         db.commit()
         db.refresh(exists)
+        await _emit_mistake_event(user_id, exists.id, resource_id, knowledge_points, True)
         return {"ok": True, "id": exists.id, "updated": True}
 
     item = MistakeQuestion(
@@ -91,13 +165,15 @@ def add_mistake(
         resource_id=resource_id,
         question_id=question_id,
         reason=reason,
-        question=json.loads(question),
+        question=question_payload,
         user_answer=user_answer,
         correct_answer=correct_answer,
     )
     db.add(item)
+    _update_profile_from_mistake(db, user_id, knowledge_points)
     db.commit()
     db.refresh(item)
+    await _emit_mistake_event(user_id, item.id, resource_id, knowledge_points, False)
     return {"ok": True, "id": item.id, "updated": False}
 
 
