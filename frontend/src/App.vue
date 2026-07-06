@@ -4,6 +4,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
 import { useAuthStore } from './stores/auth'
 import { useFocusStore } from './stores/focus'
+import api from './api'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,7 +20,7 @@ const menuItems = [
   { path: '/resources', label: '学习资源', icon: 'Document' },
   { path: '/mistakes', label: '错题本', icon: 'CollectionTag' },
   { path: '/learning-path', label: '学习路径', icon: 'Promotion' },
-  { path: '/path', label: '专注淀粉肠', icon: 'Food' },
+  { path: '/path', label: '专注成长', icon: 'Timer' },
   { path: '/config', label: 'API 配置', icon: 'Setting' },
 ]
 
@@ -45,6 +47,32 @@ function logout() {
   authStore.clearAuth()
   userStore.clearUserId()
   router.push('/auth')
+}
+
+async function deleteAccount() {
+  try {
+    await ElMessageBox.confirm(
+      '注销后将删除当前账号的画像、学习资源、错题、会话、学习路径、PPT 会话和专注记录，且不可恢复。',
+      '确认注销账号',
+      {
+        confirmButtonText: '确认注销',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+    await api.delete('/auth/account')
+    authStore.clearAuth()
+    userStore.clearUserId()
+    localStorage.removeItem('focus-sessions')
+    localStorage.removeItem('focus-completed-count')
+    ElMessage.success('账号已注销')
+    router.push('/auth')
+  } catch (e: any) {
+    if (e === 'cancel' || e === 'close') return
+    const message = e?.response?.data?.detail || '账号注销失败'
+    ElMessage.error(message)
+  }
 }
 </script>
 
@@ -73,6 +101,9 @@ function logout() {
         <el-button size="small" @click="logout" style="color:var(--text-secondary);border-color:var(--border)">
           <el-icon style="margin-right:4px"><component :is="'SwitchButton'" /></el-icon>
           退出登录
+        </el-button>
+        <el-button size="small" type="danger" plain @click="deleteAccount">
+          注销账号
         </el-button>
       </div>
     </el-header>

@@ -58,6 +58,8 @@ const selectedNode = computed(() =>
   graphData.value?.nodes.find((node: any) => node.id === selectedCourse.value) || null
 )
 
+const hasCourseKpGraph = computed(() => Boolean(courseKpData.value?.nodes?.length))
+
 const incomingLinks = computed(() =>
   (graphData.value?.links || []).filter((link: any) => link.target === selectedCourse.value)
 )
@@ -92,6 +94,11 @@ function renderGraph() {
   if (!chartRef.value || !graphData.value) return
   if (!chart) chart = echarts.init(chartRef.value)
   chart.resize()
+
+  if (!graphData.value.nodes?.length) {
+    chart.clear()
+    return
+  }
 
   const nodes = graphData.value.nodes.map((node: any) => ({
     ...node,
@@ -238,7 +245,11 @@ onUnmounted(() => chart?.dispose())
     </div>
 
     <div class="cg-layout">
-      <div ref="chartRef" class="cg-chart" />
+      <div v-if="graphData && graphData.nodes.length === 0" class="cg-empty-state">
+        <div class="cg-empty-title">暂无课程图谱</div>
+        <div class="cg-empty-desc">当前专业或学期没有匹配到预制培养方案课程节点，请先确认注册专业是否在系统预制范围内。</div>
+      </div>
+      <div v-else ref="chartRef" class="cg-chart" />
       <div v-if="selectedNode" class="course-panel">
         <div class="course-panel-head">
           <div>
@@ -251,6 +262,15 @@ onUnmounted(() => chart?.dispose())
         </div>
 
         <el-progress :percentage="Math.round((selectedNode.mastery || 0) * 100)" :stroke-width="8" />
+
+        <el-alert
+          v-if="courseKpData && !hasCourseKpGraph"
+          title="该课程暂未配置课内知识点图谱"
+          description="当前只能展示课程级关系，学习资源会先绑定课程节点；补充 kp_file 后可继续绑定具体知识点。"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
 
         <div class="relation-block">
           <div class="relation-title">前置/支撑课程</div>
@@ -289,10 +309,21 @@ onUnmounted(() => chart?.dispose())
         <span class="kp-tip">点击知识点可进入学习资源页生成补弱资源</span>
       </div>
       <KnowledgeGraph
+        v-if="hasCourseKpGraph"
         :knowledgeBase="filteredKb"
         :graphData="courseKpData"
         @node-click="(id) => emit('node-click', id, selectedCourse || undefined)"
       />
+      <div v-else class="kp-empty-state">
+        <div class="kp-empty-title">暂无课内知识点图谱</div>
+        <div class="kp-empty-desc">
+          该课程在培养方案中存在课程节点，但还没有关联具体 kp_file。
+          当前不会渲染空白图谱，也不会伪造知识点标签。
+        </div>
+        <el-button size="small" type="primary" @click="emit('course-click', selectedCourse)">
+          按课程生成资源包
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -304,6 +335,9 @@ onUnmounted(() => chart?.dispose())
 .cg-hint { font-size: 12px; color: #6B635C; }
 .cg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; }
 .cg-chart { width: 100%; height: 520px; border: 1px solid #f0e8e0; border-radius: 8px; background: #fff; }
+.cg-empty-state { width: 100%; height: 520px; border: 1px dashed #ead8c4; border-radius: 8px; background: #fffaf4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 24px; color: #7A6A5C; }
+.cg-empty-title { font-weight: 700; color: #3A332E; }
+.cg-empty-desc { max-width: 520px; font-size: 13px; line-height: 1.7; }
 .course-panel { border: 1px solid #f0e8e0; border-radius: 8px; background: #fffaf4; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .course-panel-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .course-panel h3 { margin: 0 0 6px; color: #3A332E; font-size: 17px; }
@@ -318,6 +352,9 @@ onUnmounted(() => chart?.dispose())
 .kp-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #fef9f4; border-bottom: 1px solid #f0e8e0; gap: 12px; }
 .kp-title { font-size: 13px; font-weight: 600; color: #6b5344; }
 .kp-tip { font-size: 12px; color: #9A8A7A; }
+.kp-empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #7A6A5C; background: #fffaf4; padding: 24px; text-align: center; }
+.kp-empty-title { font-weight: 700; color: #3A332E; }
+.kp-empty-desc { max-width: 560px; font-size: 13px; line-height: 1.7; }
 @media (max-width: 960px) {
   .cg-layout { grid-template-columns: 1fr; }
   .course-panel { min-height: auto; }

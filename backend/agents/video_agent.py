@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from agents.base import BaseAgent, AgentState
 from core.database import SessionLocal
@@ -72,7 +73,7 @@ class VideoAgent(BaseAgent):
         videos = search_result.get("videos", [])
         failures = search_result.get("failures", [])
 
-        self._save_videos(state, videos, kw_result.get("search_summary", ""))
+        self._save_or_draft_videos(state, videos, kw_result.get("search_summary", ""))
         state["response"] = json.dumps(
             {
                 "agent": "video",
@@ -126,3 +127,20 @@ class VideoAgent(BaseAgent):
                 state["resource_title"] = first_title
         finally:
             db.close()
+
+    def _save_or_draft_videos(self, state: AgentState, videos: list[dict], summary: str):
+        if state.get("persist", True) is False:
+            title = f"视频推荐：{state.get('user_message', '')[:30]}" if state.get("user_message") else "视频推荐"
+            state["resource_title"] = title
+            state["draft_resource"] = {
+                "client_draft_id": state.get("client_draft_id") or uuid.uuid4().hex,
+                "resource_type": "video",
+                "title": title,
+                "content": {"videos": videos, "search_summary": summary},
+                "course_name": state.get("course_name"),
+                "knowledge_points": state.get("knowledge_points") or [],
+                "kp_weights": state.get("kp_weights") or {},
+                "save_required": True,
+            }
+            return
+        self._save_videos(state, videos, summary)

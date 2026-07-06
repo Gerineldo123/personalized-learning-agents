@@ -1,6 +1,6 @@
 ﻿import re
 import bcrypt
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from core.database import SessionLocal
 from core.auth import create_token, require_user
 from models.user import User
@@ -173,4 +173,66 @@ def me(phone: str = require_user):
 @router.post('/mark_first_login_done')
 def mark_first_login_done(phone: str = require_user):
     return {"ok": True}
+
+
+@router.delete('/account')
+def delete_account(phone: str = Depends(require_user)):
+    from models.conversation import Conversation, ChatMessage
+    from models.course_path import CoursePath
+    from models.curriculum import Curriculum, UserCourseStatus
+    from models.focus import FocusSession
+    from models.mistake_question import MistakeQuestion
+    from models.ppt_session import PptSession
+    from models.profile_history import ProfileHistory
+    from models.profile_onboarding import ProfileOnboardingSession
+    from models.quiz_record import QuizRecord
+    from models.resource import LearningResource
+    from models.weak_point import WeakPoint
+    from services.ppt_preview_service import cleanup_ppt_preview
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.phone == phone).first()
+        if not user:
+            return {"ok": True, "deleted": False}
+
+        ppt_resource_ids = [
+            item.id for item in db.query(LearningResource.id).filter(
+                LearningResource.user_id == phone,
+                LearningResource.resource_type == "ppt",
+            ).all()
+        ]
+        conversation_ids = [
+            item.id for item in db.query(Conversation.id).filter(
+                Conversation.user_id == phone,
+            ).all()
+        ]
+        if conversation_ids:
+            db.query(ChatMessage).filter(
+                ChatMessage.conversation_id.in_(conversation_ids)
+            ).delete(synchronize_session=False)
+        db.query(Conversation).filter(Conversation.user_id == phone).delete(synchronize_session=False)
+        db.query(CoursePath).filter(CoursePath.user_id == phone).delete(synchronize_session=False)
+        db.query(Curriculum).filter(Curriculum.user_id == phone).delete(synchronize_session=False)
+        db.query(UserCourseStatus).filter(UserCourseStatus.user_id == phone).delete(synchronize_session=False)
+        db.query(FocusSession).filter(FocusSession.user_id == phone).delete(synchronize_session=False)
+        db.query(MistakeQuestion).filter(MistakeQuestion.user_id == phone).delete(synchronize_session=False)
+        db.query(PptSession).filter(PptSession.user_id == phone).delete(synchronize_session=False)
+        db.query(ProfileHistory).filter(ProfileHistory.user_id == phone).delete(synchronize_session=False)
+        db.query(ProfileOnboardingSession).filter(ProfileOnboardingSession.user_id == phone).delete(synchronize_session=False)
+        db.query(QuizRecord).filter(QuizRecord.user_id == phone).delete(synchronize_session=False)
+        db.query(LearningResource).filter(LearningResource.user_id == phone).delete(synchronize_session=False)
+        db.query(WeakPoint).filter(WeakPoint.user_id == phone).delete(synchronize_session=False)
+        db.query(StudentProfile).filter(StudentProfile.user_id == phone).delete(synchronize_session=False)
+        db.delete(user)
+        db.commit()
+
+        for resource_id in ppt_resource_ids:
+            cleanup_ppt_preview(resource_id)
+        return {"ok": True, "deleted": True}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 

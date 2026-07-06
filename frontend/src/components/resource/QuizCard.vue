@@ -18,6 +18,8 @@ interface QuizQuestion {
   function_signature?: string
   test_cases?: TestCase[]
   code_lang?: string
+  knowledge_points?: string[]
+  kp_weights?: Record<string, number>
 }
 
 const props = defineProps<{ content: { title?: string; questions?: QuizQuestion[] }; resourceId?: number; userId?: string }>()
@@ -297,6 +299,15 @@ async function submitQuiz() {
         <el-tag size="small" :type="typeTag(q)">
           {{ typeLabel(q) }}
         </el-tag>
+        <el-tag
+          v-for="kp in q.knowledge_points || []"
+          :key="kp"
+          size="small"
+          type="info"
+          effect="plain"
+        >
+          {{ kp }}
+        </el-tag>
       </div>
       <div class="question-text" v-html="renderMathInline(`${q.id}. ${q.question}`)" />
 
@@ -378,7 +389,7 @@ async function submitQuiz() {
 .actions { display: flex; gap: 8px; }
 .latest-meta { margin-bottom: 12px; color: var(--text-secondary); font-size: 12px; }
 .quiz-question { margin-bottom: 24px; }
-.question-meta { margin-bottom: 6px; }
+.question-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .question-text { margin-bottom: 12px; line-height: 1.6; }
 .question-text :deep(.katex) { font-size: 1.08em; }
 .option-key { margin-right: 4px; font-weight: 600; color: var(--text-regular); }

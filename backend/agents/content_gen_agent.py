@@ -1,5 +1,6 @@
 ﻿import json
 import re
+import uuid
 from agents.base import BaseAgent, AgentState
 from core.llm_client import chat_completion
 from core.database import SessionLocal
@@ -7,7 +8,7 @@ from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
 from services.kp_service import infer_resource_tags
-from services.ppt_model_service import generate_ppt_json, is_ppt_model_configured
+from services.ppt_model_service import create_ppt_session
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -57,13 +58,35 @@ def _normalize_answer_key(answer, options: list[str]) -> str:
     return ""
 
 
-def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
+def _normalize_question_kps(item: dict, fallback_kps: list[str]) -> tuple[list[str], dict[str, float]]:
+    raw = item.get("knowledge_points")
+    if isinstance(raw, str):
+        raw_kps = [x.strip() for x in raw.split(",") if x.strip()]
+    elif isinstance(raw, list):
+        raw_kps = [str(x).strip() for x in raw if str(x).strip()]
+    else:
+        raw_kps = []
+
+    allowed = set(fallback_kps or [])
+    if allowed:
+        kps = [kp for kp in raw_kps if kp in allowed] or list(fallback_kps)
+    else:
+        kps = raw_kps
+    kps = list(dict.fromkeys(kps))
+    if not kps:
+        return [], {}
+    weight = round(1 / len(kps), 4)
+    return kps, {kp: weight for kp in kps}
+
+
+def _normalize_quiz_data(quiz_data: dict, question_count: int, fallback_kps: list[str] | None = None) -> dict:
     if not isinstance(quiz_data, dict):
         raise ValueError("题库生成结果不是合法 JSON 对象")
     questions = quiz_data.get("questions")
     if not isinstance(questions, list):
         raise ValueError("题库生成结果缺少 questions 数组")
 
+    fallback_kps = [kp for kp in (fallback_kps or []) if kp]
     normalized_questions: list[dict] = []
     for item in questions:
         if not isinstance(item, dict):
@@ -79,6 +102,7 @@ def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
             test_cases = item.get("test_cases") if isinstance(item.get("test_cases"), list) else []
             if not item.get("function_signature") or len(test_cases) < 2:
                 continue
+            kps, kp_weights = _normalize_question_kps(item, fallback_kps)
             normalized_questions.append({
                 **item,
                 "type": "coding",
@@ -86,16 +110,21 @@ def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
                 "answer": answer,
                 "explanation": explanation,
                 "test_cases": test_cases,
+                "knowledge_points": kps,
+                "kp_weights": kp_weights,
             })
             continue
 
         if raw_type in {"fill_blank", "blank", "short_answer", "short-answer", "简答题", "填空题"}:
+            kps, kp_weights = _normalize_question_kps(item, fallback_kps)
             normalized_questions.append({
                 **item,
                 "type": "fill_blank",
                 "question": question,
                 "answer": answer,
                 "explanation": explanation,
+                "knowledge_points": kps,
+                "kp_weights": kp_weights,
             })
             continue
 
@@ -103,6 +132,7 @@ def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
         answer_key = _normalize_answer_key(answer, options)
         if not options or not answer_key:
             continue
+        kps, kp_weights = _normalize_question_kps(item, fallback_kps)
         normalized_questions.append({
             **item,
             "type": "single_choice",
@@ -110,6 +140,8 @@ def _normalize_quiz_data(quiz_data: dict, question_count: int) -> dict:
             "options": options,
             "answer": answer_key,
             "explanation": explanation,
+            "knowledge_points": kps,
+            "kp_weights": kp_weights,
         })
 
     normalized_questions = normalized_questions[:question_count]
@@ -223,6 +255,8 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
 - 按照题型要求"{question_types}"分配题目，若包含多种题型则均衡分布。
 - 不要生成 multiple_choice、short_answer 或其它未列出的 type。
 - 数学公式必须使用 LaTeX，并用 $...$ 包裹；例如 $\\lim_{{h\\to 0}} \\frac{{f(x_0+h)-f(x_0)}}{{h}}$。
+- 每道题必须包含 knowledge_points 字段，值只能从输入知识点中选择；一道题可覆盖多个知识点，但不能编造输入之外的知识点。
+- 每道题可选包含 kp_weights，表示该题对各知识点的权重；不提供时系统会自动均分。
 
 生成 {question_count} 道题，整体难度按"{difficulty}"控制。{hallu}
 只返回JSON，不要其他内容。"""
@@ -283,7 +317,7 @@ class ContentGenAgent(BaseAgent):
         ], temperature=0.7)
         content = resp.choices[0].message.content
         safe_content, _ = await check_text(content)
-        self._save_resource(state, "article", safe_content)
+        self._save_or_draft_resource(state, "article", safe_content)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "article", "content": safe_content
         }, ensure_ascii=False)
@@ -314,8 +348,8 @@ class ContentGenAgent(BaseAgent):
         if safe_quiz != json.dumps(quiz_data, ensure_ascii=False):
             quiz_data = {"title": "内容已过滤", "questions": []}
         elif isinstance(quiz_data, dict) and isinstance(quiz_data.get("questions"), list):
-            quiz_data = _normalize_quiz_data(quiz_data, question_count)
-        self._save_resource(state, "quiz", quiz_data)
+            quiz_data = _normalize_quiz_data(quiz_data, question_count, state.get("knowledge_points") or [])
+        self._save_or_draft_resource(state, "quiz", quiz_data)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "quiz", "content": quiz_data
         }, ensure_ascii=False)
@@ -336,81 +370,40 @@ class ContentGenAgent(BaseAgent):
         ], temperature=0.5)
         content = resp.choices[0].message.content
         safe_content, _ = await check_text(content)
-        self._save_resource(state, "code", {"code": safe_content, "language": code_lang})
+        self._save_or_draft_resource(state, "code", {"code": safe_content, "language": code_lang})
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "code", "content": safe_content
         }, ensure_ascii=False)
 
     async def _generate_ppt(self, state: AgentState):
         message = state.user_message
-        profile = self._profile_text(state)
+        course_name = (state.get("course_name") or "").strip()
+        knowledge_points = [kp for kp in (state.get("knowledge_points") or []) if kp]
+        if not course_name or not knowledge_points:
+            raise RuntimeError("生成 PPT 前必须先绑定课程和至少一个知识点，并进入 AiPPT 分步流程")
 
-        # First choice: a dedicated PPT model API configured under /api/config/ppt.
-        if is_ppt_model_configured():
-            try:
-                ppt_data = await generate_ppt_json(message, profile, user_id=state.user_id or "default")
-                safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
-                if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
-                    ppt_data = {"title": "内容已过滤", "slides": []}
-                if not ppt_data.get("pptx_url"):
-                    ppt_data = await self._attach_pptx(ppt_data)
-                self._save_resource(state, "ppt", ppt_data)
-                state["response"] = json.dumps({
-                    "agent": self.name,
-                    "resource_type": "ppt",
-                    "content": ppt_data,
-                    "model_source": "ppt_model_api",
-                }, ensure_ascii=False)
-                return
-            except Exception as exc:
-                raise RuntimeError(f"PPT API 生成失败：{exc}") from exc
-
-        # 优先使用 PptGenSkill（支持 .pptx 导出）
         try:
-            from agents.skills import get_skill
-            from services.config_service import is_configured as _is_configured
-            skill = get_skill("ppt_gen")
-            if skill:
-                result = await skill.execute({
-                    "user_message": message,
-                    "user_id": state.user_id,
-                    "profile": state.get("profile"),
-                }, [])
-                if result.success and result.data.get("ppt_json"):
-                    ppt_data = result.data["ppt_json"]
-                    pptx_url = result.data.get("pptx_url", "")
-                    if pptx_url:
-                        ppt_data["pptx_url"] = pptx_url
-                        try:
-                            import os
-                            ppt_data["pptx_file"] = os.path.basename(pptx_url)
-                        except Exception:
-                            pass
-                    self._save_resource(state, "ppt", ppt_data)
-                    state["response"] = json.dumps({
-                        "agent": self.name,
-                        "resource_type": "ppt",
-                        "content": ppt_data,
-                        "pptx_url": pptx_url,
-                        "skill_used": "ppt_gen",
-                    }, ensure_ascii=False)
-                    return
-        except Exception:
-            pass
+            ppt_session = await create_ppt_session(
+                user_id=state.user_id or "default",
+                topic=message,
+                course_name=course_name,
+                knowledge_points=knowledge_points,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"PPT 分步会话创建失败：{exc}") from exc
 
-        # fallback：使用通用 LLM
-        resp = await chat_completion([
-            {"role": "user", "content": PPT_PROMPT.format(profile=profile, topic=message, hallu=hallu_rules())}
-        ], temperature=0.5)
-        raw = resp.choices[0].message.content.strip()
-        ppt_data = _safe_json_loads(raw)
-        safe_ppt, _ = await check_text(json.dumps(ppt_data, ensure_ascii=False))
-        if safe_ppt != json.dumps(ppt_data, ensure_ascii=False):
-            ppt_data = {"title": "内容已过滤", "slides": []}
-        ppt_data = await self._attach_pptx(ppt_data)
-        self._save_resource(state, "ppt", ppt_data)
+        state["ppt_session"] = ppt_session
+        state["resource_title"] = message or "PPT课件"
         state["response"] = json.dumps({
-            "agent": self.name, "resource_type": "ppt", "content": ppt_data
+            "agent": self.name,
+            "resource_type": "ppt",
+            "content": {
+                "title": message or "PPT课件",
+                "ppt_session": ppt_session,
+                "status": "pending_step_by_step",
+                "message": "PPT 课件必须在 AiPPT 分步工作台中确认大纲和模板后生成。",
+            },
+            "ppt_session": ppt_session,
         }, ensure_ascii=False)
 
     async def _attach_pptx(self, ppt_data: dict) -> dict:
@@ -499,6 +492,23 @@ class ContentGenAgent(BaseAgent):
             if text.startswith("# "):
                 topic = text.split("\n")[0].replace("# ", "").strip()
         return topic or f"{resource_type}_resource"
+
+    def _save_or_draft_resource(self, state: AgentState, resource_type: str, content):
+        if state.get("persist", True) is False:
+            title = self._extract_title(content, resource_type)
+            state["resource_title"] = title
+            state["draft_resource"] = {
+                "client_draft_id": state.get("client_draft_id") or uuid.uuid4().hex,
+                "resource_type": resource_type,
+                "title": title,
+                "content": content if isinstance(content, dict) else {"text": content},
+                "course_name": state.get("course_name"),
+                "knowledge_points": state.get("knowledge_points") or [],
+                "kp_weights": state.get("kp_weights") or {},
+                "save_required": True,
+            }
+            return
+        self._save_resource(state, resource_type, content)
 
 
 if __name__ == "__main__":

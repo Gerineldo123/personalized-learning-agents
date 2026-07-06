@@ -146,6 +146,15 @@ function scrollToBottom() {
   nextTick(() => { if (mainContainer.value) mainContainer.value.scrollTop = mainContainer.value.scrollHeight })
 }
 
+let streamScrollTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleStreamScroll() {
+  if (streamScrollTimer) return
+  streamScrollTimer = setTimeout(() => {
+    streamScrollTimer = null
+    scrollToBottom()
+  }, 60)
+}
+
 // ── 对话模式发送 ──────────────────────────────────
 const isStreaming = ref(false)
 
@@ -251,7 +260,7 @@ async function executeTask(taskDescription?: string) {
     },
     (err) => { console.error(err); agentStore.isExecuting = false; agentStore.setTaskStatus(task.id, 'completed') },
     uploadedFile.value?.content, uploadedFile.value?.fileName, history,
-    (stepId, delta) => { agentStore.appendStepContent(task.id, stepId, delta); scrollToBottom() },
+    (stepId, delta) => { agentStore.appendStepContent(task.id, stepId, delta); scheduleStreamScroll() },
   )
   agentStore.setAbortController(ctrl)
   uploadedFile.value = null

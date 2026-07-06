@@ -1,15 +1,12 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, watch, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
 import api from '../api'
 import ConversationalOnboarding from '../components/profile/ConversationalOnboarding.vue'
 import CurriculumGraph from '../components/profile/CurriculumGraph.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
 import { ElMessage } from 'element-plus'
-import SausageIcon from '../components/SausageIcon.vue'
-import LoadingSausage from '../components/LoadingSausage.vue'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -17,10 +14,7 @@ const router = useRouter()
 
 const profile = ref<any>(null)
 const loading = ref(false)
-const completeness = ref(0)
 const profileHistory = ref<Array<{ trigger: string; snapshot: any; created_at: string }>>([])
-const historyChartRef = ref<HTMLElement | null>(null)
-let historyChart: echarts.ECharts | null = null
 const TRIGGER_LABELS: Record<string, string> = { quiz: '答题', focus: '专注', path_step: '路径步骤', chat: '对话', onboarding: '对话建档', questionnaire: '旧问卷' }
 const quizStats = ref({
   total: 0,
@@ -31,106 +25,35 @@ const quizStats = ref({
 const showOnboarding = ref(false)
 const showRebuildDialog = ref(false)
 const rebuildLoading = ref(false)
-const selectedCourse = ref<any>(null)
 
-const abilityDims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
-const courseColors = ['#E35749', '#49BBC8', '#F3B86B']
-const radarChartRef = ref<HTMLElement | null>(null)
-let radarChart: echarts.ECharts | null = null
-
-function initOverviewRadar() {
-  if (!radarChartRef.value || !profile.value?.weak_courses?.length) return
-  if (!radarChart) radarChart = echarts.init(radarChartRef.value)
-  const weakCourses = profile.value.weak_courses.slice(0, 3)
-  const seriesData: any[] = []
-  const legendData: string[] = []
-  weakCourses.forEach((course: any, i: number) => {
-    const scores = course.course_ability_scores || {}
-    const values = abilityDims.map(d => scores[d] || 0)
-    const color = courseColors[i]
-    seriesData.push({ value: values, name: course.name, lineStyle: { color }, itemStyle: { color }, areaStyle: { color } })
-    legendData.push(course.name)
-  })
-  radarChart.setOption({
-    radar: {
-      center: ['50%', '50%'], radius: '60%',
-      indicator: abilityDims.map(d => ({ name: d, max: 10 })),
-      axisName: { color: '#3A332E', fontSize: 11, fontWeight: 500, borderRadius: 3, padding: [3, 5] },
-      axisLine: { lineStyle: { color: '#EFE6DC' } },
-      splitLine: { lineStyle: { color: '#EFE6DC' } },
-      splitArea: { areaStyle: { color: ['rgba(255,251,245,0.3)', 'rgba(255,251,245,0.5)'] } },
-    },
-    series: [{ type: 'radar', lineStyle: { width: 2 }, areaStyle: { opacity: 0.15 }, data: seriesData }],
-    legend: { show: true, data: legendData, bottom: 0, textStyle: { color: '#7C5C3C', fontSize: 11 }, itemWidth: 10, itemHeight: 10 },
-  })
-  radarChart.off('click')
-  radarChart.on('click', (params: any) => {
-    if (params?.name && profile.value?.weak_courses) {
-      const match = profile.value.weak_courses.find((c: any) => c.name === params.name)
-      if (match) selectedCourse.value = match
-    }
-  })
-  radarChart.resize()
-}
-
-function initCourseRadar() {
-  if (!radarChartRef.value || !selectedCourse.value) return
-  if (!radarChart) radarChart = echarts.init(radarChartRef.value)
-  const scores = selectedCourse.value.course_ability_scores || {}
-  const values = abilityDims.map(d => scores[d] || 0)
-  radarChart.setOption({
-    radar: {
-      center: ['50%', '50%'], radius: '60%',
-      indicator: abilityDims.map(d => ({ name: d, max: 10 })),
-      axisName: { color: '#3A332E', fontSize: 11, fontWeight: 500, borderRadius: 3, padding: [3, 5] },
-      axisLine: { lineStyle: { color: '#EFE6DC' } },
-      splitLine: { lineStyle: { color: '#EFE6DC' } },
-      splitArea: { areaStyle: { color: ['rgba(255,251,245,0.3)', 'rgba(255,251,245,0.5)'] } },
-    },
-    series: [{
-      type: 'radar', lineStyle: { width: 2, color: '#E35749' },
-      areaStyle: { opacity: 0.15, color: '#E35749' },
-      itemStyle: { color: '#E35749' },
-      data: [{ value: values, name: selectedCourse.value.name }],
-    }],
-    legend: { show: false },
-  })
-  radarChart.resize()
-}
-
-const onRadarResize = () => { radarChart?.resize(); historyChart?.resize() }
-
-const completenessHints = computed(() => {
-  if (!profile.value) return []
-  const p = profile.value, hints: string[] = []
-  if (!p.weak_courses?.length) hints.push('通过对话建档补充薄弱课程')
-  if (!p.ability_scores || !Object.values(p.ability_scores).some(Boolean)) hints.push('完成一套题库以获得能力评分')
-  if (!p.cognitive_style) hints.push('通过对话告诉我你的学习偏好')
-  return hints.slice(0, 2)
+const preferredFormats = computed(() => {
+  const value = profile.value?.preferred_format
+  if (Array.isArray(value)) return value.filter(Boolean).join('、') || '待补充'
+  return value || '待补充'
 })
 
-const knowledgeGraphData = computed(() => profile.value?.knowledge_base || {})
+const weakPointPreview = computed(() => {
+  const points = profile.value?.weak_points
+  return Array.isArray(points) ? points.slice(0, 8) : []
+})
 
-function renderHistoryChart() {
-  if (!historyChartRef.value || profileHistory.value.length < 2) return
-  if (!historyChart) historyChart = echarts.init(historyChartRef.value)
-  const times = profileHistory.value.map(h => { const d = new Date(h.created_at); return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}` })
-  const series = abilityDims.map(dim => ({ name: dim, type: 'line', smooth: true, data: profileHistory.value.map(h => { const v = h.snapshot?.ability_scores?.[dim]; return v != null ? Math.round(v*10) : null }), connectNulls: true }))
-  historyChart.setOption({ tooltip: { trigger: 'axis' }, legend: { data: abilityDims, bottom: 0, textStyle: { fontSize: 11, color: '#6B635C' } }, grid: { top: 16, left: 40, right: 16, bottom: 48 }, xAxis: { type: 'category', data: times, axisLabel: { fontSize: 10, rotate: 30, color: '#948A80' } }, yAxis: { type: 'value', min: 0, max: 10 }, series, backgroundColor: 'transparent' })
+const latestEvidenceText = computed(() => {
+  const latest = profileHistory.value[profileHistory.value.length - 1]
+  if (!latest) return '暂无更新记录'
+  const trigger = TRIGGER_LABELS[latest.trigger] || latest.trigger || '系统更新'
+  return `${trigger} · ${new Date(latest.created_at).toLocaleString()}`
+})
+
+const profileEvidence = computed(() => profile.value?.profile_evidence || {})
+function evidenceFor(key: string) {
+  return profileEvidence.value?.[key] || latestEvidenceText.value
 }
 
-watch(profileHistory, () => { setTimeout(renderHistoryChart, 100) }, { deep: true })
+const knowledgeGraphData = computed(() => profile.value?.knowledge_base || {})
 
 onMounted(() => {
   if (userStore.userId) loadProfile(true)
   eventStore.connect(userStore.userId || 'user_default')
-  window.addEventListener('resize', onRadarResize)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', onRadarResize)
-  radarChart?.dispose()
-  historyChart?.dispose()
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
@@ -157,7 +80,6 @@ async function loadProfile(initial = false) {
     const r = await api.get('/profile', { params: { user_id: userStore.userId } })
     if (r.data.found) {
       profile.value = r.data.profile
-      completeness.value = r.data.completeness ?? 0
       profileHistory.value = r.data.history || []
     } else {
       profile.value = null
@@ -172,10 +94,6 @@ async function loadProfile(initial = false) {
   } catch { profile.value = null }
   finally {
     if (initial) loading.value = false
-    if (profile.value?.weak_courses?.length && !selectedCourse.value) {
-      nextTick().then(() => initOverviewRadar())
-    }
-    setTimeout(renderHistoryChart, 150)
   }
 }
 
@@ -219,21 +137,6 @@ const coursePath = ref<any>(null)
 const pathLoading = ref(false)
 const pathGenerating = ref(false)
 const pathResourceLoading = ref(false)
-
-watch(selectedCourse, async (c) => {
-  coursePath.value = null
-  if (c?.name) await loadCoursePath(c.name)
-  await nextTick()
-  if (c) {
-    initCourseRadar()
-    setTimeout(() => radarChart?.resize(), 550)
-  } else {
-    setTimeout(() => {
-      initOverviewRadar()
-      radarChart?.resize()
-    }, 500)
-  }
-})
 
 async function loadCoursePath(courseName: string) {
   pathLoading.value = true
@@ -298,7 +201,7 @@ function openKnowledgePointResources(knowledgePoint: string, courseName?: string
   router.push({
     path: '/resources',
     query: {
-      course: courseName || selectedCourse.value?.name || '',
+      course: courseName || '',
       kp: knowledgePoint,
       package: '知识点补弱',
     },
@@ -358,16 +261,6 @@ const sortedWeakCourses = computed(() => {
   return [...profile.value.weak_courses].sort((a, b) => courseImpactScore(b) - courseImpactScore(a))
 })
 
-// ── 能力维度与答题联动 ────────────────────────────────
-const abilityQuizHint = computed(() => {
-  if (!profile.value?.ability_scores || !quizStats.value.total) return []
-  const scores = profile.value.ability_scores as Record<string, number>
-  return abilityDims
-    .map(d => ({ dim: d, score: scores[d] ?? 0 }))
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 3)
-})
-
 const chatUpdateInput = ref('')
 const chatUpdateLoading = ref(false)
 const chatUpdateResult = ref('')
@@ -388,55 +281,49 @@ async function submitChatUpdate() {
 
 <template>
   <div class="profile-view">
-    <div v-if="loading" class="loading-box"><LoadingSausage text="加载画像..." /></div>
+    <div v-if="loading" class="loading-box">
+      <div class="plain-loading">
+        <el-icon class="is-loading"><component :is="'Loading'" /></el-icon>
+        <span>加载画像...</span>
+      </div>
+    </div>
 
     <div v-else-if="!profile" class="empty-box animate-up">
-      <div class="sa-empty">
-        <SausageIcon :size="72" animate />
+      <div class="profile-empty">
+        <div class="profile-empty-icon">👤</div>
         <p class="sa-empty-text">该用户暂无画像数据</p>
         <el-button style="background:#F9D9B8;color:#3A332E;border:none;border-radius:8px;font-weight:500" @click="showOnboarding = true">开始对话建档</el-button>
       </div>
     </div>
 
-    <div v-else class="profile-layout">
-      <aside class="profile-sidebar animate-up animate-delay-1">
-        <div class="sidebar-top-card" @click="showOnboarding = true">
-          <div class="sidebar-avatar">
-            <SausageIcon :size="50" />
+    <div v-else class="profile-main animate-up animate-delay-2">
+      <section class="profile-hero animate-up animate-delay-1">
+        <div class="profile-identity-card" @click="showOnboarding = true">
+          <div class="profile-avatar">
+            <span>AI</span>
           </div>
-          <div class="sidebar-body">
-            <el-tag size="small" class="sidebar-edu-tag">{{ profile.education_level || profile.grade || '-' }}</el-tag>
-            <div class="sidebar-major">{{ profile.discipline }}{{ profile.major ? ' · ' + profile.major : '' }}</div>
-            <div class="sidebar-cross" v-if="profile.cross_disciplines?.length">
+          <div class="profile-id-body">
+            <el-tag size="small" class="profile-edu-tag">{{ profile.education_level || profile.grade || '-' }}</el-tag>
+            <div class="profile-major">{{ profile.discipline }}{{ profile.major ? ' · ' + profile.major : '' }}</div>
+            <div class="profile-cross" v-if="profile.cross_disciplines?.length">
               + {{ profile.cross_disciplines.join('、') }}
             </div>
           </div>
         </div>
-        <div class="sidebar-courses-wrapper">
-          <template v-for="(c, idx) in sortedWeakCourses" :key="c.name">
-            <div
-              :class="['sidebar-course', { active: selectedCourse?.name === c.name }]"
-              @click="selectedCourse = c"
-            >
-              <div class="sc-row">
-                <div class="sc-priority-badge" v-if="idx === 0">优先</div>
-                <div class="sc-name">{{ c.name }}</div>
-                <div class="sc-tags">
-                  <span v-for="t in c.difficulty_types" :key="t" class="sc-tag">{{ t }}</span>
-                  <span v-for="i in c.impacts" :key="i" class="sc-tag sc-tag-impact">{{ i }}</span>
-                </div>
-              </div>
-              <div class="sc-points">{{ c.knowledge_points }}</div>
-            </div>
-          </template>
+        <div class="profile-hero-summary">
+          <div class="hero-summary-title">画像摘要</div>
+          <p>{{ profile.learning_goal || '暂无明确学习目标，可通过对话建档补充。' }}</p>
+          <div class="profile-source-tags">
+            <el-tag v-if="profile.cognitive_style" size="small" type="info">{{ profile.cognitive_style }}</el-tag>
+            <el-tag v-if="preferredFormats !== '待补充'" size="small" type="success">{{ preferredFormats }}</el-tag>
+          </div>
         </div>
-        <div class="sidebar-actions">
+        <div class="profile-actions">
           <el-button size="small" @click="showOnboarding = true">对话建档</el-button>
           <el-button size="small" @click="showRebuildDialog = true">智能重建</el-button>
         </div>
-      </aside>
+      </section>
 
-      <main class="profile-main animate-up animate-delay-2">
         <div v-if="profile.ability_summary" class="ability-summary">
           <div class="ability-summary-text">{{ aiInterpretText || profile.ability_summary }}</div>
           <el-button
@@ -447,19 +334,33 @@ async function submitChatUpdate() {
           >{{ aiInterpretLoading ? '解读中...' : 'AI 深度解读' }}</el-button>
         </div>
 
-        <!-- 画像健全度 -->
-        <div class="completeness-bar">
-          <span class="completeness-label">画像健全度</span>
-          <el-progress :percentage="completeness" :stroke-width="8" :color="completeness >= 80 ? '#98C9B3' : completeness >= 50 ? '#DBA878' : '#E35749'" style="flex:1" />
-          <span v-if="completeness < 80" class="completeness-hint">继续对话或完成答题可提升健全度</span>
+        <div class="profile-summary-grid">
+          <div class="summary-card">
+            <span>学习目标</span>
+            <strong>{{ profile.learning_goal || '待补充' }}</strong>
+            <small>来源：{{ evidenceFor('learning_goal') }}</small>
+          </div>
+          <div class="summary-card">
+            <span>认知风格</span>
+            <strong>{{ profile.cognitive_style || '待补充' }}</strong>
+            <small>来源：{{ evidenceFor('cognitive_style') }}</small>
+          </div>
+          <div class="summary-card">
+            <span>资源偏好</span>
+            <strong>{{ preferredFormats }}</strong>
+            <small>来源：{{ evidenceFor('preferred_format') }}</small>
+          </div>
+          <div class="summary-card">
+            <span>最近更新依据</span>
+            <strong>{{ latestEvidenceText }}</strong>
+          </div>
         </div>
 
-        <!-- 健全度引导卡片 -->
-        <div v-if="completenessHints.length" class="guide-card">
-          <span class="guide-title">提升建议</span>
-          <ul class="guide-list">
-            <li v-for="hint in completenessHints" :key="hint">{{ hint }}</li>
-          </ul>
+        <div v-if="weakPointPreview.length" class="weak-point-summary">
+          <span class="weak-point-title">薄弱知识点</span>
+          <div class="weak-point-tags">
+            <el-tag v-for="kp in weakPointPreview" :key="kp" size="small" type="warning">{{ kp }}</el-tag>
+          </div>
         </div>
 
         <div class="quiz-summary">
@@ -472,126 +373,6 @@ async function submitChatUpdate() {
             <span v-if="quizStats.latest_score_percent !== null">最近一次：{{ quizStats.latest_score_percent.toFixed(1) }}%</span>
           </div>
           <p class="quiz-analysis">{{ quizAnalysis }}</p>
-          <!-- 能力维度联动：显示最弱的3个维度，点击高亮雷达图 -->
-          <div v-if="abilityQuizHint.length" class="ability-dim-hint">
-            <span class="adh-label">待提升维度</span>
-            <div class="adh-bars">
-              <div
-                v-for="item in abilityQuizHint" :key="item.dim"
-                class="adh-bar-row"
-                @click="selectedCourse = null"
-              >
-                <span class="adh-dim">{{ item.dim }}</span>
-                <el-progress
-                  :percentage="item.score * 10"
-                  :stroke-width="6"
-                  :color="item.score < 4 ? '#E35749' : item.score < 7 ? '#DBA878' : '#98C9B3'"
-                  style="flex:1"
-                />
-                <span class="adh-score">{{ item.score.toFixed(1) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="bottom-area">
-          <div class="ba-card">
-            <div class="ba-radar-cell" :class="{ 'ba-shrink': !!selectedCourse }">
-              <div ref="radarChartRef" class="ba-chart" />
-            </div>
-            <Transition name="ba-slide">
-              <div v-if="selectedCourse" class="ba-detail">
-                <div class="cd-header">
-                  <span class="cd-title">{{ selectedCourse.name }}</span>
-                  <el-button size="small" text @click="selectedCourse = null">收起</el-button>
-                </div>
-                <div class="cd-blocks">
-                  <div class="cd-block">
-                    <span class="cd-label">困难类型</span>
-                    <div class="cd-tags">
-                      <el-tag v-for="t in selectedCourse.difficulty_types" :key="t" size="small">{{ t }}</el-tag>
-                    </div>
-                  </div>
-                  <div class="cd-block">
-                    <span class="cd-label">影响范围</span>
-                    <div class="cd-tags">
-                      <el-tag v-for="i in selectedCourse.impacts" :key="i" size="small" type="warning">{{ i }}</el-tag>
-                    </div>
-                  </div>
-                  <div class="cd-block">
-                    <span class="cd-label">学习目标</span>
-                    <el-tag size="small" type="primary">{{ selectedCourse.goal }}</el-tag>
-                  </div>
-                  <div class="cd-block" v-if="selectedCourse.strategies?.length">
-                    <span class="cd-label">推荐策略</span>
-                    <div class="cd-tags">
-                      <el-tag v-for="s in selectedCourse.strategies" :key="s" size="small" type="success">{{ s }}</el-tag>
-                    </div>
-                  </div>
-                </div>
-                <div class="course-path-section">
-                  <div class="cp-header">
-                    <span class="cp-title">补救学习路径</span>
-                    <el-tag v-if="coursePath && coursePath.status === 'completed'" type="success" size="small">已完成</el-tag>
-                  </div>
-                  <template v-if="coursePath">
-                    <div class="cp-progress">
-                      <el-progress :percentage="Math.round((coursePath.progress || 0) * 100)" :stroke-width="10" :color="coursePath.status === 'completed' ? '#98C9B3' : '#DBA878'" />
-                      <span class="cp-progress-text">{{ coursePath.done_steps || 0 }} / {{ coursePath.total_steps || 0 }} 步完成</span>
-                      <el-button size="small" type="success" :loading="pathResourceLoading" @click="generatePathResources()" style="margin-left: 12px">生成学习资源</el-button>
-                      <el-button size="small" text type="warning" :loading="pathGenerating" @click="generateCoursePath(selectedCourse)" style="margin-left: auto">
-                        重新生成
-                      </el-button>
-                    </div>
-                    <div class="cp-steps">
-                      <div v-for="s in coursePath.steps" :key="s.order" :class="['cp-step', { 'cp-step-done': s.status === 'done' }]">
-                        <el-checkbox
-                          :model-value="s.status === 'done'"
-                          size="large"
-                          @change="(v: boolean) => toggleStepDone(coursePath.id, s.order, v)"
-                        />
-                        <div class="cp-step-body">
-                          <div class="cp-step-title">{{ s.title }}</div>
-                          <div class="cp-step-desc">{{ s.description }}</div>
-                          <div class="cp-step-meta">
-                            <span class="cp-step-duration">{{ s.duration_estimate }}</span>
-                            <el-tag v-for="q in s.resource_queries" :key="q" size="small" type="warning">{{ q }}</el-tag>
-                          </div>
-                          <div v-if="s.resources && s.resources.length" class="cp-resources">
-                            <span class="cp-res-label">学习资源：</span>
-                            <el-button
-                              v-for="r in s.resources"
-                              :key="r.id"
-                              size="small"
-                              :type="r.type === 'quiz' ? 'warning' : 'primary'"
-                              plain
-                              class="cp-res-btn"
-                              @click="openPathResource(r.id)"
-                            >
-                              {{ r.type === 'quiz' ? '📝' : '📄' }} 打开：{{ r.title }}
-                            </el-button>
-                          </div>
-                          <div v-if="s.checkpoint" class="cp-checkpoint">
-                            <el-icon><CircleCheck /></el-icon>
-                            <span>{{ s.checkpoint }}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </template>
-                  <div v-else-if="pathLoading" class="cp-empty">
-                    <span style="color:#666;font-size:13px">加载中...</span>
-                  </div>
-                  <div v-else class="cp-empty">
-                    <p>暂未生成学习路径</p>
-                    <el-button type="primary" size="small" :loading="pathGenerating" @click="generateCoursePath(selectedCourse)">
-                      生成学习路径
-                    </el-button>
-                  </div>
-                </div>
-              </div>
-            </Transition>
-          </div>
         </div>
 
         <!-- 对话式更新画像 -->
@@ -602,19 +383,6 @@ async function submitChatUpdate() {
             <el-button type="primary" :loading="chatUpdateLoading" @click="submitChatUpdate">更新</el-button>
           </div>
           <div v-if="chatUpdateResult" class="chat-update-result">{{ chatUpdateResult }}</div>
-        </div>
-
-        <!-- 能力成长折线图 -->
-        <div v-if="profileHistory.length >= 2" class="history-section">
-          <div class="section-title">能力成长趋势</div>
-          <div ref="historyChartRef" class="history-chart" />
-          <div class="history-triggers">
-            <span v-for="h in profileHistory.slice(-8)" :key="h.created_at" class="trigger-dot">
-              <el-tag size="small" :type="h.trigger === 'quiz' ? 'warning' : h.trigger === 'focus' ? 'success' : 'info'">
-                {{ TRIGGER_LABELS[h.trigger] || h.trigger }}
-              </el-tag>
-            </span>
-          </div>
         </div>
 
         <!-- 知识图谱 -->
@@ -628,7 +396,6 @@ async function submitChatUpdate() {
             @node-click="openKnowledgePointResources"
           />
         </div>
-      </main>
     </div>
 
     <ConversationalOnboarding
@@ -670,43 +437,54 @@ async function submitChatUpdate() {
 }
 .loading-box { height: 200px; }
 .empty-box { margin-top: 40px; color: #948A80; }
-
-.profile-layout {
+.plain-loading {
+  height: 100%;
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
-}
-
-.profile-sidebar {
-  width: 280px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
-  position: sticky;
-  top: 16px;
+  color: #948A80;
 }
 
-.sidebar-top-card {
-  background: linear-gradient(135deg, #FFFBF5 0%, #FFF0E0 100%);
+.profile-main {
+  width: min(100%, 1120px);
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.profile-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) 1fr auto;
+  gap: 14px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+
+.profile-identity-card,
+.profile-hero-summary,
+.profile-actions {
+  background: #FFFBF5;
   border: 1px solid #EFE6DC;
   border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(219,168,120,0.08);
+}
+
+.profile-identity-card {
   padding: 16px;
   display: flex;
   gap: 14px;
   align-items: center;
   cursor: pointer;
   transition: all 0.2s;
-  box-shadow: 0 2px 8px rgba(219,168,120,0.08);
 }
-.sidebar-top-card:hover {
+.profile-identity-card:hover {
   border-color: #DBA878;
   box-shadow: 0 4px 16px rgba(219,168,120,0.15);
   transform: translateY(-1px);
 }
 
-.sidebar-avatar {
-  background: #FFF5EB;
+.profile-avatar {
+  background: linear-gradient(135deg, #3A332E, #6B5445);
   width: 64px;
   height: 64px;
   border-radius: 14px;
@@ -714,113 +492,70 @@ async function submitChatUpdate() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border: 1.5px solid #EFE6DC;
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 8px 20px rgba(58, 51, 46, 0.18);
 }
 
-.sidebar-body {
+.profile-id-body {
   flex: 1;
   min-width: 0;
   color: #3A332E;
 }
 
-.sidebar-edu-tag {
+.profile-edu-tag {
   display: inline-block;
   margin-bottom: 10px;
 }
 
-.sidebar-major {
-  font-weight: 500;
-  font-size: 14px;
+.profile-major {
+  font-weight: 600;
+  font-size: 15px;
   color: #3A332E;
-  margin-bottom: 6px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
-.sidebar-cross {
+.profile-cross {
   font-size: 12px;
   color: #6B635C;
-  margin-bottom: 12px;
+  margin-top: 6px;
 }
 
-.sidebar-actions {
+.profile-hero-summary {
+  padding: 14px 16px;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   gap: 8px;
 }
-.sidebar-actions .el-button {
-  flex: 1;
+.hero-summary-title { font-size: 13px; font-weight: 700; color: #3A332E; }
+.profile-hero-summary p { margin: 0; color: #6B635C; font-size: 13px; line-height: 1.7; }
+.profile-source-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.profile-actions {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+.profile-actions .el-button {
+  margin-left: 0;
   background: transparent !important;
   border-color: #EFE6DC !important;
   color: #3A332E;
 }
 
-.profile-main {
-  flex: 1;
-  min-width: 0;
-}
-
-
-.sidebar-courses-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sidebar-course {
-  background: #FFFBF5;
-  border: 1px solid #EFE6DC;
-  border-radius: 10px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: 0.2s;
-  color: #3A332E;
-}
-.sidebar-course:hover {
-  background: #FFF0E0;
-  border-color: #DBA878;
-}
-.sidebar-course.active {
-  background: #FFF0E0;
-  outline: 2px solid #DBA878;
-  outline-offset: 1px;
-}
-
-.sc-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sc-name {
-  font-weight: 500;
-  font-size: 14px;
-  color: #3A332E;
-  white-space: nowrap;
-}
-
-.sc-points {
-  font-size: 12px;
-  color: #948A80;
-  opacity: 0.9;
-  line-height: 1.4;
-  margin-top: 4px;
-}
-
-.sc-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.sc-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(249,217,184,0.2);
-  color: #3A332E;
-  font-size: 11px;
-}
-.sc-tag-impact {
-  background: rgba(238, 155, 143, 0.4);
+@media (max-width: 900px) {
+  .profile-hero {
+    grid-template-columns: 1fr;
+  }
+  .profile-actions {
+    flex-direction: row;
+  }
+  .profile-summary-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .quiz-summary {
@@ -830,6 +565,60 @@ async function submitChatUpdate() {
   padding: 16px 18px;
   margin-bottom: 16px;
   box-shadow: 0 2px 8px rgba(219,168,120,0.06);
+}
+
+.profile-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.summary-card {
+  padding: 14px 16px;
+  border: 1px solid #EFE6DC;
+  border-radius: 12px;
+  background: #FFFBF5;
+}
+.summary-card span {
+  display: block;
+  margin-bottom: 6px;
+  color: #948A80;
+  font-size: 12px;
+}
+.summary-card strong {
+  color: #3A332E;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+.summary-card small {
+  display: block;
+  margin-top: 6px;
+  color: #948A80;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.weak-point-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(235, 177, 95, 0.4);
+  border-radius: 12px;
+  background: rgba(253,246,236,0.9);
+}
+.weak-point-title {
+  color: #DBA878;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+.weak-point-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .quiz-head {
@@ -1076,23 +865,24 @@ async function submitChatUpdate() {
   text-align: center;
   line-height: 1.8;
 }
-
-.completeness-bar {
-  display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
-  padding: 12px 16px; background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
+.profile-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 20px;
 }
-.completeness-label { font-size: 13px; color: #6B635C; white-space: nowrap; font-weight: 500; }
-.completeness-hint { font-size: 12px; color: #948A80; white-space: nowrap; }
-
-.guide-card {
-  background: rgba(253,246,236,0.9); border: 1px solid rgba(235,177,95,0.4);
-  border-radius: 12px; padding: 12px 16px; margin-bottom: 12px;
-  display: flex; align-items: flex-start; gap: 12px;
-  box-shadow: 0 2px 8px rgba(219,168,120,0.06);
+.profile-empty-icon {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 34px;
 }
-.guide-title { font-size: 12px; font-weight: 500; color: #DBA878; white-space: nowrap; padding-top: 2px; }
-.guide-list { margin: 0; padding-left: 16px; font-size: 12px; color: #6B635C; line-height: 1.8; }
 
 .chat-update-box {
   background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px;
@@ -1102,11 +892,6 @@ async function submitChatUpdate() {
 .chat-update-title { font-size: 13px; font-weight: 500; color: #DBA878; margin-bottom: 10px; }
 .chat-update-row { display: flex; gap: 10px; }
 .chat-update-result { margin-top: 8px; font-size: 12px; color: #98C9B3; }
-
-.history-section { margin-top: 16px; }
-.history-chart { width: 100%; height: 240px; background: #FFFBF5; border-radius: 12px; border: 1px solid #EFE6DC; box-shadow: 0 2px 8px rgba(219,168,120,0.06); }
-.history-triggers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.trigger-dot { cursor: default; }
 
 .section-title { font-size: 14px; font-weight: 500; color: #3A332E; margin: 0 0 12px; }
 
@@ -1143,39 +928,6 @@ async function submitChatUpdate() {
   flex-shrink: 0;
 }
 
-/* 能力维度联动 */
-.ability-dim-hint {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #EFE6DC;
-}
-.adh-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #6B635C;
-  display: block;
-  margin-bottom: 8px;
-}
-.adh-bars { display: flex; flex-direction: column; gap: 6px; }
-.adh-bar-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-}
-.adh-dim {
-  font-size: 12px;
-  color: #3A332E;
-  width: 56px;
-  flex-shrink: 0;
-}
-.adh-score {
-  font-size: 12px;
-  color: #948A80;
-  width: 26px;
-  text-align: right;
-  flex-shrink: 0;
-}
 </style>
 
 

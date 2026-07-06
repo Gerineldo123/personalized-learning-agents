@@ -58,6 +58,8 @@ export function agentExecuteStream(
                 onToken(parsed.step_id, parsed.delta)
               } else if (parsed.type === 'step') {
                 onStep(parsed as StepEvent)
+              } else if (parsed.type === 'error') {
+                onError(new Error(parsed.message || '执行失败'))
               }
             } catch {
               console.warn('Failed to parse SSE data:', raw)

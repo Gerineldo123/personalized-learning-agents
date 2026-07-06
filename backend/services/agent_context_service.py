@@ -271,16 +271,57 @@ def build_agent_context(db: Session, user_id: str, profile: StudentProfile | Non
     }
 
 
+def build_mistake_prompt_context(mistakes: dict | None, limit: int = 6) -> str:
+    mistakes = mistakes or {}
+    recent = _as_list(mistakes.get("recent"))[:limit]
+    total = int(mistakes.get("total") or 0)
+    if total <= 0 or not recent:
+        return "错题本为空：当前没有可用于分析的历史错题记录。"
+
+    kp_counts: dict[str, int] = {}
+    for item in recent:
+        for point in _as_list(item.get("knowledge_points")):
+            kp_counts[str(point)] = kp_counts.get(str(point), 0) + 1
+    weak_points = sorted(kp_counts.items(), key=lambda pair: pair[1], reverse=True)
+
+    lines = [
+        f"错题本共有 {total} 条记录，以下列出最近 {len(recent)} 条真实错题。",
+    ]
+    if weak_points:
+        lines.append("高频知识点：" + "、".join(f"{point}({count})" for point, count in weak_points[:8]))
+
+    for index, item in enumerate(recent, start=1):
+        knowledge_points = "、".join(_as_list(item.get("knowledge_points"))) or "未标注"
+        options = _as_list(item.get("options"))
+        option_text = ""
+        if options:
+            option_text = "；选项：" + " / ".join(_short(opt.get("text") if isinstance(opt, dict) else opt, 80) for opt in options[:4])
+        analysis = _as_dict(item.get("analysis"))
+        analysis_text = analysis.get("error_analysis") or analysis.get("summary") or ""
+        lines.append(
+            f"{index}. 课程：{item.get('course_name') or '未分类'}；知识点：{knowledge_points}；"
+            f"题目：{_short(item.get('question'), 220)}{option_text}；"
+            f"学生答案：{item.get('user_answer') or '未填写'}；正确答案：{item.get('correct_answer') or '未提供'}；"
+            f"错误次数：{item.get('wrong_count') or 1}"
+            + (f"；错因分析：{_short(analysis_text, 160)}" if analysis_text else "")
+        )
+    return "\n".join(lines)
+
+
 def build_agent_context_text(context: dict) -> str:
+    mistakes = context.get("mistakes") or {}
     payload = {
         "使用要求": [
             "这是系统已读取到的真实模块数据。",
             "当错题本/学习资源/学习路径/知识图谱列表非空时，不要声称无法访问这些数据。",
             "涉及错题分析时，必须优先基于 mistakes.recent 中的题目、学生答案、正确答案和知识点进行分析。",
+            "如果 mistakes.total > 0，禁止说错题本为空、没有历史错题或缺少错题内容。",
             "涉及资源推荐或学习规划时，结合 resources、learning_paths、curriculum 和 profile。",
         ],
+        "mistakes": mistakes,
+        "mistake_summary": build_mistake_prompt_context(mistakes),
         "学生画像": context.get("profile") or {},
-        "错题本": context.get("mistakes") or {},
+        "错题本": mistakes,
         "学习资源": context.get("resources") or {},
         "学习路径": context.get("learning_paths") or {},
         "知识图谱": context.get("curriculum") or {},

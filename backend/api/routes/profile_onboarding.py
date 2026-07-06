@@ -159,37 +159,41 @@ def _diagnose(micro_quiz: dict, answers: dict) -> dict:
 
 def _infer_profile_from_interview(answers: list[dict]) -> dict:
     text = " ".join(str(item.get("answer") or "") for item in answers)
-    preferred = []
-    if any(key in text for key in ["图", "可视化", "思维导图"]):
+    first_answer = str(answers[0].get("answer") or "").strip() if answers else ""
+
+    preferred: list[str] = []
+    if any(key in text for key in ["图", "图解", "可视化", "思维导图"]):
         preferred.append("图解/思维导图")
-    if any(key in text for key in ["视频", "动画"]):
+    if any(key in text for key in ["视频", "动画", "演示"]):
         preferred.append("视频/动画")
-    if any(key in text for key in ["代码", "实验", "项目", "案例"]):
+    if any(key in text for key in ["代码", "实验", "项目", "案例", "实操"]):
         preferred.append("代码案例/实践项目")
-    if any(key in text for key in ["题", "考试", "刷题"]):
+    if any(key in text for key in ["题", "练习", "考试", "刷题", "测验"]):
         preferred.append("题库练习")
+    if any(key in text for key in ["PPT", "课件", "幻灯片"]):
+        preferred.append("PPT课件")
     if not preferred:
         preferred = ["文章讲解", "题库练习"]
 
-    if any(key in text for key in ["图", "视频", "动画"]):
+    if any(key in text for key in ["图", "图解", "可视化", "思维导图", "视频", "动画", "演示"]):
         cognitive_style = "视觉型"
-    elif any(key in text for key in ["代码", "项目", "实验", "案例"]):
+    elif any(key in text for key in ["代码", "项目", "实验", "案例", "实操"]):
         cognitive_style = "实践型"
     else:
         cognitive_style = "混合型"
 
-    mistake_tags = []
+    mistake_tags: list[str] = []
     if "记不住" in text or "背" in text:
         mistake_tags.append("记忆不牢")
-    if "没思路" in text or "不会做" in text:
+    if "没思路" in text or "不会做" in text or "看懂但不会" in text:
         mistake_tags.append("解题思路不足")
-    if "代码" in text or "实验" in text:
+    if "代码" in text or "实验" in text or "实操" in text:
         mistake_tags.append("实践迁移困难")
-    if "太杂" in text or "重点" in text:
+    if "太杂" in text or "重点" in text or "体系" in text:
         mistake_tags.append("知识组织困难")
 
     return {
-        "learning_goal": (answers[0].get("answer") if answers else "") or "扎实基础，补齐薄弱点",
+        "learning_goal": first_answer or "扎实基础，补齐薄弱点",
         "cognitive_style": cognitive_style,
         "preferred_format": preferred,
         "mistake_tendency": {
@@ -198,7 +202,6 @@ def _infer_profile_from_interview(answers: list[dict]) -> dict:
         },
         "ability_summary": "已完成对话式画像建档，系统将优先围绕薄弱课程和知识点推荐资源。",
     }
-
 
 def _apply_graph_marks(diagnosis: dict, graph_marks: dict) -> tuple[dict, list[str]]:
     kb = dict(diagnosis.get("knowledge_base") or {})
@@ -433,6 +436,8 @@ async def finish_onboarding(req: OnboardingFinishRequest, db: Session = Depends(
         "knowledge_base": profile.knowledge_base or {},
         "course_mastery": profile.course_mastery or {},
         "weak_points": profile.weak_points or [],
+        "learning_goal": profile.learning_goal or "",
+        "cognitive_style": profile.cognitive_style or "",
         "preferred_format": profile.preferred_format or [],
     }
     db.add(ProfileHistory(

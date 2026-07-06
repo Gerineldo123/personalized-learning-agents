@@ -131,6 +131,7 @@ async def submit_quiz(
         questions = []
 
     submitted_answers = record.answers or {}
+    question_kp_scores: dict[str, list[float]] = {}
     for q in questions:
         qid = q.get('id')
         if qid is None:
@@ -150,6 +151,12 @@ async def submit_quiz(
                 is_wrong = True
         else:
             is_wrong = user_ans != correct_ans
+        q_kps = q.get('knowledge_points') if isinstance(q.get('knowledge_points'), list) else []
+        if not q_kps and resource:
+            q_kps = resource.knowledge_points or []
+        for kp in q_kps:
+            if kp:
+                question_kp_scores.setdefault(kp, []).append(0.0 if is_wrong else 1.0)
         if not user_ans or not is_wrong:
             continue
         exists = (
@@ -184,16 +191,23 @@ async def submit_quiz(
         "score": req.score,
     })
 
-    # Prefer explicit graph tags; fall back to text matching for legacy resources.
+    # Prefer question-level graph tags; fall back to resource-level tags for legacy resources.
     from services.kp_service import match_kp, update_knowledge_base
-    matched_kps = []
-    if resource:
-        matched_kps = resource.knowledge_points or []
-    if not matched_kps and resource:
-        kp_text = (resource.title or "") + " " + " ".join(resource.tags or [])
-        matched_kps = match_kp(kp_text)
-    if matched_kps:
-        update_knowledge_base(db, req.user_id, {kp: req.score for kp in matched_kps})
+    if question_kp_scores:
+        kp_scores = {
+            kp: sum(scores) / max(len(scores), 1)
+            for kp, scores in question_kp_scores.items()
+        }
+        update_knowledge_base(db, req.user_id, kp_scores)
+    else:
+        matched_kps = []
+        if resource:
+            matched_kps = resource.knowledge_points or []
+        if not matched_kps and resource:
+            kp_text = (resource.title or "") + " " + " ".join(resource.tags or [])
+            matched_kps = match_kp(kp_text)
+        if matched_kps:
+            update_knowledge_base(db, req.user_id, {kp: req.score for kp in matched_kps})
 
     if resource:
         resource.learning_status = "completed"

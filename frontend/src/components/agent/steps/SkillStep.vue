@@ -3,14 +3,23 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import type { AgentStep, SkillData } from '../../../types/agent'
 import MarkdownIt from 'markdown-it'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
+import api from '../../../api'
+import { useUserStore } from '../../../stores/user'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
 const props = defineProps<{ step: AgentStep }>()
+const userStore = useUserStore()
 
 const expanded = ref(props.step.status === 'running')
 
 const data = computed(() => props.step.data as SkillData & { render_type?: string })
+const draftResource = computed(() => data.value.draft_resource || null)
+const savingDraft = ref(false)
+const savedResourceId = ref<number | null>(null)
+const saveError = ref('')
+const savedDraftResourceId = computed(() => savedResourceId.value || (draftResource.value as any)?.saved_resource_id || null)
 
 const chartRef = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
@@ -27,6 +36,8 @@ const isPptViewer = computed(() => {
   return data.value.render_type === 'ppt_viewer'
 })
 
+const isStreamingCode = computed(() => props.step.status === 'running' && !!data.value.streaming_code)
+
 const progressValue = computed(() => {
   const raw = Number(data.value.progress ?? 0)
   if (!Number.isFinite(raw)) return 0
@@ -34,6 +45,7 @@ const progressValue = computed(() => {
 })
 
 const hasProgress = computed(() => {
+  if (isStreamingCode.value) return false
   return data.value.progress !== undefined || !!data.value.current_phase || !!data.value.progress_note
 })
 
@@ -248,6 +260,7 @@ onUnmounted(() => {
 const isHtmlCode = computed(() =>
   ['html', 'htm'].includes((data.value.language || '').toLowerCase()) && !!data.value.content
 )
+const hasCodeContent = computed(() => !!data.value.language && (!!data.value.content || isStreamingCode.value))
 const previewVisible = ref(true)
 const iframeHeight = ref(700)
 
@@ -261,6 +274,40 @@ function onIframeLoad(e: Event) {
 
 function toggleExpand() {
   expanded.value = !expanded.value
+}
+
+async function saveDraftResource() {
+  const draft = draftResource.value
+  if (!draft || savingDraft.value) return
+  if (!userStore.userId) {
+    ElMessage.error('缺少用户 ID，无法保存资源')
+    return
+  }
+  savingDraft.value = true
+  saveError.value = ''
+  try {
+    const resp = await api.post('/resources/save_draft', {
+      ...draft,
+      user_id: userStore.userId,
+    })
+    const resource = resp.data?.resource
+    savedResourceId.value = resource?.id || null
+    if (savedResourceId.value) {
+      ;(props.step.data as any).draft_resource = {
+        ...draft,
+        save_required: false,
+        saved_resource_id: savedResourceId.value,
+      }
+      ElMessage.success('已保存到学习资源')
+    } else {
+      ElMessage.warning('保存完成，但未返回资源 ID')
+    }
+  } catch (err: any) {
+    saveError.value = err?.response?.data?.detail || err?.message || '保存失败'
+    ElMessage.error(saveError.value)
+  } finally {
+    savingDraft.value = false
+  }
 }
 </script>
 
@@ -382,15 +429,16 @@ function toggleExpand() {
       </div>
 
       <!-- 代码块展示 -->
-      <div v-else-if="data.language && data.content" class="skill-content">
+      <div v-else-if="hasCodeContent" class="skill-content">
         <div class="code-toolbar">
           <span class="code-lang-tag">{{ data.language }}</span>
-          <button v-if="isHtmlCode" class="preview-btn" @click.stop="previewVisible = !previewVisible">
+          <span v-if="isStreamingCode" class="streaming-code-label">AI 正在输出代码...</span>
+          <button v-else-if="isHtmlCode" class="preview-btn" @click.stop="previewVisible = !previewVisible">
             {{ previewVisible ? '📄 显示代码' : '▶ 运行预览' }}
           </button>
         </div>
-        <iframe v-if="isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" :style="{ height: iframeHeight + 'px' }" @load="onIframeLoad" />
-        <pre v-else class="code-block"><code>{{ data.content }}</code></pre>
+        <iframe v-if="step.status === 'completed' && isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" :style="{ height: iframeHeight + 'px' }" @load="onIframeLoad" />
+        <pre v-else class="code-block"><code>{{ data.content || '// 正在等待模型输出...' }}</code><span v-if="isStreamingCode" class="code-stream-cursor">▌</span></pre>
       </div>
 
       <!-- Markdown 渲染内容 -->
@@ -406,6 +454,31 @@ function toggleExpand() {
       <!-- 纯文本内容 -->
       <div v-else-if="data.content && !isRadialTree && !isVideoCards" class="skill-content">
         <div class="text-content">{{ data.content }}</div>
+      </div>
+
+      <div v-if="draftResource && step.status === 'completed'" class="draft-save-panel">
+        <div class="draft-info">
+          <div class="draft-title">可保存为学习资源</div>
+          <div class="draft-meta">
+            <span>{{ draftResource.resource_type }}</span>
+            <span v-if="draftResource.course_name">课程：{{ draftResource.course_name }}</span>
+            <span v-if="draftResource.knowledge_points?.length">知识点：{{ draftResource.knowledge_points.join('、') }}</span>
+          </div>
+        </div>
+        <a
+          v-if="savedDraftResourceId"
+          class="draft-link"
+          :href="`/resources?open=${savedDraftResourceId}`"
+          target="_blank"
+          rel="noopener"
+        >查看资源 →</a>
+        <el-button
+          v-else
+          size="small"
+          type="primary"
+          :loading="savingDraft"
+          @click.stop="saveDraftResource"
+        >保存到学习资源</el-button>
       </div>
     </div>
   </div>
@@ -480,6 +553,8 @@ function toggleExpand() {
 .code-block code { font-family: var(--font-mono); }
 .code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #2d2d3f; border-radius: 8px 8px 0 0; }
 .code-lang-tag { font-size: 11px; color: #888; }
+.streaming-code-label { font-size: 12px; color: #FBCFA8; animation: streamPulse 1.2s ease-in-out infinite; }
+.code-stream-cursor { display: inline-block; color: #FBCFA8; animation: streamBlink 0.8s step-end infinite; }
 .preview-btn { font-size: 12px; padding: 3px 10px; border: 1px solid #98C9B3; border-radius: 6px; background: transparent; color: #98C9B3; cursor: pointer; transition: all 0.2s; }
 .preview-btn:hover { background: #98C9B3; color: #fff; }
 .html-preview { width: calc(100% + 28px); margin-left: -14px; min-height: 600px; height: auto; border: none; border-top: 1px solid #EFE6DC; background: #fff; display: block; border-radius: 0 0 8px 8px; }
@@ -508,5 +583,23 @@ function toggleExpand() {
 .ppt-slide-points { padding-left: 20px; margin: 0; }
 .ppt-slide-points li { margin-bottom: 10px; line-height: 1.7; color: #6B635C; font-size: 15px; }
 .ppt-nav { display: flex; justify-content: center; gap: 12px; padding: 12px; border-top: 1px solid #EFE6DC; background: #FFF5EB; }
+.draft-save-panel {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #E8C29C;
+  border-radius: 10px;
+  background: #FFF5EB;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.draft-info { min-width: 0; }
+.draft-title { font-size: 13px; font-weight: 600; color: #3A332E; }
+.draft-meta { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #948A80; }
+.draft-link { color: #409EFF; font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.draft-link:hover { text-decoration: underline; }
 @media (max-width: 600px) { .video-grid { grid-template-columns: 1fr; } }
+@keyframes streamBlink { 50% { opacity: 0; } }
+@keyframes streamPulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
 </style>

@@ -346,6 +346,7 @@ async def create_ppt_session(
     finally:
         db.close()
 
+
     base_url = _docmee_base_url()
     return {
         "session_id": session_id,
@@ -559,105 +560,16 @@ async def one_click_generate_ppt(
     course_name: str,
     knowledge_points: list[str],
 ) -> dict:
-    if not is_docmee_aippt_configured():
-        raise RuntimeError("PPT API 未配置，请先在 API 配置中设置 Docmee AiPPT 密钥")
-
-    slide_count = 7
-    profile_text = "大学生学习课件"
-    try:
-        from core.database import SessionLocal
-        from models.student import StudentProfile
-        db = SessionLocal()
-        try:
-            p = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
-            if p:
-                profile_text = f"专业：{p.major or '未知'}，年级：{p.grade or '未知'}"
-        finally:
-            db.close()
-    except Exception:
-        pass
-
-    result = await _generate_docmee_aippt(topic, profile_text, user_id, slide_count)
-
-    from core.database import SessionLocal
-    from models.resource import LearningResource
-    import json
-
-    ppt_data = {
-        "title": result["title"],
-        "slides": result.get("slides", []),
-        "pptx_file": result.get("pptx_file"),
-        "pptx_url": result.get("pptx_url", ""),
-        "source": "docmee_one_click",
-        "template_id": result.get("template_id"),
-        "remote_ppt_id": result.get("remote_ppt_id"),
-        "cover_url": result.get("cover_url"),
-    }
-
-    from services.kp_service import infer_resource_tags
-    text_for_tags = " ".join([
-        result["title"],
-        course_name or "",
-        " ".join(knowledge_points or []),
-        json.dumps(ppt_data, ensure_ascii=False),
-    ])
-    graph_tags = infer_resource_tags(
-        text_for_tags,
+    session = await create_ppt_session(
+        user_id=user_id,
+        topic=topic,
         course_name=course_name,
-        knowledge_points=knowledge_points or [],
+        knowledge_points=knowledge_points,
     )
-    tags = list(dict.fromkeys(
-        ["ppt"]
-        + [x for x in [graph_tags.get("course_name")] if x]
-        + list(graph_tags.get("knowledge_points") or [])
-    ))
-
-    db = SessionLocal()
-    try:
-        resource = LearningResource(
-            user_id=user_id,
-            resource_type="ppt",
-            title=result["title"],
-            content=ppt_data,
-            tags=tags,
-            course_name=graph_tags.get("course_name"),
-            knowledge_points=graph_tags.get("knowledge_points") or [],
-            kp_weights=graph_tags.get("kp_weights") or {},
-            tag_confidence=graph_tags.get("tag_confidence") or 0,
-        )
-        db.add(resource)
-        db.flush()
-        db.commit()
-
-        try:
-            from services.ppt_preview_service import schedule_ppt_preview
-            schedule_ppt_preview(resource.id)
-        except Exception:
-            pass
-
-        try:
-            from services.event_service import emit
-            import asyncio
-            asyncio.ensure_future(emit("resource.created", {
-                "user_id": user_id,
-                "resource_id": resource.id,
-                "course_name": resource.course_name,
-                "knowledge_points": resource.knowledge_points,
-            }))
-        except Exception:
-            pass
-
-        return {
-            "ok": True,
-            "resource": {
-                "id": resource.id,
-                "title": resource.title,
-                "resource_type": resource.resource_type,
-                "course_name": resource.course_name,
-                "knowledge_points": resource.knowledge_points,
-                "pptx_url": ppt_data["pptx_url"],
-                "cover_url": result.get("cover_url"),
-            },
-        }
-    finally:
-        db.close()
+    return {
+        "ok": True,
+        "status": "pending_step_by_step",
+        "message": "PPT 已改为强制 AiPPT 分步生成，请在工作台确认大纲和模板后保存。",
+        "ppt_session": session,
+        "session_id": session.get("session_id"),
+    }

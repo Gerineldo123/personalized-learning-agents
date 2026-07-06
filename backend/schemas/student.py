@@ -7,16 +7,6 @@ class ProfileCreate(BaseModel):
     learning_goal: str = ""
 
 
-class QuestionnaireRequest(BaseModel):
-    education_level: str = ""
-    education_year: str = ""
-    current_semester: int | None = None
-    discipline: str = ""
-    major: str = ""
-    cross_disciplines: list[str] = []
-    courses: list[dict] = []
-
-
 class CourseInfo(BaseModel):
     name: str
     knowledge_points: str = ""

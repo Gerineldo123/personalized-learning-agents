@@ -14,6 +14,7 @@ from core.database import SessionLocal
 from core.sse import sse_stream
 from graph.state import AgentGraphState
 from graph.subgraphs.evaluation import evaluation_subgraph
+from graph.subgraphs.resource_orchestration import DEFAULT_RESOURCE_TYPES, resource_orchestration_graph
 from graph.subgraphs.review import review_subgraph
 from models.course_path import CoursePath
 from models.student import StudentProfile
@@ -209,113 +210,35 @@ async def _run_resource(resource_type: str, agent, state: AgentState) -> tuple[s
 
 
 async def _stream_study_workflow(req: WorkflowRequest, safe_topic: str):
-    profile = _load_profile(req.user_id)
-    profile_data = _profile_snapshot(profile)
-    course_name = infer_course_from_text(safe_topic, default="数据结构") or "数据结构"
-    focus_kps = default_focus_kps(course_name, safe_topic, limit=4)
+    state = _make_state(req.user_id, safe_topic, req.history)
+    state["requested_resource_types"] = DEFAULT_RESOURCE_TYPES
+    yielded_resources = set()
+    yielded_events = set()
 
-    yield _stage("profile_analyzed", profile_data)
-    diagnosis = {
-        "course_name": course_name,
-        "focus_knowledge_points": focus_kps,
-        "weak_points": profile_data.get("weak_points", []),
-        "learning_goal": profile_data.get("learning_goal"),
-    }
-    yield _stage("diagnosis_done", diagnosis)
-
-    plan = [
-        {"resource_type": "article", "agent": "content_gen", "purpose": "概念讲解"},
-        {"resource_type": "mindmap", "agent": "mindmap", "purpose": "知识结构化"},
-        {"resource_type": "quiz", "agent": "content_gen", "purpose": "掌握度检测"},
-        {"resource_type": "code", "agent": "content_gen", "purpose": "算法实践"},
-        {"resource_type": "ppt", "agent": "content_gen", "purpose": "课件沉淀"},
-        {"resource_type": "video", "agent": "video", "purpose": "外部视频推荐"},
-    ]
-    yield _stage("resource_planned", plan)
-
-    resources: list[dict] = []
-    failures: list[dict] = []
-    content_agent = ContentGenAgent()
-
-    yield _stage("resource_started", {"resource_type": "article", "agent": "content_gen"})
-    article_state = _child_state(req.user_id, safe_topic, profile, "article", course_name, focus_kps)
-    _, article_state, article_error = await _run_resource("article", content_agent, article_state)
-    if article_error:
-        failures.append({"resource_type": "article", "error": article_error})
-        yield _stage("resource_failed", failures[-1])
-    else:
-        info = _resource_info("article", article_state)
-        resources.append(info)
-        yield _stage("resource_created", info)
-        event = _resource(info.get("resource_id"), "article", info.get("title", "文章"))
-        if event:
-            yield event
-
-    article_content = ""
-    try:
-        raw = json.loads(article_state.get("response", "{}"))
-        content = raw.get("content", "")
-        article_content = json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else str(content)
-    except Exception:
-        article_content = ""
-
-    mindmap_topic = f"{safe_topic}\n\n参考讲解内容：\n{article_content[:1500]}" if article_content else safe_topic
-    specs = [
-        ("mindmap", MindMapAgent(), mindmap_topic, {}),
-        ("quiz", ContentGenAgent(), safe_topic, {"question_count": 5, "difficulty": "中等", "question_types": "single_choice,fill_blank,coding"}),
-        ("code", ContentGenAgent(), safe_topic, {"code_language": "python"}),
-        ("ppt", ContentGenAgent(), safe_topic, {}),
-        ("video", VideoAgent(), safe_topic, {}),
-    ]
-
-    tasks = []
-    for resource_type, agent, topic, extra in specs:
-        yield _stage("resource_started", {"resource_type": resource_type, "agent": getattr(agent, "name", agent.__class__.__name__)})
-        state = _child_state(req.user_id, topic, profile, resource_type, course_name, focus_kps, extra)
-        tasks.append(asyncio.create_task(_run_resource(resource_type, agent, state)))
-
-    for task in asyncio.as_completed(tasks):
-        resource_type, state, error = await task
-        if error:
-            failures.append({"resource_type": resource_type, "error": error})
-            yield _stage("resource_failed", failures[-1])
-            continue
-        info = _resource_info(resource_type, state)
-        resources.append(info)
-        yield _stage("resource_created", info)
-        event = _resource(info.get("resource_id"), resource_type, info.get("title", resource_type))
-        if event:
-            yield event
-
-    yield _stage("safety_reviewed", {
-        "status": "passed",
-        "policy": "关键词安全检查 + 生成提示反幻觉约束；各资源生成后写入安全过滤结果。",
-    })
-    yield _stage("knowledge_tagged", {
-        "course_name": course_name,
-        "knowledge_points": focus_kps,
-        "resource_count": len([r for r in resources if r.get("resource_id")]),
-    })
-
-    path_info = _upsert_learning_path(req.user_id, course_name, focus_kps, resources)
-    yield _stage("path_updated", path_info)
-    yield _stage("done", {
-        "resources": resources,
-        "failures": failures,
-        "path": path_info,
-    })
-
-    type_names = "、".join(r["resource_type"] for r in resources if r.get("resource_id")) or "暂无资源"
-    focus_names = "、".join(focus_kps) or course_name
-    yield (
-        f"## 个性化学习方案已生成\n\n"
-        f"- 课程节点：{course_name}\n"
-        f"- 知识点标签：{focus_names}\n"
-        f"- 已生成资源：{type_names}\n"
-        f"- 学习路径：已更新 {path_info.get('total_steps', 0)} 个步骤\n"
-        f"- 失败项：{len(failures)} 个，已保留可用资源并继续闭环\n\n"
-        f"建议按学习路径完成资源，并通过题库提交结果更新知识点掌握度。"
-    )
+    async for chunk in resource_orchestration_graph.astream(state, stream_mode="updates"):
+        for node_name, update in chunk.items():
+            events = []
+            if isinstance(update.get("workflow_outputs"), list):
+                events.extend(update["workflow_outputs"])
+            if isinstance(update.get("orchestration_events"), list):
+                events.extend(update["orchestration_events"])
+            for item in events:
+                stage = item.get("stage", node_name)
+                data = item.get("data", "")
+                key = json.dumps({"stage": stage, "data": data}, ensure_ascii=False, sort_keys=True, default=str)
+                if key in yielded_events:
+                    continue
+                yielded_events.add(key)
+                yield _stage(stage, data)
+                if stage == "resource_created" and isinstance(data, dict):
+                    rid = data.get("resource_id")
+                    if rid and rid not in yielded_resources:
+                        yielded_resources.add(rid)
+                        event = _resource(rid, data.get("resource_type", ""), data.get("title", ""))
+                        if event:
+                            yield event
+            if update.get("response"):
+                yield update["response"]
 
 
 @router.post("/study/stream")

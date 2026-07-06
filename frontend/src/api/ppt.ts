@@ -57,18 +57,6 @@ export interface SessionStatus {
   updated_at?: string
 }
 
-export interface OneClickParams {
-  user_id: string
-  topic: string
-  course_name: string
-  knowledge_points: string[]
-}
-
-export interface OneClickResult {
-  ok: boolean
-  resource: PptResource
-}
-
 export function createPptSession(params: CreateSessionParams): Promise<CreateSessionResult> {
   return api.post('/ppt/sessions', params).then(r => r.data)
 }
@@ -79,8 +67,4 @@ export function completePptSession(sessionId: string, params: CompleteSessionPar
 
 export function getPptSessionStatus(sessionId: string, userId: string): Promise<SessionStatus> {
   return api.get(`/ppt/sessions/${sessionId}/status`, { params: { user_id: userId } }).then(r => r.data)
-}
-
-export function oneClickGeneratePpt(params: OneClickParams): Promise<OneClickResult> {
-  return api.post('/ppt/one-click', params).then(r => r.data)
 }

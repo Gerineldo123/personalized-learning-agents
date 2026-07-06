@@ -33,6 +33,16 @@ function saveCurrentTaskId(id: number | null) {
   } catch {}
 }
 
+let saveTasksTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleSaveTasks(tasks: AgentTask[]) {
+  if (saveTasksTimer) clearTimeout(saveTasksTimer)
+  saveTasksTimer = setTimeout(() => {
+    saveTasks(tasks)
+    saveTasksTimer = null
+  }, 250)
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const tasks = ref<AgentTask[]>(loadTasks())
   const currentTaskId = ref<number | null>(loadCurrentTaskId())
@@ -44,7 +54,7 @@ export const useAgentStore = defineStore('agent', () => {
   )
 
   // 持久化：监听 tasks 和 currentTaskId 变化自动保存
-  watch(tasks, (val) => saveTasks(val), { deep: true })
+  watch(tasks, (val) => scheduleSaveTasks(val), { deep: true })
   watch(currentTaskId, (val) => saveCurrentTaskId(val))
 
   function createTask(title: string): AgentTask {

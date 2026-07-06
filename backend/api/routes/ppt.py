@@ -111,7 +111,7 @@ def get_session_status(session_id: str, user_id: str):
 
 @router.post("/one-click")
 async def one_click_generate(req: OneClickRequest):
-    from services.ppt_model_service import one_click_generate_ppt, is_docmee_aippt_configured
+    from services.ppt_model_service import create_ppt_session, is_docmee_aippt_configured
 
     if not is_docmee_aippt_configured():
         raise HTTPException(status_code=400, detail="PPT API 未配置，请先在 API 配置中设置 Docmee AiPPT 密钥")
@@ -124,11 +124,18 @@ async def one_click_generate(req: OneClickRequest):
     )
 
     try:
-        return await one_click_generate_ppt(
+        session = await create_ppt_session(
             user_id=user_id,
             topic=topic,
             course_name=course_name,
             knowledge_points=knowledge_points,
         )
+        return {
+            "ok": True,
+            "status": "pending_step_by_step",
+            "message": "PPT 已改为强制 AiPPT 分步生成，请在工作台确认大纲和模板后保存。",
+            "ppt_session": session,
+            "session_id": session.get("session_id"),
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

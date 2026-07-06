@@ -3,7 +3,6 @@ import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
-import SausageIcon from '../components/SausageIcon.vue'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
@@ -450,7 +449,7 @@ function renderMath(text: string): string {
 
     <div v-loading="loading" class="animate-up animate-delay-2">
       <div v-if="items.length === 0 && !expandedId" class="sa-empty">
-        <SausageIcon :size="72" animate />
+        <div class="mistake-empty-icon">📝</div>
         <p class="sa-empty-text">还没有错题记录<br/>继续保持好状态！</p>
       </div>
 
@@ -938,6 +937,16 @@ function renderMath(text: string): string {
   color: #948A80;
   text-align: center;
   line-height: 1.8;
+}
+.mistake-empty-icon {
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 34px;
 }
 
 .m-q-text :deep(.math-block) { display: block; text-align: center; margin: 10px 0; overflow-x: auto; }

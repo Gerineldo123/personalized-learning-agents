@@ -50,6 +50,7 @@ class BaseSkill(ABC):
     def emit_step(self, workflow_outputs: list, status: str, title: str, data: dict, step_id: str | None = None) -> str:
         """向 workflow_outputs 追加一个 skill step 事件，并实时推送到 SSE 队列"""
         sid = step_id or str(uuid.uuid4())[:8]
+        q: asyncio.Queue | None = getattr(self, "_sse_queue", None)
         event = {
             "type": "step",
             "step_type": "skill",
@@ -57,6 +58,7 @@ class BaseSkill(ABC):
             "status": status,
             "title": title,
             "agent_name": self._SKILL_AGENT_NAMES.get(self.name, self.name),
+            "_live_pushed": q is not None,
             "data": {
                 "skill_name": self.name,
                 "skill_icon": self.icon,
@@ -65,13 +67,28 @@ class BaseSkill(ABC):
         }
         workflow_outputs.append(event)
         # 实时推送：如果 context 中有 SSE 队列，立即 put
-        q: asyncio.Queue | None = getattr(self, "_sse_queue", None)
         if q is not None:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 pass
         return sid
+
+    def emit_token(self, step_id: str, delta: str):
+        """向当前 skill step 实时追加 token 内容。"""
+        if not delta:
+            return
+        q: asyncio.Queue | None = getattr(self, "_sse_queue", None)
+        if q is None:
+            return
+        try:
+            q.put_nowait({"type": "token", "step_id": step_id, "delta": delta})
+            session_id = getattr(self, "_session_id", "")
+            if session_id:
+                from core.sse_registry import mark_live_token_step
+                mark_live_token_step(session_id, step_id)
+        except asyncio.QueueFull:
+            pass
 
 
 # ============================================================
@@ -102,6 +119,39 @@ def get_skills_description() -> str:
     for name, skill in _SKILL_REGISTRY.items():
         lines.append(f"- {name}: {skill.description}")
     return "\n".join(lines)
+
+
+def make_draft_resource(
+    resource_type: str,
+    title: str,
+    content,
+    course_name: str | None = None,
+    knowledge_points: list[str] | None = None,
+    kp_weights: dict | None = None,
+) -> dict:
+    return {
+        "client_draft_id": uuid.uuid4().hex,
+        "resource_type": resource_type,
+        "title": title or f"{resource_type}_resource",
+        "content": content if isinstance(content, dict) else {"text": content},
+        "course_name": course_name,
+        "knowledge_points": knowledge_points or [],
+        "kp_weights": kp_weights or {},
+        "save_required": True,
+    }
+
+
+def _has_mistake_task_intent(message: str) -> bool:
+    return any(keyword in (message or "") for keyword in ["错题", "错因", "错误题", "薄弱题", "错题本"])
+
+
+def _mistake_knowledge_points(mistakes: dict | None) -> list[str]:
+    points: list[str] = []
+    for item in (mistakes or {}).get("recent") or []:
+        for point in item.get("knowledge_points") or []:
+            if point and point not in points:
+                points.append(str(point))
+    return points[:10]
 
 
 # ============================================================
@@ -324,6 +374,7 @@ class ArticleGenSkill(BaseSkill):
 
         user_message = context.get("user_message", "")
         user_id = context.get("user_id", "")
+        persist = context.get("persist", True) is not False
 
         step_id = self.emit_step(workflow_outputs, "running", "生成学习文章", {
             "sub_steps": ["⏳ 正在调用模型生成文章..."],
@@ -336,6 +387,7 @@ class ArticleGenSkill(BaseSkill):
                 resource_type="article",
                 profile=context.get("profile"),
                 profile_context=context.get("profile_text"),
+                persist=False,
             )
             agent = ContentGenAgent()
             await agent._generate_article(state)
@@ -346,9 +398,10 @@ class ArticleGenSkill(BaseSkill):
             self.emit_step(workflow_outputs, "completed", "生成学习文章", {
                 "content": content,
                 "sub_steps": ["✅ 文章生成完成"],
+                "draft_resource": state.get("draft_resource"),
             }, step_id)
 
-            return SkillResult(success=True, data={"article": content, "type": "article"}, summary="文章生成完成")
+            return SkillResult(success=True, data={"article": content, "type": "article", "draft_resource": state.get("draft_resource")}, summary="文章生成完成")
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成学习文章", {
                 "content": f"生成失败: {str(e)}",
@@ -364,9 +417,10 @@ class CodeGenSkill(BaseSkill):
     icon = "💡"
 
     async def execute(self, context: dict, workflow_outputs: list) -> SkillResult:
-        from agents.content_gen_agent import ContentGenAgent
+        from agents.content_gen_agent import CODE_PROMPT, ContentGenAgent
         from agents.base import AgentState
         from core.llm_client import chat_completion
+        from services.safety_service import check_text, hallu_rules
 
         user_message = context.get("user_message", "")
         user_id = context.get("user_id", "")
@@ -379,12 +433,15 @@ class CodeGenSkill(BaseSkill):
 
         sub_steps = [f"⏳ 正在识别{'可视化动画' if is_viz else '代码案例'}生成需求..."]
         step_id = self.emit_step(workflow_outputs, "running", "生成代码案例", {
+            "content": "",
             "sub_steps": sub_steps,
             "progress": 10,
             "current_phase": "需求识别",
             "progress_note": "正在分析任务描述、学生画像和输出形式",
             "progress_indeterminate": False,
             "progress_label": f"1/{5 if is_viz else 4} 阶段",
+            "language": "html" if is_viz else code_lang,
+            "streaming_code": True,
         })
 
         try:
@@ -400,61 +457,34 @@ class CodeGenSkill(BaseSkill):
                     "progress_note": "模型正在生成动画页面、交互控件和演示步骤",
                     "progress_indeterminate": True,
                     "progress_label": "2/5 阶段",
+                    "language": "html",
+                    "streaming_code": True,
                 }, step_id)
-                prompt = f"""你是一个算法可视化与前端开发专家。请生成一个自包含的HTML文件（内嵌CSS+JS），用逐步动画展示算法或概念。
+                prompt = f"""你是算法可视化与前端开发专家。请生成一个自包含 HTML 文件（内嵌 CSS + JS），用交互动画讲解主题。
 
 主题：{user_message}
 学生背景：{profile_text or '未知'}
 
-━━━ 核心设计要求 ━━━
+输出要求：
+- 只输出完整 HTML，不要 Markdown 代码块，不要解释文字。
+- 必须以 <!DOCTYPE html> 或 <html 开头，并以 </html> 结尾。
+- 不依赖 CDN、图片或外部文件。
+- 页面包含：标题、概念说明、图例、动画演示区、当前步骤说明、进度指示、上一步/下一步/自动播放/重置按钮。
+- JavaScript 预生成 steps 数组，每一步包含状态快照、说明文本和高亮元素；用 renderStep(index) 统一更新页面。
+- 交互支持：按钮切换步骤、自动播放、重置；键盘 ←/→ 切换步骤，空格播放/暂停，R 重置。
+- 样式现代、宽屏友好，主容器 max-width 不小于 900px；移动端保持可读。
+- 代码尽量简洁，优先保证首屏可运行、动画稳定、交互清楚。"""
 
-【1. 布局与尺寸】
-- body 必须使用 flex 居中布局：display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px;
-- 主容器 .main-container 必须设置 max-width:880px; width:100%; 外加圆角、阴影、内边距
-- 所有元素使用 box-sizing:border-box
-- 必须包含 @media (max-width:600px) 移动端适配
-
-【2. 视觉设计】
-- 用 CSS 变量（:root）统一管理配色，按"默认/已排序/高亮/标记"定义色系
-- 卡片风格：白色背景 + 柔和阴影 + 大圆角(16px)
-- 按钮样式：圆角药丸形(25px)、hover 变色、active 缩放反馈、disabled 半透明
-- 字体：'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif
-
-【3. 必须包含的 UI 组件】
-a) 标题区（.header）：算法名称 + 副标题 + 学科年级标签 —— 作为页面第一个可见元素
-b) 图例区：用色块+文字说明各标记含义
-c) 可视化主区域：柱状图/数组元素动画展示区（min-height:330px）
-d) 描述区：当前步骤的文字说明
-e) 进度区：步骤计数器 + 进度条
-f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
-
-【4. 动画与交互】
-- 关键状态用 CSS 类名切换（i-highlight/j-highlight/min-highlight/swap-highlight/sorted-bar）
-- 交换动画用 @keyframes + class 触发
-- 支持键盘：←→方向键导航、空格/A键自动播放、R键重置
-- 自动播放时根据步骤类型调整延迟（交换步骤1.5x、完成步骤2x）
-
-【5. JavaScript 架构】
-- 使用 IIFE 封装，不污染全局
-- 预生成所有步骤描述数组（generateAllSteps），每步包含：arr快照、i/j/minIndex标记、描述文本、阶段类型
-- renderStep(index) 函数统一驱动 DOM 更新
-- 自动播放用 setTimeout + scheduleNext 递归调度
-
-【6. 数据结构】
-步骤对象结构示例：
-{{ arr: [...], i: 0, j: 1, minIndex: 0, sortedUpTo: 0, phase: 'compare', swappedIndices: null, description: '...', icon: '🔍' }}
-阶段类型包括：initial/start_round/compare/pre_swap/swap/no_swap/complete
-
-━━━ 严格输出规则（违反将导致前端渲染异常）━━━
-⚠ 以 <!DOCTYPE html> 或 <html 开头，以 </html> 结尾
-⚠ </html> 之后不得有任何字符（包括换行、空格、文字说明）
-⚠ 禁止输出 Markdown 代码块标记（```html ```）
-⚠ 禁止输出任何解释、建议、总结或问候语
-⚠ 页面 body 内严禁出现任何介绍性/解释性/问候性文字，如"这是为您生成的..."、"这是一个...工具"、"欢迎使用..."、"本页面演示..."等。页面正文必须直接从标题区的算法名称开始。
-⚠ 必须使用内嵌样式和脚本，不依赖任何外部CDN或文件"""
-
-                resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3)
-                content = resp.choices[0].message.content.strip()
+                content_parts: list[str] = []
+                stream = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3, stream=True)
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta.content if chunk.choices else ""
+                    if delta:
+                        content_parts.append(delta)
+                        self.emit_token(step_id, delta)
+                content = "".join(content_parts).strip()
+                if not content:
+                    raise RuntimeError("模型未返回可视化动画代码")
                 sub_steps[-1] = "✅ 动画代码生成完成"
                 sub_steps.append("⏳ 正在清理输出并校验 HTML 结构...")
                 self.emit_step(workflow_outputs, "running", "生成代码案例", {
@@ -464,6 +494,8 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                     "progress_note": "正在移除 Markdown 包裹、截取有效 HTML、准备前端预览",
                     "progress_indeterminate": False,
                     "progress_label": "3/5 阶段",
+                    "streaming_code": False,
+                    "language": "html",
                 }, step_id)
                 # 提取 HTML：找到第一个 <!DOCTYPE html> 或 <html> 到最后 </html> 之间的内容
                 import re as _re
@@ -494,8 +526,14 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                     "progress_indeterminate": False,
                     "progress_label": "4/5 阶段",
                     "language": "html",
+                    "streaming_code": False,
                 }, step_id)
 
+                draft_resource = make_draft_resource(
+                    "code",
+                    f"可视化动画：{user_message[:40]}",
+                    {"code": content, "language": "html"},
+                )
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,
                     "sub_steps": sub_steps[:-1] + ["✅ 可视化动画生成完成"],
@@ -505,8 +543,10 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                     "progress_indeterminate": False,
                     "progress_label": "5/5 阶段",
                     "language": "html",
+                    "streaming_code": False,
+                    "draft_resource": draft_resource,
                 }, step_id)
-                return SkillResult(success=True, data={"code": content, "type": "code"}, summary="可视化动画生成完成")
+                return SkillResult(success=True, data={"code": content, "type": "code", "draft_resource": draft_resource}, summary="可视化动画生成完成")
 
             # 非可视化：走原有流程
             sub_steps[-1] = "✅ 已识别为代码案例任务"
@@ -518,44 +558,77 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                 "progress_note": "模型正在生成代码、注释和说明",
                 "progress_indeterminate": True,
                 "progress_label": "2/4 阶段",
+                "language": code_lang,
+                "streaming_code": True,
             }, step_id)
+            profile = context.get("profile")
+            profile_text = context.get("profile_text") or ""
+            kb = getattr(profile, "knowledge_base", {}) if profile else {}
+            level = "初级"
+            for _name, score in (kb or {}).items():
+                if score >= 0.7:
+                    level = "高级"
+                elif score >= 0.4 and level == "初级":
+                    level = "中级"
+            prompt = CODE_PROMPT.format(
+                profile=profile_text or "暂无学生画像",
+                topic=user_message,
+                code_lang=code_lang,
+                level=level,
+                hallu=hallu_rules(),
+            )
+            content_parts: list[str] = []
+            stream = await chat_completion([{"role": "user", "content": prompt}], temperature=0.5, stream=True)
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else ""
+                if delta:
+                    content_parts.append(delta)
+                    self.emit_token(step_id, delta)
+            content = "".join(content_parts).strip()
+            if not content:
+                raise RuntimeError("模型未返回代码内容")
+            sub_steps[-1] = "✅ 代码案例生成完成"
+            sub_steps.append("⏳ 正在解析并准备资源草稿...")
+            self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                "sub_steps": sub_steps,
+                "progress": 85,
+                "current_phase": "结果整理",
+                "progress_note": "正在整理代码内容并准备可保存草稿",
+                "progress_indeterminate": False,
+                "progress_label": "3/4 阶段",
+                "language": code_lang,
+                "streaming_code": False,
+            }, step_id)
+
+            safe_content, _ = await check_text(content)
             state = AgentState(
                 user_id=user_id,
                 user_message=user_message,
                 resource_type="code",
                 code_language=code_lang,
-                profile=context.get("profile"),
+                profile=profile,
                 profile_context=context.get("profile_text"),
+                persist=False,
             )
             agent = ContentGenAgent()
-            await agent._generate_code_case(state)
-            sub_steps[-1] = "✅ 代码案例生成完成"
-            sub_steps.append("⏳ 正在解析并保存结果...")
-            self.emit_step(workflow_outputs, "running", "生成代码案例", {
-                "sub_steps": sub_steps,
-                "progress": 85,
-                "current_phase": "结果整理",
-                "progress_note": "正在整理代码内容并同步到学习资源",
-                "progress_indeterminate": False,
-                "progress_label": "3/4 阶段",
-                "language": code_lang,
-            }, step_id)
-
-            resp = json.loads(state.get("response", ""))
-            content = resp.get("content", "")
-            resource_type = resp.get("resource_type", "code")
+            agent._save_or_draft_resource(state, "code", {"code": safe_content, "language": code_lang})
+            content = safe_content
+            resource_type = "code"
+            draft_resource = state.get("draft_resource")
 
             self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                 "content": content,
                 "sub_steps": sub_steps[:-1] + ["✅ 代码案例生成完成"],
                 "progress": 100,
                 "current_phase": "生成完成",
-                "progress_note": "代码案例已生成并保存",
+                "progress_note": "代码案例已生成，可按需保存到学习资源",
                 "progress_indeterminate": False,
                 "progress_label": "4/4 阶段",
                 "language": code_lang,
+                "streaming_code": False,
+                "draft_resource": draft_resource,
             }, step_id)
-            return SkillResult(success=True, data={"code": content, "type": resource_type}, summary="代码案例生成完成")
+            return SkillResult(success=True, data={"code": content, "type": resource_type, "draft_resource": draft_resource}, summary="代码案例生成完成")
 
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成代码案例", {
@@ -566,6 +639,7 @@ f) 控制区：重置/上一步/下一步/自动播放 按钮 + 速度滑块
                 "progress_note": str(e),
                 "progress_indeterminate": False,
                 "progress_label": "失败",
+                "streaming_code": False,
             }, step_id)
             return SkillResult(success=False, error=str(e))
 
@@ -583,6 +657,21 @@ class QuizGenSkill(BaseSkill):
         user_message = context.get("user_message", "")
         user_id = context.get("user_id", "")
         ad = context.get("all_modules_data", {})
+        agent_context = ad.get("agent_context") or {}
+        mistakes = agent_context.get("mistakes") or {}
+        target_knowledge_points = _mistake_knowledge_points(mistakes) if _has_mistake_task_intent(user_message) else []
+        if target_knowledge_points:
+            from services.agent_context_service import build_mistake_prompt_context
+            mistake_context = build_mistake_prompt_context(mistakes)
+            user_message = (
+                f"{user_message}\n\n"
+                "【真实错题本上下文】\n"
+                f"{mistake_context}\n\n"
+                "【针对性出题要求】\n"
+                f"- 必须围绕这些错题暴露出的知识点生成练习：{'、'.join(target_knowledge_points)}。\n"
+                "- 题目应考察同类概念、同类推理路径或同类易错点，但不能原题照抄。\n"
+                "- 每道题的 knowledge_points 必须从上述知识点中选择。"
+            )
 
         question_count = context.get("question_count", 5)
         difficulty = context.get("difficulty", "中等")
@@ -614,8 +703,10 @@ class QuizGenSkill(BaseSkill):
                 question_count=question_count,
                 difficulty=difficulty,
                 code_language=ad.get("code_lang", "python"),
+                knowledge_points=target_knowledge_points,
                 profile=context.get("profile"),
                 profile_context=context.get("profile_text"),
+                persist=False,
             )
             agent = ContentGenAgent()
             await agent._generate_quiz(state)
@@ -632,6 +723,7 @@ class QuizGenSkill(BaseSkill):
 
             resp = json.loads(state.get("response", "{}"))
             quiz_data = resp.get("content", {})
+            draft_resource = state.get("draft_resource")
             total_questions = len(quiz_data.get("questions", []))
             sub_steps[-1] = f"✅ 题目结构校验完成，共 {total_questions} 题"
             sub_steps.append("⏳ 正在准备题库预览...")
@@ -652,11 +744,12 @@ class QuizGenSkill(BaseSkill):
                 "progress_note": "题库已生成，可查看题目和解析",
                 "progress_indeterminate": False,
                 "progress_label": "5/5 阶段",
+                "draft_resource": draft_resource,
             }, step_id)
 
             return SkillResult(
                 success=True,
-                data={"quiz": quiz_data, "type": "quiz"},
+                data={"quiz": quiz_data, "type": "quiz", "draft_resource": draft_resource},
                 summary=f"生成 {total_questions} 道练习题",
             )
         except Exception as e:
@@ -737,34 +830,19 @@ class PracticeCaseSkill(BaseSkill):
             resp = await chat_completion([{"role": "user", "content": prompt}], temperature=0.4)
             content = resp.choices[0].message.content.strip()
 
-            # 存入 LearningResource
-            resource_db_id = None
-            try:
-                from core.database import SessionLocal
-                from models.resource import LearningResource
-                from services.rag_service import index_resource
-                self.emit_step(workflow_outputs, "running", "生成实操案例", {"sub_steps": ["✅ 案例内容生成完成", "⏳ 正在保存到资源库..."]}, step_id)
-                db = SessionLocal()
-                try:
-                    title = f"实操案例：{user_message[:40]}"
-                    res = LearningResource(user_id=user_id, title=title, resource_type="article", content=content)
-                    db.add(res)
-                    db.commit()
-                    db.refresh(res)
-                    resource_db_id = res.id
-                    await index_resource(res.id, content)
-                finally:
-                    db.close()
-            except Exception:
-                pass
+            draft_resource = make_draft_resource(
+                "article",
+                f"实操案例：{user_message[:40]}",
+                {"text": content},
+            )
 
             self.emit_step(workflow_outputs, "completed", "生成实操案例", {
                 "content": content,
-                "sub_steps": ["✅ 案例内容生成完成", "✅ 已保存到资源库"],
-                **({"resource_db_id": resource_db_id, "resource_type": "article"} if resource_db_id else {}),
+                "sub_steps": ["✅ 案例内容生成完成", "✅ 已生成资源草稿"],
+                "draft_resource": draft_resource,
             }, step_id)
 
-            return SkillResult(success=True, data={"content": content, "type": "practice_case", "resource_db_id": resource_db_id}, summary="实操案例生成完成")
+            return SkillResult(success=True, data={"content": content, "type": "practice_case", "draft_resource": draft_resource}, summary="实操案例生成完成")
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成实操案例", {
                 "content": f"生成失败: {str(e)}",
@@ -821,15 +899,21 @@ class VideoSearchSkill(BaseSkill):
         if not videos:
             sub_steps.append("⚠️ 未找到可直达播放的视频，请换更具体的关键词重试")
 
+        draft_resource = make_draft_resource(
+            "video",
+            f"视频推荐：{search_keywords[:40]}",
+            {"videos": videos, "failures": failures, "query": search_keywords},
+        )
         self.emit_step(workflow_outputs, "completed", "搜索教学视频", {
             "content": json.dumps(videos, ensure_ascii=False),
             "sub_steps": sub_steps,
             "render_type": "video_cards",
+            "draft_resource": draft_resource if videos else None,
         }, step_id)
 
         return SkillResult(
             success=True,
-            data={"videos": videos, "failures": failures, "type": "video"},
+            data={"videos": videos, "failures": failures, "type": "video", "draft_resource": draft_resource if videos else None},
             summary=f"找到 {len(videos)} 个B站可直达教学视频",
         )
 
@@ -875,6 +959,47 @@ class PptGenSkill(BaseSkill):
 
         user_message = context.get("user_message", "")
         user_id = context.get("user_id", "")
+
+        course_name = str(context.get("course_name") or "").strip()
+        knowledge_points = [str(kp).strip() for kp in (context.get("knowledge_points") or []) if str(kp).strip()]
+        step_id = self.emit_step(workflow_outputs, "running", "创建 AiPPT 分步会话", {
+            "sub_steps": ["⏳ 正在创建 AiPPT 工作台会话..."],
+        })
+        if not course_name or not knowledge_points:
+            message = "生成 PPT 前必须绑定课程和至少一个知识点，请从学习资源或知识图谱入口进入 AiPPT 分步流程。"
+            self.emit_step(workflow_outputs, "completed", "创建 AiPPT 分步会话", {
+                "content": message,
+                "sub_steps": [f"❌ {message}"],
+            }, step_id)
+            return SkillResult(success=False, error=message)
+        try:
+            from services.ppt_model_service import create_ppt_session
+            ppt_session = await create_ppt_session(
+                user_id=user_id or "default",
+                topic=user_message,
+                course_name=course_name,
+                knowledge_points=knowledge_points,
+            )
+            self.emit_step(workflow_outputs, "completed", "创建 AiPPT 分步会话", {
+                "content": json.dumps({
+                    "title": user_message or "PPT课件",
+                    "ppt_session": ppt_session,
+                    "message": "请在 AiPPT 工作台确认大纲和模板后生成 PPT。",
+                }, ensure_ascii=False),
+                "sub_steps": ["✅ 已创建分步生成会话", "✅ 等待用户确认大纲和模板"],
+                "render_type": "ppt_session",
+            }, step_id)
+            return SkillResult(
+                success=True,
+                data={"ppt_session": ppt_session, "type": "ppt"},
+                summary="已创建 AiPPT 分步生成会话",
+            )
+        except Exception as exc:
+            self.emit_step(workflow_outputs, "completed", "创建 AiPPT 分步会话", {
+                "content": f"创建失败: {exc}",
+                "sub_steps": [f"❌ 创建 AiPPT 会话失败: {exc}"],
+            }, step_id)
+            return SkillResult(success=False, error=str(exc))
 
         step_id = self.emit_step(workflow_outputs, "running", "生成PPT课件", {
             "sub_steps": ["⏳ 正在调用模型生成课件内容..."],
@@ -935,33 +1060,50 @@ class PptGenSkill(BaseSkill):
             sub_steps.append(f"✅ .pptx 文件已生成")
         except Exception as e:
             sub_steps.append(f"⚠️ .pptx 生成失败: {str(e)}")
-        self.emit_step(workflow_outputs, "running", "生成PPT课件", {"sub_steps": sub_steps + ["⏳ 正在保存到资源库..."]}, step_id)
+        self.emit_step(
+            workflow_outputs,
+            "running",
+            "生成PPT课件",
+            {"sub_steps": sub_steps + (["⏳ 正在保存到资源库..."] if persist else ["⏳ 正在准备资源草稿..."])},
+            step_id,
+        )
 
         # 3. 保存到数据库
         db_id = None
-        try:
-            db = SessionLocal()
+        draft_resource = None
+        download_url = f"/static/ppt/{pptx_filename}" if pptx_filename else ""
+        if persist:
             try:
-                resource = LearningResource(
-                    user_id=user_id,
-                    resource_type="ppt",
-                    title=ppt_data.get("title", user_message),
-                    content={"slides": ppt_data.get("slides", []), "title": ppt_data.get("title", ""), "pptx_file": pptx_filename},
-                    tags=["ppt"],
-                )
-                db.add(resource)
-                db.flush()
-                db.commit()
-                db_id = resource.id
-                index_resource(resource.id, user_id or "", json.dumps(ppt_data, ensure_ascii=False)[:4000], "ppt")
-                sub_steps.append(f"✅ 已保存至学习资源库")
-            finally:
-                db.close()
-        except Exception as e:
-            sub_steps.append(f"⚠️ 数据库保存失败: {str(e)}")
+                db = SessionLocal()
+                try:
+                    resource = LearningResource(
+                        user_id=user_id,
+                        resource_type="ppt",
+                        title=ppt_data.get("title", user_message),
+                        content={"slides": ppt_data.get("slides", []), "title": ppt_data.get("title", ""), "pptx_file": pptx_filename},
+                        tags=["ppt"],
+                    )
+                    db.add(resource)
+                    db.flush()
+                    db.commit()
+                    db_id = resource.id
+                    index_resource(resource.id, user_id or "", json.dumps(ppt_data, ensure_ascii=False)[:4000], "ppt")
+                    sub_steps.append(f"✅ 已保存至学习资源库")
+                finally:
+                    db.close()
+            except Exception as e:
+                sub_steps.append(f"⚠️ 数据库保存失败: {str(e)}")
+        else:
+            draft_content = {
+                "slides": ppt_data.get("slides", []),
+                "title": ppt_data.get("title", ""),
+                "pptx_file": pptx_filename,
+                "pptx_url": download_url,
+            }
+            draft_resource = make_draft_resource("ppt", ppt_data.get("title", user_message), draft_content)
+            sub_steps.append("✅ 已生成资源草稿")
 
         # 4. 构建前端渲染数据
-        download_url = f"/static/ppt/{pptx_filename}" if pptx_filename else ""
 
         render_content = json.dumps({
             "title": ppt_data.get("title", user_message),
@@ -975,6 +1117,7 @@ class PptGenSkill(BaseSkill):
             "content": render_content,
             "sub_steps": sub_steps,
             "render_type": "ppt_viewer",
+            "draft_resource": draft_resource,
         }, step_id)
 
         return SkillResult(
@@ -985,6 +1128,7 @@ class PptGenSkill(BaseSkill):
                 "pptx_url": download_url,
                 "db_id": db_id,
                 "type": "ppt",
+                "draft_resource": draft_resource,
             },
             summary=f"PPT课件生成完成 ({len(ppt_data.get('slides', []))} 页)" + (f", .pptx已导出" if pptx_filename else ""),
         )

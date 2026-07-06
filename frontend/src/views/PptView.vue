@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 import { useUserStore } from '../stores/user'
-import { createPptSession, completePptSession, oneClickGeneratePpt } from '../api/ppt'
+import { createPptSession, completePptSession } from '../api/ppt'
 import type { PptResource } from '../api/ppt'
 
+const route = useRoute()
 const router = useRouter()
-
 const userStore = useUserStore()
 
 const pptConfigured = ref(false)
 const loadingConfig = ref(true)
 const loadingSession = ref(false)
-const loadingOneClick = ref(false)
 const topic = ref('')
 const courseName = ref('')
 const knowledgePoints = ref<string[]>([])
@@ -42,6 +41,34 @@ declare global {
   }
 }
 
+const canGenerate = computed(() =>
+  !!userStore.userId
+  && !!topic.value.trim()
+  && !!courseName.value
+  && knowledgePoints.value.length > 0,
+)
+
+function queryText(name: string): string {
+  const value = route.query[name]
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+async function applyRoutePrefill() {
+  const prefillTopic = queryText('topic')
+  const prefillCourse = queryText('course') || queryText('course_name')
+  const kpText = queryText('kp') || queryText('knowledge_points')
+
+  if (prefillTopic) topic.value = prefillTopic
+  if (prefillCourse) {
+    courseName.value = prefillCourse
+    kpOptions.value = await fetchCourseKps(prefillCourse)
+  }
+  if (kpText) {
+    const selected = kpText.split(',').map(x => x.trim()).filter(Boolean)
+    knowledgePoints.value = selected
+  }
+}
+
 function loadDocmeeSdk(scriptUrl: string): Promise<void> {
   if (window.DocmeeUI) return Promise.resolve()
   if (window.__docmeeSdkLoading) return window.__docmeeSdkLoading
@@ -50,7 +77,7 @@ function loadDocmeeSdk(scriptUrl: string): Promise<void> {
     const existing = document.querySelector<HTMLScriptElement>('script[data-docmee-sdk="true"]')
     if (existing) {
       existing.addEventListener('load', () => resolve(), { once: true })
-      existing.addEventListener('error', () => reject(new Error('文多多 AiPPT SDK 加载失败')), { once: true })
+      existing.addEventListener('error', () => reject(new Error('Docmee AiPPT SDK 加载失败')), { once: true })
       return
     }
 
@@ -60,9 +87,9 @@ function loadDocmeeSdk(scriptUrl: string): Promise<void> {
     script.dataset.docmeeSdk = 'true'
     script.onload = () => {
       if (window.DocmeeUI) resolve()
-      else reject(new Error('文多多 AiPPT SDK 未正确初始化'))
+      else reject(new Error('Docmee AiPPT SDK 未正确初始化'))
     }
-    script.onerror = () => reject(new Error('文多多 AiPPT SDK 加载失败'))
+    script.onerror = () => reject(new Error('Docmee AiPPT SDK 加载失败'))
     document.head.appendChild(script)
   })
 
@@ -88,6 +115,16 @@ async function checkConfig() {
   }
 }
 
+async function loadProfile() {
+  if (!userStore.userId) return
+  try {
+    const r = await api.get('/profile', { params: { user_id: userStore.userId } })
+    if (r.data?.found) profile.value = r.data.profile
+  } catch {
+    profile.value = null
+  }
+}
+
 async function loadCurriculumCourses() {
   if (!userStore.userId) return
   try {
@@ -97,16 +134,6 @@ async function loadCurriculumCourses() {
     curriculumCourses.value = r.data?.nodes || []
   } catch {
     curriculumCourses.value = []
-  }
-}
-
-async function loadProfile() {
-  if (!userStore.userId) return
-  try {
-    const r = await api.get('/profile', { params: { user_id: userStore.userId } })
-    if (r.data?.found) profile.value = r.data.profile
-  } catch {
-    profile.value = null
   }
 }
 
@@ -124,13 +151,6 @@ async function onCourseChange() {
   knowledgePoints.value = []
   kpOptions.value = await fetchCourseKps(courseName.value)
 }
-
-const canGenerate = computed(() =>
-  !!userStore.userId
-  && !!topic.value.trim()
-  && !!courseName.value
-  && knowledgePoints.value.length > 0
-)
 
 function validatePptForm(): boolean {
   if (!userStore.userId) {
@@ -191,24 +211,15 @@ function extractPptInfo(payload: any) {
 
 function bindDocmeeEvents(instance: any) {
   if (!instance?.on) return
-  instance.on('afterGenerate', (payload: any) => {
+  const saveIfComplete = (payload: any) => {
     const info = extractPptInfo(payload)
     if (info.pptId && !completionSubmitted.value) {
       handleCompletion(info.pptId, info.subject, info.coverUrl, info.templateId)
     }
-  })
-  instance.on('manuallySavePPT', (payload: any) => {
-    const info = extractPptInfo(payload)
-    if (info.pptId && !completionSubmitted.value) {
-      handleCompletion(info.pptId, info.subject, info.coverUrl, info.templateId)
-    }
-  })
-  instance.on('automaticSavePPT', (payload: any) => {
-    const info = extractPptInfo(payload)
-    if (info.pptId && !completionSubmitted.value) {
-      handleCompletion(info.pptId, info.subject, info.coverUrl, info.templateId)
-    }
-  })
+  }
+  instance.on('afterGenerate', saveIfComplete)
+  instance.on('manuallySavePPT', saveIfComplete)
+  instance.on('automaticSavePPT', saveIfComplete)
 }
 
 async function mountDocmeeUI() {
@@ -219,7 +230,7 @@ async function mountDocmeeUI() {
   destroyDocmeeUI()
 
   const DocmeeUI = window.DocmeeUI
-  if (!DocmeeUI) throw new Error('文多多 AiPPT SDK 不可用')
+  if (!DocmeeUI) throw new Error('Docmee AiPPT SDK 不可用')
 
   const instance = new DocmeeUI({
     token: docmeeToken.value,
@@ -260,37 +271,13 @@ async function openStepByStep() {
     completionSubmitted.value = false
     await nextTick()
     await mountDocmeeUI()
-    ElMessage.success('已打开 AiPPT 分步生成界面')
+    ElMessage.success('已进入 AiPPT 分步生成，请先确认大纲并选择模板')
   } catch (e: any) {
-    const msg = e?.response?.data?.detail || e?.message || '创建会话失败'
+    const msg = e?.response?.data?.detail || e?.message || '创建 AiPPT 分步会话失败'
     ElMessage.error(msg)
     iframeVisible.value = false
   } finally {
     loadingSession.value = false
-  }
-}
-
-async function handleOneClick() {
-  if (!validatePptForm()) return
-
-  loadingOneClick.value = true
-  try {
-    const result = await oneClickGeneratePpt({
-      user_id: userStore.userId,
-      topic: topic.value.trim(),
-      course_name: courseName.value,
-      knowledge_points: knowledgePoints.value,
-    })
-    if (result.ok && result.resource) {
-      resultResource.value = result.resource
-      showResult.value = true
-      ElMessage.success('PPT 一键生成完成，已保存到学习资源库')
-    }
-  } catch (e: any) {
-    const msg = e?.response?.data?.detail || e?.message || '一键生成失败'
-    ElMessage.error(msg)
-  } finally {
-    loadingOneClick.value = false
   }
 }
 
@@ -317,18 +304,19 @@ function closeDocmeeSection() {
   destroyDocmeeUI()
 }
 
-onMounted(() => {
-  checkConfig()
-  loadProfile()
-  if (userStore.userId) loadCurriculumCourses()
+onMounted(async () => {
+  await checkConfig()
+  await loadProfile()
+  if (userStore.userId) await loadCurriculumCourses()
+  await applyRoutePrefill()
 })
 
 onUnmounted(() => {
   destroyDocmeeUI()
 })
 
-watch(() => userStore.userId, (newId) => {
-  if (newId) loadCurriculumCourses()
+watch(() => userStore.userId, async (newId) => {
+  if (newId) await loadCurriculumCourses()
 })
 </script>
 
@@ -336,7 +324,9 @@ watch(() => userStore.userId, (newId) => {
   <div class="ppt-workspace">
     <div class="workspace-header">
       <h1 class="workspace-title">PPT 课件生成</h1>
-      <p class="workspace-desc">输入主题，选择课程和知识点，使用文多多 AiPPT 生成课件并自动保存到学习资源库</p>
+      <p class="workspace-desc">
+        所有 PPT 资源必须经过 AiPPT 分步流程：确认大纲、选择模板、生成课件后才会保存到学习资源库。
+      </p>
     </div>
 
     <div v-if="loadingConfig" class="config-status">
@@ -378,13 +368,13 @@ watch(() => userStore.userId, (newId) => {
               <el-option
                 v-for="c in curriculumCourses"
                 :key="c.id"
-                :label="c.id"
-                :value="c.id"
+                :label="c.name || c.id"
+                :value="c.name || c.id"
               />
             </el-select>
           </div>
           <div class="form-col">
-            <label class="form-label">绑定知识点（可多选） <span class="required">*</span></label>
+            <label class="form-label">绑定知识点 <span class="required">*</span></label>
             <el-select
               v-model="knowledgePoints"
               placeholder="选择知识点"
@@ -397,8 +387,8 @@ watch(() => userStore.userId, (newId) => {
               <el-option
                 v-for="kp in kpOptions"
                 :key="kp.id"
-                :label="kp.id"
-                :value="kp.id"
+                :label="kp.name || kp.id"
+                :value="kp.name || kp.id"
               />
             </el-select>
           </div>
@@ -413,35 +403,24 @@ watch(() => userStore.userId, (newId) => {
             @click="openStepByStep"
           >
             <el-icon style="margin-right:6px"><component :is="'EditPen'" /></el-icon>
-            打开 AiPPT 分步生成
-          </el-button>
-          <el-button
-            type="success"
-            size="large"
-            :loading="loadingOneClick"
-            :disabled="!canGenerate"
-            @click="handleOneClick"
-          >
-            <el-icon style="margin-right:6px"><component :is="'MagicStick'" /></el-icon>
-            一键生成并保存
+            进入 AiPPT 分步生成
           </el-button>
         </div>
 
         <p class="form-hint">
-          分步生成：打开文多多 AiPPT 官方界面，可自定义大纲和模板后生成。<br />
-          一键生成：直接生成 PPT 并保存，无需手动操作。
+          快捷入口只会预填主题、课程和知识点，不会跳过大纲确认与模板选择。PPT 资源只有在 AiPPT 生成完成后才会写入学习资源库。
         </p>
       </div>
 
       <div v-if="iframeVisible" class="iframe-section">
         <div class="iframe-header">
-          <h3>文多多 AiPPT 分步生成</h3>
+          <h3>AiPPT 分步生成工作台</h3>
           <div class="iframe-header-right">
             <span v-if="iframeLoading" class="iframe-status generating">
               <el-icon class="is-loading"><component :is="'Loading'" /></el-icon>
               正在保存...
             </span>
-            <span v-else class="iframe-status ready">等待生成完成...</span>
+            <span v-else class="iframe-status ready">请确认大纲、选择模板并生成 PPT</span>
             <el-button size="small" text @click="closeDocmeeSection">关闭</el-button>
           </div>
         </div>
@@ -454,7 +433,7 @@ watch(() => userStore.userId, (newId) => {
         <div class="result-header">
           <h3>
             <el-icon style="color:var(--color-success)"><component :is="'CircleCheckFilled'" /></el-icon>
-            PPT 生成完成
+            PPT 已生成
           </h3>
           <el-button size="small" text @click="closeResult">
             <el-icon><component :is="'Close'" /></el-icon>
@@ -466,11 +445,11 @@ watch(() => userStore.userId, (newId) => {
               <span class="info-label">标题</span>
               <span class="info-value">{{ resultResource.title }}</span>
             </div>
-            <div class="result-info-item" v-if="resultResource.course_name">
+            <div v-if="resultResource.course_name" class="result-info-item">
               <span class="info-label">关联课程</span>
               <span class="info-value">{{ resultResource.course_name }}</span>
             </div>
-            <div class="result-info-item" v-if="resultResource.knowledge_points?.length">
+            <div v-if="resultResource.knowledge_points?.length" class="result-info-item">
               <span class="info-label">知识点</span>
               <span class="info-value">
                 <el-tag
@@ -479,7 +458,9 @@ watch(() => userStore.userId, (newId) => {
                   size="small"
                   type="info"
                   style="margin-right:4px"
-                >{{ kp }}</el-tag>
+                >
+                  {{ kp }}
+                </el-tag>
               </span>
             </div>
           </div>
@@ -508,7 +489,7 @@ watch(() => userStore.userId, (newId) => {
 
 <style scoped>
 .ppt-workspace {
-  max-width: 900px;
+  max-width: 980px;
   margin: 0 auto;
 }
 
@@ -518,7 +499,7 @@ watch(() => userStore.userId, (newId) => {
 
 .workspace-title {
   font-size: 24px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-body);
   margin: 0 0 8px 0;
 }
@@ -527,6 +508,7 @@ watch(() => userStore.userId, (newId) => {
   font-size: 14px;
   color: var(--text-secondary);
   margin: 0;
+  line-height: 1.7;
 }
 
 .config-status {
@@ -550,7 +532,7 @@ watch(() => userStore.userId, (newId) => {
 .config-link {
   color: var(--link);
   text-decoration: underline;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .form-card {
@@ -579,7 +561,7 @@ watch(() => userStore.userId, (newId) => {
 .form-label {
   display: block;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-body);
   margin-bottom: 6px;
 }
@@ -598,7 +580,7 @@ watch(() => userStore.userId, (newId) => {
   font-size: 12px;
   color: var(--text-aux);
   margin: 12px 0 0 0;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .iframe-section {
@@ -621,7 +603,7 @@ watch(() => userStore.userId, (newId) => {
 .iframe-header h3 {
   margin: 0;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-body);
 }
 
@@ -648,7 +630,7 @@ watch(() => userStore.userId, (newId) => {
 
 .iframe-wrapper {
   width: 100%;
-  height: 600px;
+  height: 640px;
 }
 
 .ppt-iframe {
@@ -677,7 +659,7 @@ watch(() => userStore.userId, (newId) => {
 .result-header h3 {
   margin: 0;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -707,7 +689,7 @@ watch(() => userStore.userId, (newId) => {
 
 .info-value {
   color: var(--text-body);
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .result-actions {

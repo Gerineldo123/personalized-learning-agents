@@ -9,7 +9,6 @@ import MarkdownIt from 'markdown-it'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import SausageIcon from '../components/SausageIcon.vue'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const userStore = useUserStore()
@@ -729,7 +728,7 @@ function regenerateMessage(aiIndex: number) {
 
         <div ref="chatContainer" class="chat-messages animate-up animate-delay-2" @click="handleContentClick">
           <div v-if="messages.length === 0" class="empty-hint">
-            <SausageIcon :size="56" animate />
+            <div class="empty-hint-icon">💬</div>
             <p style="margin:12px 0 0">输入你的问题，AI 将立刻开始思考并回答</p>
           </div>
           <div v-if="messages.length === 0 && suggestedQuestions.length > 0" class="suggested-questions">
@@ -978,6 +977,16 @@ function regenerateMessage(aiIndex: number) {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+.empty-hint-icon {
+  width: 58px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 28px;
 }
 
 .suggested-questions { padding: 0 0 40px; overflow: hidden; }

@@ -133,6 +133,8 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
         try:
             async for chunk in graph.astream(state, stream_mode="updates"):
                 for node_name, node_update in chunk.items():
+                    if not isinstance(node_update, dict):
+                        continue
                     wf = node_update.get("workflow_outputs", None)
                     if wf is None:
                         continue
@@ -150,6 +152,8 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
                     for event in wf:
                         if event.get("type") == "token":
                             continue
+                        if event.get("_live_pushed"):
+                            continue
                         step_type = event.get("step_type")
                         key = (event.get("step_id"), event.get("status"), step_type)
                         if key in step_pushed:
@@ -159,7 +163,15 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
                             live_pushed.add((event.get("step_id"), event.get("status")))
                         await sse_queue.put(event)
         except Exception as e:
-            await sse_queue.put({"type": "error", "message": str(e)})
+            await sse_queue.put({
+                "type": "step",
+                "step_type": "result",
+                "step_id": "agent-error",
+                "status": "error",
+                "title": "执行失败",
+                "agent_name": "系统",
+                "data": {"content": str(e)},
+            })
         finally:
             await sse_queue.put(_DONE)
 

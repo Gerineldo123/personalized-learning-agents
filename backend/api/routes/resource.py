@@ -15,8 +15,9 @@ from agents.video_agent import VideoAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.orchestrator_agent import OrchestratorAgent
 from services.event_service import emit
-from services.rag_service import search_rag
+from services.rag_service import search_rag, index_resource
 from services.kp_service import infer_resource_tags, update_knowledge_base
+from services.safety_service import check_text
 from services.curriculum_service import build_relation_context, load_curriculum_by_major
 from services.ppt_preview_service import (
     cleanup_ppt_preview,
@@ -39,6 +40,17 @@ class ResourceFeedbackRequest(BaseModel):
     user_id: str
     feedback: str
     note: str | None = None
+
+
+class ResourceDraftRequest(BaseModel):
+    user_id: str
+    client_draft_id: str
+    resource_type: str
+    title: str
+    content: dict | list | str
+    course_name: str | None = None
+    knowledge_points: list[str] = Field(default_factory=list)
+    kp_weights: dict[str, float] | None = None
 
 
 GRAPH_PACKAGE_TYPES: dict[str, list[str]] = {
@@ -217,6 +229,36 @@ def _attach_relation_context(
     return updated_ids
 
 
+def _ensure_quiz_question_tags(content: dict, knowledge_points: list[str]) -> dict:
+    if not isinstance(content, dict):
+        return content
+    questions = content.get("questions")
+    if not isinstance(questions, list):
+        return content
+    fallback_kps = [kp for kp in knowledge_points if kp]
+    fallback_weights = _equal_kp_weights(fallback_kps)
+    normalized = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        raw_kps = question.get("knowledge_points")
+        if isinstance(raw_kps, str):
+            q_kps = [x.strip() for x in raw_kps.split(",") if x.strip()]
+        elif isinstance(raw_kps, list):
+            q_kps = [str(x).strip() for x in raw_kps if str(x).strip()]
+        else:
+            q_kps = []
+        if fallback_kps:
+            allowed = set(fallback_kps)
+            q_kps = [kp for kp in q_kps if kp in allowed] or fallback_kps
+        q_kps = list(dict.fromkeys(q_kps))
+        question["knowledge_points"] = q_kps
+        question["kp_weights"] = question.get("kp_weights") or (_equal_kp_weights(q_kps) if q_kps else fallback_weights)
+        normalized.append(question)
+    content["questions"] = normalized
+    return content
+
+
 @router.get("")
 def list_resources(
     user_id: str,
@@ -314,12 +356,159 @@ def recommend_resources(
     }
 
 
+@router.post("/save_draft")
+async def save_draft_resource(req: ResourceDraftRequest, db: Session = Depends(get_db)):
+    if req.resource_type not in RESOURCE_TYPE_LABELS:
+        raise HTTPException(status_code=400, detail="不支持的资源类型")
+    if req.resource_type == "ppt":
+        raise HTTPException(status_code=400, detail="PPT 资源必须通过 AiPPT 分步流程生成并保存")
+    client_draft_id = req.client_draft_id.strip()
+    if not client_draft_id:
+        raise HTTPException(status_code=400, detail="缺少草稿 ID")
+
+    existing_items = db.query(LearningResource).filter(
+        LearningResource.user_id == req.user_id
+    ).order_by(LearningResource.created_at.desc()).limit(200).all()
+    for item in existing_items:
+        content = item.content if isinstance(item.content, dict) else {}
+        if content.get("client_draft_id") == client_draft_id:
+            return {"ok": True, "resource": _serialize_resource(item)}
+
+    content = req.content if isinstance(req.content, dict) else {"items": req.content} if isinstance(req.content, list) else {"text": str(req.content)}
+    safe_text, _ = await check_text(json.dumps(content, ensure_ascii=False))
+    if safe_text != json.dumps(content, ensure_ascii=False):
+        content = {"text": safe_text}
+    content = dict(content)
+    content["client_draft_id"] = client_draft_id
+
+    text = " ".join([
+        req.title,
+        req.resource_type,
+        json.dumps(content, ensure_ascii=False),
+    ])
+    graph_tags = infer_resource_tags(
+        text,
+        course_name=req.course_name,
+        knowledge_points=req.knowledge_points,
+    )
+    knowledge_points = graph_tags.get("knowledge_points") or req.knowledge_points or []
+    kp_weights = req.kp_weights or graph_tags.get("kp_weights") or _equal_kp_weights(knowledge_points)
+    tags = list(dict.fromkeys([
+        req.resource_type,
+        *[x for x in [graph_tags.get("course_name") or req.course_name] if x],
+        *knowledge_points,
+    ]))
+
+    resource = LearningResource(
+        user_id=req.user_id,
+        resource_type=req.resource_type,
+        title=req.title or f"{req.resource_type}_resource",
+        content=content,
+        tags=tags,
+        course_name=graph_tags.get("course_name") or req.course_name,
+        knowledge_points=knowledge_points,
+        kp_weights=kp_weights,
+        tag_confidence=graph_tags.get("tag_confidence") or (1.0 if req.course_name or req.knowledge_points else 0.0),
+    )
+    db.add(resource)
+    db.flush()
+    db.commit()
+
+    index_resource(resource.id, req.user_id or "", json.dumps(content, ensure_ascii=False)[:4000], req.resource_type)
+    await emit("resource.created", {
+        "user_id": req.user_id,
+        "resource_id": resource.id,
+        "resource_type": resource.resource_type,
+        "title": resource.title,
+        "source": "agent_draft",
+    })
+    return {"ok": True, "resource": _serialize_resource(resource)}
+
+
 @router.get("/{resource_id}")
 def get_resource(resource_id: int, db: Session = Depends(get_db)):
     resource = db.query(LearningResource).get(resource_id)
     if not resource:
         return {"found": False}
     return {"found": True, **_serialize_resource(resource)}
+
+
+@router.post("/{article_id}/generate_quiz_from_article")
+async def generate_quiz_from_article(
+    article_id: int,
+    user_id: str,
+    question_count: int = Query(6, ge=3, le=20),
+    difficulty: str = "中等",
+    db: Session = Depends(get_db),
+):
+    article = db.query(LearningResource).filter(
+        LearningResource.id == article_id,
+        LearningResource.user_id == user_id,
+        LearningResource.resource_type == "article",
+    ).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="文章资源不存在")
+
+    course_name = article.course_name or ""
+    knowledge_points = _as_list(article.knowledge_points)
+    if not course_name or not knowledge_points:
+        inferred = infer_resource_tags(_resource_text(article))
+        course_name = course_name or inferred.get("course_name") or ""
+        knowledge_points = knowledge_points or inferred.get("knowledge_points") or []
+    if not course_name or not knowledge_points:
+        raise HTTPException(status_code=400, detail="文章缺少课程或知识点标签，无法生成可回写掌握度的测试题")
+
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+    article_text = ""
+    content = article.content
+    if isinstance(content, dict):
+        article_text = str(content.get("text") or content.get("markdown") or json.dumps(content, ensure_ascii=False))
+    else:
+        article_text = str(content or "")
+    topic = (
+        f"请基于以下文章内容生成课后测试题，课程：{course_name}，"
+        f"知识点范围：{'、'.join(knowledge_points)}。\n\n"
+        f"文章标题：{article.title}\n文章内容：\n{article_text[:5000]}"
+    )
+    state = AgentState(
+        user_id=user_id,
+        user_message=topic,
+        resource_type="quiz",
+        profile=profile,
+        course_name=course_name,
+        knowledge_points=knowledge_points,
+        question_count=question_count,
+        difficulty=difficulty,
+        question_types="single_choice,fill_blank",
+    )
+    await ContentGenAgent().process(state)
+    resource_id = state.get("resource_db_id")
+    quiz = db.query(LearningResource).filter(
+        LearningResource.id == resource_id,
+        LearningResource.user_id == user_id,
+    ).first()
+    if not quiz:
+        raise HTTPException(status_code=502, detail="题库生成失败")
+
+    quiz.course_name = course_name
+    quiz.knowledge_points = knowledge_points
+    quiz.kp_weights = quiz.kp_weights or _equal_kp_weights(knowledge_points)
+    quiz.tag_confidence = 1.0
+    quiz.tags = list(dict.fromkeys(_as_list(quiz.tags) + ["quiz", course_name, *knowledge_points]))
+    quiz.content = _ensure_quiz_question_tags(dict(quiz.content or {}), knowledge_points)
+    db.commit()
+    db.refresh(quiz)
+    index_resource(quiz.id, user_id, json.dumps(quiz.content or {}, ensure_ascii=False)[:4000], "quiz")
+    await emit("resource.created", {
+        "user_id": user_id,
+        "resource_id": quiz.id,
+        "resource_type": "quiz",
+        "source": "article_quiz",
+        "article_id": article.id,
+        "course_name": course_name,
+        "knowledge_points": knowledge_points,
+    })
+    return {"ok": True, "resource": _serialize_resource(quiz)}
 
 
 @router.get("/{resource_id}/ppt_preview")
@@ -572,112 +761,46 @@ async def generate_graph_package(
         total=len(types),
     )
 
-    if package_type == "完整资源包":
-        state = AgentState(
-            user_id=user_id,
-            user_message=topic,
-            profile=profile,
-            course_name=course_name.strip(),
-            knowledge_points=kp_list,
+    state = AgentState(
+        user_id=user_id,
+        user_message=topic,
+        profile=profile,
+        course_name=course_name.strip(),
+        knowledge_points=kp_list,
+        requested_resource_types=types,
+    )
+    try:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            18,
+            "LangGraph 多智能体正在规划并生成资源包",
+            package_type=package_type,
+            current=0,
+            total=len(types),
         )
-        try:
-            await _emit_generation_progress(
-                user_id,
-                job_id,
-                18,
-                "多智能体正在规划并生成完整资源包",
-                package_type=package_type,
-                current=0,
-                total=len(types),
-            )
-            await OrchestratorAgent().process(state)
-            failures = state.get("orchestration_failures") or []
-            await _emit_generation_progress(
-                user_id,
-                job_id,
-                88,
-                "资源内容已生成，正在写入图谱标签",
-                package_type=package_type,
-                current=len(types),
-                total=len(types),
-            )
-        except Exception as exc:
-            await _emit_generation_progress(
-                user_id,
-                job_id,
-                100,
-                f"完整资源包生成失败：{exc}",
-                status="failed",
-                package_type=package_type,
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-    else:
-        async def gen_one(rtype: str):
-            state = AgentState(
-                user_id=user_id,
-                user_message=topic,
-                resource_type=rtype,
-                question_count=8 if rtype == "quiz" else 5,
-                difficulty="中等",
-                question_types="single_choice,fill_blank",
-                code_language="python",
-                course_name=course_name.strip(),
-                knowledge_points=kp_list,
-                profile=profile,
-            )
-            if rtype == "mindmap":
-                await MindMapAgent().process(state)
-            elif rtype == "video":
-                await VideoAgent().process(state)
-            elif rtype == "evaluation":
-                await EvaluationAgent().process(state)
-            else:
-                await ContentGenAgent().process(state)
-
-        completed_count = 0
-        progress_lock = asyncio.Lock()
-
-        async def gen_one_with_progress(rtype: str):
-            nonlocal completed_count
-            label = RESOURCE_TYPE_LABELS.get(rtype, rtype)
-            await _emit_generation_progress(
-                user_id,
-                job_id,
-                8,
-                f"正在生成{label}",
-                package_type=package_type,
-                resource_type=rtype,
-                current=completed_count,
-                total=len(types),
-            )
-            await gen_one(rtype)
-            async with progress_lock:
-                completed_count += 1
-                progress = 10 + round(completed_count / max(1, len(types)) * 78)
-                await _emit_generation_progress(
-                    user_id,
-                    job_id,
-                    progress,
-                    f"{label}生成完成",
-                    package_type=package_type,
-                    resource_type=rtype,
-                    current=completed_count,
-                    total=len(types),
-                )
-
-        failures = []
-        try:
-            await asyncio.gather(*[gen_one_with_progress(t) for t in types])
-        except Exception as exc:
-            await _emit_generation_progress(
-                user_id,
-                job_id,
-                100,
-                f"图谱资源包生成失败：{exc}",
-                status="failed",
-                package_type=package_type,
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        await OrchestratorAgent().process(state)
+        failures = state.get("orchestration_failures") or []
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            88,
+            "资源内容已生成，正在写入图谱标签",
+            package_type=package_type,
+            current=len(types),
+            total=len(types),
+            failures=failures,
+        )
+    except Exception as exc:
+        await _emit_generation_progress(
+            user_id,
+            job_id,
+            100,
+            f"图谱资源包生成失败：{exc}",
+            status="failed",
+            package_type=package_type,
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     await _emit_generation_progress(
         user_id,
@@ -717,6 +840,8 @@ async def generate_graph_package(
         current=len(types),
         total=len(types),
     )
+    generated_resources = state.get("generated_resources") or []
+    ppt_sessions = [item.get("ppt_session") for item in generated_resources if item.get("ppt_session")]
     return {
         "ok": True,
         "job_id": job_id,
@@ -726,6 +851,8 @@ async def generate_graph_package(
         "types": types,
         "generated": len(updated_ids),
         "ids": updated_ids,
+        "resources": generated_resources,
+        "ppt_sessions": ppt_sessions,
         "failures": failures,
     }
 
@@ -784,6 +911,7 @@ async def generate_resource(
         else:
             state["resource_type"] = rtype
             await ContentGenAgent().process(state)
+        return state
 
     completed_count = 0
     progress_lock = asyncio.Lock()
@@ -801,7 +929,7 @@ async def generate_resource(
             current=completed_count,
             total=len(types),
         )
-        await gen_one(rtype)
+        state = await gen_one(rtype)
         async with progress_lock:
             completed_count += 1
             progress = 10 + round(completed_count / max(1, len(types)) * 82)
@@ -815,9 +943,10 @@ async def generate_resource(
                 current=completed_count,
                 total=len(types),
             )
+        return state
 
     try:
-        await asyncio.gather(*[gen_one_with_progress(t) for t in types])
+        generated_states = await asyncio.gather(*[gen_one_with_progress(t) for t in types])
     except Exception as exc:
         await _emit_generation_progress(
             user_id,
@@ -848,7 +977,15 @@ async def generate_resource(
         total=len(types),
     )
 
-    return {"ok": True, "job_id": job_id, "types": types}
+    ppt_sessions = [state.get("ppt_session") for state in generated_states if state.get("ppt_session")]
+    generated_ids = [state.get("resource_db_id") for state in generated_states if state.get("resource_db_id")]
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "types": types,
+        "ids": generated_ids,
+        "ppt_sessions": ppt_sessions,
+    }
 
 
 @router.post("/generate/starter")
@@ -1101,11 +1238,14 @@ async def generate_orchestrated(
         current=len(types),
         total=len(types),
     )
+    generated_resources = state.get("generated_resources") or []
+    ppt_sessions = [item.get("ppt_session") for item in generated_resources if item.get("ppt_session")]
     return {
         "ok": True,
         "job_id": job_id,
         "types": types,
-        "resources": state.get("generated_resources") or [],
+        "resources": generated_resources,
+        "ppt_sessions": ppt_sessions,
         "failures": state.get("orchestration_failures") or [],
         "course_name": state.get("course_name"),
         "knowledge_points": state.get("knowledge_points") or [],

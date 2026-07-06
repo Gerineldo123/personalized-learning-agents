@@ -46,6 +46,17 @@ export interface SkillData {
   progress_note?: string
   progress_indeterminate?: boolean
   progress_label?: string
+  streaming_code?: boolean
+  draft_resource?: {
+    client_draft_id: string
+    resource_type: string
+    title: string
+    content: unknown
+    course_name?: string | null
+    knowledge_points?: string[]
+    kp_weights?: Record<string, number>
+    save_required?: boolean
+  } | null
 }
 
 export interface ResultData {

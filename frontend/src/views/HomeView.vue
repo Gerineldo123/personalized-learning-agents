@@ -4,22 +4,9 @@ import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import api from '../api'
 import { useUserStore } from '../stores/user'
-import { useSausageSkinStore, SAUSAGE_SKINS } from '../stores/sausageSkin'
-import SausageIcon from '../components/SausageIcon.vue'
-import SkinUnlockPopup from '../components/SkinUnlockPopup.vue'
 
 const router = useRouter()
 const userStore = useUserStore()
-const skinStore = useSausageSkinStore()
-const previewSkin = ref<{ id: string; locked: boolean } | null>(null)
-
-function showSkinPreview(id: string) {
-  previewSkin.value = { id, locked: !skinStore.unlockedSkins.includes(id) }
-}
-
-function closeSkinPreview() {
-  previewSkin.value = null
-}
 
 const hasFocusSessions = computed(() => {
   try {
@@ -222,8 +209,6 @@ onMounted(async () => {
   initBarChart()
   initRadarChart()
   window.addEventListener('resize', () => { barChart?.resize(); radarChart?.resize() })
-  skinStore.loadFromStorage()
-  skinStore.checkUnlocks()
   loadKnowledgeAreaCounts()
   loadSuggestedQuestions()
 
@@ -330,18 +315,14 @@ function handleSearchKeydown(e: KeyboardEvent) {
 
       <div ref="insightsRowRef" class="insights-row" :class="{ 'in-view': insightsVisible }">
         <div class="card-stats" @click="router.push('/path')">
-          <div class="card-stats-title">专注淀粉肠</div>
+          <div class="card-stats-title">专注成长</div>
           <div v-if="hasWeeklyUsageData" class="card-stats-chart" ref="barChartRef"></div>
-          <div v-if="!hasFocusSessions" class="card-stats-empty">本周尚无专注记录，继续加油！</div>
-          <div v-if="hasFocusSessions" class="home-skin-strip">
-            <div
-              v-for="skin in SAUSAGE_SKINS.filter(s => skinStore.unlockedSkins.includes(s.id))"
-              :key="skin.id"
-              :class="['home-skin-item', { 'home-skin-active': skinStore.selectedSkin === skin.id }]"
-              @click.stop="showSkinPreview(skin.id)"
-            >
-              <SausageIcon :size="96" :skin="skin.id" />
-              <div class="home-skin-name">{{ skin.name }}</div>
+          <div v-if="!hasFocusSessions" class="card-stats-empty">本周尚无专注记录</div>
+          <div v-else class="home-focus-summary">
+            <div class="home-focus-icon">⏱</div>
+            <div>
+              <strong>已有专注行为数据</strong>
+              <span>进入专注成长查看时长、完成率和中断情况。</span>
             </div>
           </div>
         </div>
@@ -362,7 +343,6 @@ function handleSearchKeydown(e: KeyboardEvent) {
       </div>
     </div>
   </div>
-  <SkinUnlockPopup :preview-skin="previewSkin" @close="closeSkinPreview" @done="closeSkinPreview" />
 </template>
 
 <style scoped>
@@ -609,32 +589,32 @@ function handleSearchKeydown(e: KeyboardEvent) {
 .card-stats-chart { width: 100%; height: 260px; }
 .card-stats-empty { width: 100%; height: 260px; display: flex; align-items: center; justify-content: center; color: #948A80; font-size: 12px; }
 
-.home-skin-strip {
+.home-focus-summary {
   display: flex;
-  justify-content: center;
   align-items: center;
-  gap: 24px;
+  justify-content: center;
+  gap: 14px;
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #EFE6DC;
-  flex-wrap: wrap;
+  color: #6B635C;
+  font-size: 13px;
 }
-
-.home-skin-item {
+.home-focus-icon {
+  width: 50px;
+  height: 50px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  padding: 16px 24px;
-  border-radius: 14px;
-  border: 2px solid transparent;
-  transition: all 0.2s;
-  min-width: 140px;
+  justify-content: center;
+  border-radius: 16px;
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 24px;
 }
-.home-skin-item:hover { border-color: #EFE6DC; background: rgba(249,217,184,0.08); }
-.home-skin-active { border-color: #F9D9B8; background: rgba(249,217,184,0.12); }
-.home-skin-name { font-size: 15px; color: #3A332E; font-weight: 500; white-space: nowrap; }
+.home-focus-summary strong {
+  display: block;
+  color: #3A332E;
+  margin-bottom: 4px;
+}
 
 .card-radar {
   flex: 1;

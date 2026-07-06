@@ -10,7 +10,7 @@ export const useFocusStore = defineStore('focus', () => {
   const focusRemaining = ref(0)
   const focusTotal = ref(0)
   const timerView = ref<'hourglass' | 'digital'>('hourglass')
-  const starchSausages = ref(0)
+  const completedFocusCount = ref(0)
   const focusSessions = ref<{ date: string; minutes: number; completed: boolean }[]>([])
   let focusTimer: ReturnType<typeof setInterval> | null = null
   let beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null
@@ -24,8 +24,8 @@ export const useFocusStore = defineStore('focus', () => {
   const isFocusing = computed(() => state.value === 'focusing')
 
   function init() {
-    const saved = localStorage.getItem('starch-sausages')
-    if (saved) starchSausages.value = parseInt(saved) || 0
+    const saved = localStorage.getItem('focus-completed-count')
+    if (saved) completedFocusCount.value = parseInt(saved) || 0
     const sessions = localStorage.getItem('focus-sessions')
     if (sessions) focusSessions.value = JSON.parse(sessions)
   }
@@ -64,8 +64,8 @@ export const useFocusStore = defineStore('focus', () => {
     removeGlobalListeners()
     exitFullscreen()
     state.value = 'completed'
-    starchSausages.value++
-    localStorage.setItem('starch-sausages', String(starchSausages.value))
+    completedFocusCount.value++
+    localStorage.setItem('focus-completed-count', String(completedFocusCount.value))
     const session = {
       date: new Date().toISOString(),
       minutes: focusTotal.value / 60,
@@ -179,7 +179,7 @@ export const useFocusStore = defineStore('focus', () => {
     focusRemaining,
     focusTotal,
     timerView,
-    starchSausages,
+    completedFocusCount,
     focusSessions,
     displayMinutes,
     displaySeconds,

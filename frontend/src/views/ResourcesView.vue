@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
@@ -9,12 +9,11 @@ import QuizCard from '../components/resource/QuizCard.vue'
 import PptViewer from '../components/resource/PptViewer.vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdownEnhanced as renderMdCommon, codeBlockStore } from '../utils/markdown'
-import SausageIcon from '../components/SausageIcon.vue'
-import LoadingSausage from '../components/LoadingSausage.vue'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
 const route = useRoute()
+const router = useRouter()
 
 const resources = ref<any[]>([])
 const totalResources = ref(0)
@@ -54,6 +53,7 @@ const orchestrateLoading = ref(false)
 const demoLoading = ref(false)
 const autoTagLoading = ref(false)
 const feedbackLoading = ref(false)
+const articleQuizLoading = ref(false)
 const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
@@ -160,12 +160,38 @@ const graphPackageOptions = [
   'PPT课件',
   '完整资源包',
 ]
+function packageIncludesPpt(packageType: string) {
+  return ['课程总览', 'PPT课件', '完整资源包'].includes(packageType)
+}
 const feedbackOptions = [
   { value: 'too_hard', label: '太难' },
   { value: 'too_easy', label: '太简单' },
   { value: 'helpful', label: '有帮助' },
   { value: 'irrelevant', label: '不相关' },
 ]
+
+const demoCourse = computed(() => {
+  const courses = curriculumCourses.value || []
+  return (
+    courses.find((course: any) => course.status === 'learning' && course.kp_file) ||
+    courses.find((course: any) => course.status === 'weak' && course.kp_file) ||
+    courses.find((course: any) => course.status === 'available' && course.kp_file) ||
+    courses.find((course: any) => course.kp_file) ||
+    courses.find((course: any) => course.status === 'learning') ||
+    courses[0] ||
+    null
+  )
+})
+
+const demoCourseName = computed(() => demoCourse.value?.name || demoCourse.value?.id || '')
+const demoBannerTitle = computed(() =>
+  demoCourseName.value ? `赛题演示主线：${demoCourseName.value}学习闭环` : '赛题演示主线：个性化学习闭环'
+)
+const demoBannerDesc = computed(() =>
+  demoCourseName.value
+    ? `基于当前培养方案中的「${demoCourseName.value}」生成文章、思维导图、题库、代码案例、PPT 课件和视频推荐，并自动绑定可用图谱标签。`
+    : '请先在学习画像中完善专业、年级和当前学期，系统将根据培养方案选择课程生成资源包。'
+)
 
 function makeGenerationJobId() {
   return `resource_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -497,21 +523,62 @@ function onPageChange(p: number) {
   loadResources()
 }
 
+function openPptStepFlow(topic: string, courseName: string, knowledgePoints: string[]) {
+  router.push({
+    path: '/ppt',
+    query: {
+      topic,
+      course: courseName,
+      kp: knowledgePoints.join(','),
+    },
+  })
+}
+
+function requirePptContext(courseName: string, knowledgePoints: string[]) {
+  if (!courseName || knowledgePoints.length === 0) {
+    ElMessage.warning('PPT 分步生成必须先选择课程和至少一个知识点')
+    return false
+  }
+  return true
+}
+
+function handlePptSessionsFromResponse(data: any, fallbackTopic: string, fallbackCourse = '', fallbackKps: string[] = []) {
+  const sessions = data?.ppt_sessions || []
+  if (!sessions.length) return false
+  const session = sessions[0] || {}
+  const course = session.course_name || data.course_name || fallbackCourse
+  const kps = session.knowledge_points || data.knowledge_points || fallbackKps
+  const topic = session.topic || fallbackTopic
+  if (!course || !kps.length) return false
+  ElMessage.info('PPT 已创建分步生成任务，请确认大纲并选择模板')
+  openPptStepFlow(topic, course, kps)
+  return true
+}
+
 async function startGenerate() {
   if (!genTopic.value.trim()) { ElMessage.warning('请输入主题'); return }
   if (genTypes.value.length === 0) { ElMessage.warning('请选择类型'); return }
+  const selectedTypes = [...genTypes.value]
+  const wantsPpt = selectedTypes.includes('ppt')
+  const nonPptTypes = selectedTypes.filter(t => t !== 'ppt')
+  if (wantsPpt && !requirePptContext(genCourseName.value, genKnowledgePoints.value)) return
+  if (wantsPpt && nonPptTypes.length === 0) {
+    showGenDialog.value = false
+    openPptStepFlow(genTopic.value.trim(), genCourseName.value, genKnowledgePoints.value)
+    return
+  }
   genLoading.value = true
   const jobId = beginGenerationProgress(
     '手动生成学习资源',
-    `准备生成：${genTypes.value.map(typeLabel).join('、')}`,
-    genTypes.value.length,
+    `准备生成：${nonPptTypes.map(typeLabel).join('、')}${wantsPpt ? '，PPT 将进入分步流程' : ''}`,
+    nonPptTypes.length,
   )
   try {
     await api.post('/resources/generate', null, {
       params: {
         user_id: userStore.userId,
         topic: genTopic.value.trim(),
-        resource_types: genTypes.value.join(','),
+        resource_types: nonPptTypes.join(','),
         course_name: genCourseName.value,
         knowledge_points: genKnowledgePoints.value.join(','),
         question_count: genQuestionCount.value,
@@ -522,7 +589,10 @@ async function startGenerate() {
       }
     })
     finishGenerationProgress('手动学习资源生成完成')
-    ElMessage.success('资源生成完成')
+    ElMessage.success(wantsPpt ? '非 PPT 资源已生成，接下来进入 PPT 分步流程' : '资源生成完成')
+    if (wantsPpt) {
+      openPptStepFlow(genTopic.value.trim(), genCourseName.value, genKnowledgePoints.value)
+    }
     showGenDialog.value = false
     genTopic.value = ''
     genTypes.value = ['article']
@@ -603,7 +673,7 @@ async function generateOrchestrated(topic: string, options: { courseName?: strin
   orchestrateLoading.value = true
   const jobId = beginGenerationProgress('多智能体协同生成', '正在启动文章、导图、题库、代码、PPT和视频生成', 6)
   try {
-    await api.post('/resources/generate/orchestrate', null, {
+    const r = await api.post('/resources/generate/orchestrate', null, {
       params: {
         user_id: userStore.userId,
         topic,
@@ -614,7 +684,8 @@ async function generateOrchestrated(topic: string, options: { courseName?: strin
       timeout: 300000,
     })
     finishGenerationProgress('多智能体协同生成完成')
-    ElMessage.success('多智能体协同生成完成（文章+导图+题库+代码+PPT+视频）')
+    const openedPpt = handlePptSessionsFromResponse(r.data, topic, options.courseName || '', options.knowledgePoints || [])
+    ElMessage.success(openedPpt ? '非 PPT 资源已生成，PPT 请在分步工作台完成' : '多智能体协同生成完成')
     page.value = 1
     await loadResources()
   } catch {
@@ -627,6 +698,7 @@ async function generateOrchestrated(topic: string, options: { courseName?: strin
 
 async function generateGraphPackage() {
   if (!graphCourseName.value) { ElMessage.warning('请先选择课程节点'); return }
+  if (packageIncludesPpt(graphPackageType.value) && !requirePptContext(graphCourseName.value, graphKnowledgePoints.value)) return
   graphPackageLoading.value = true
   const jobId = beginGenerationProgress(
     '图谱资源包生成',
@@ -645,7 +717,8 @@ async function generateGraphPackage() {
       timeout: 300000,
     })
     finishGenerationProgress('图谱资源包生成完成')
-    ElMessage.success(`已生成 ${r.data.generated || 0} 个图谱资源`)
+    const openedPpt = handlePptSessionsFromResponse(r.data, `${graphCourseName.value} ${graphPackageType.value}`, graphCourseName.value, graphKnowledgePoints.value)
+    ElMessage.success(openedPpt ? `已生成 ${r.data.generated || 0} 个非 PPT 图谱资源，PPT 请在分步工作台完成` : `已生成 ${r.data.generated || 0} 个图谱资源`)
     courseFilter.value = graphCourseName.value
     kpFilter.value = graphKnowledgePoints.value[0] || ''
     page.value = 1
@@ -743,12 +816,23 @@ async function autoTagResources() {
   }
 }
 
-async function generateDataStructureDemo() {
+async function generateCurrentCourseDemo() {
+  const courseName = demoCourseName.value
+  if (!courseName) {
+    ElMessage.warning('请先完善学习画像中的专业和当前学期')
+    return
+  }
+
   demoLoading.value = true
   try {
-    await generateOrchestrated('数据结构：排序算法、树与二叉树、图的个性化学习闭环', {
-      courseName: '数据结构',
-      knowledgePoints: ['排序算法', '树与二叉树', '图'],
+    const kps = await fetchCourseKps(courseName)
+    const knowledgePoints = kps.slice(0, 3).map((kp: any) => kp.id).filter(Boolean)
+    const topic = knowledgePoints.length > 0
+      ? `${courseName}：${knowledgePoints.join('、')}的个性化学习闭环`
+      : `${courseName}个性化学习闭环`
+    await generateOrchestrated(topic, {
+      courseName,
+      knowledgePoints,
     })
   } finally {
     demoLoading.value = false
@@ -766,6 +850,34 @@ async function completeSelectedResource() {
     await loadResources()
   } catch {
     ElMessage.error('完成状态更新失败')
+  }
+}
+
+async function generateQuizFromSelectedArticle() {
+  if (!selected.value || selected.value.resource_type !== 'article') return
+  articleQuizLoading.value = true
+  try {
+    const r = await api.post(`/resources/${selected.value.id}/generate_quiz_from_article`, null, {
+      params: {
+        user_id: userStore.userId,
+        question_count: 6,
+        difficulty: '中等',
+      },
+      timeout: 180000,
+    })
+    const resource = r.data?.resource
+    if (resource) {
+      selected.value = resource
+      typeFilter.value = 'quiz'
+      page.value = 1
+      ElMessage.success('已根据本文生成测试题，提交后会按题目知识点更新掌握度')
+      await loadResources()
+    }
+  } catch (e: any) {
+    const message = e?.response?.data?.detail || '根据文章生成测试题失败'
+    ElMessage.error(message)
+  } finally {
+    articleQuizLoading.value = false
   }
 }
 
@@ -898,11 +1010,16 @@ function biliPlayerSrc(url: string): string {
 
     <div v-if="!selected" class="demo-banner animate-up animate-delay-2">
       <div>
-        <div class="demo-title">赛题演示主线：数据结构学习闭环</div>
-        <div class="demo-desc">一次生成文章、思维导图、题库、代码案例、PPT 课件和视频推荐，并自动绑定知识图谱标签。</div>
+        <div class="demo-title">{{ demoBannerTitle }}</div>
+        <div class="demo-desc">{{ demoBannerDesc }}</div>
       </div>
-      <el-button type="primary" :loading="demoLoading || orchestrateLoading" @click="generateDataStructureDemo">
-        一键生成闭环资源
+      <el-button
+        type="primary"
+        :disabled="!demoCourseName"
+        :loading="demoLoading || orchestrateLoading"
+        @click="generateCurrentCourseDemo"
+      >
+        生成当前课程闭环资源
       </el-button>
     </div>
 
@@ -926,6 +1043,9 @@ function biliPlayerSrc(url: string): string {
         <el-select v-model="graphPackageType" placeholder="资源包类型" style="min-width: 160px">
           <el-option v-for="pkg in graphPackageOptions" :key="pkg" :label="pkg" :value="pkg" />
         </el-select>
+      </div>
+      <div v-if="graphCourseName && graphKpOptions.length === 0" class="graph-empty-hint">
+        当前课程暂未配置课内知识点图谱，将按课程级标签生成资源，不会伪造知识点标签。
       </div>
     </div>
 
@@ -1000,14 +1120,17 @@ function biliPlayerSrc(url: string): string {
         </div>
       </div>
 
-      <div v-else class="sa-empty">
-        <SausageIcon :size="64" animate />
-        <p class="sa-empty-text">尚未检测到可推荐的薄弱课程<br/>可先去学习画像完成问卷</p>
+      <div v-else class="empty-state">
+        <div class="empty-state-icon">📚</div>
+        <p class="empty-state-text">尚未检测到可推荐的薄弱课程<br/>可先去学习画像完成建档</p>
       </div>
     </div>
 
     <div v-if="loading || detailLoading" class="loading-box">
-      <LoadingSausage :text="detailLoading ? '加载资源详情...' : '加载资源...'" />
+      <div class="plain-loading">
+        <el-icon class="is-loading"><component :is="'Loading'" /></el-icon>
+        <span>{{ detailLoading ? '加载资源详情...' : '加载资源...' }}</span>
+      </div>
     </div>
 
     <div v-else-if="selected" class="detail-view animate-up animate-delay-2">
@@ -1038,6 +1161,15 @@ function biliPlayerSrc(url: string): string {
           @click="submitResourceFeedback(item.value)"
         >
           {{ item.label }}
+        </el-button>
+      </div>
+      <div v-if="selected.resource_type === 'article'" class="article-quiz-box">
+        <div>
+          <strong>课后检测</strong>
+          <p>根据本文生成带知识点标签的测试题，提交后按题目级正确率更新知识点掌握度。</p>
+        </div>
+        <el-button type="primary" :loading="articleQuizLoading" @click="generateQuizFromSelectedArticle">
+          根据本文生成测试题
         </el-button>
       </div>
       <QuizCard v-if="selected.resource_type === 'quiz'" :content="selected.content" :resourceId="selected.id" :userId="userStore.userId" />
@@ -1088,14 +1220,14 @@ function biliPlayerSrc(url: string): string {
           <el-tag v-for="kp in (r.knowledge_points || []).slice(0, 2)" :key="kp" size="small" type="info">{{ kp }}</el-tag>
           <el-tag size="small" effect="plain">{{ statusLabel(r.learning_status) }}</el-tag>
         </div>
-        <div class="card-deco"><SausageIcon :size="20" muted /></div>
+        <div class="card-deco">📘</div>
       </div>
     </div>
 
     <div v-else class="empty-box animate-up animate-delay-2">
-      <div class="sa-empty">
-        <SausageIcon :size="72" animate />
-        <p class="sa-empty-text">还没有学习资源<br/>尝试生成或刷新看看吧</p>
+      <div class="empty-state">
+        <div class="empty-state-icon">📚</div>
+        <p class="empty-state-text">还没有学习资源<br/>尝试生成或刷新看看吧</p>
       </div>
     </div>
 
@@ -1280,6 +1412,7 @@ function biliPlayerSrc(url: string): string {
 .graph-gen-title { font-size: 16px; font-weight: 700; color: #3A332E; margin-bottom: 4px; }
 .graph-gen-desc { color: #6B635C; font-size: 13px; }
 .graph-gen-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.graph-empty-hint { margin-top: 10px; color: #9A6A2F; font-size: 13px; background: #fff7e6; border: 1px solid #f5d29a; border-radius: 8px; padding: 8px 10px; }
 
 .seed-grid {
   display: grid;
@@ -1475,7 +1608,7 @@ function biliPlayerSrc(url: string): string {
   .resource-list { grid-template-columns: 1fr; gap: 12px; }
 }
 
-.sa-empty {
+.empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1483,17 +1616,56 @@ function biliPlayerSrc(url: string): string {
   gap: 16px;
   padding: 40px 20px;
 }
-.sa-empty-text {
+.empty-state-icon {
+  width: 70px;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: rgba(64, 158, 255, 0.08);
+  font-size: 34px;
+}
+.empty-state-text {
   margin: 0;
   font-size: 14px;
   color: #948A80;
   text-align: center;
   line-height: 1.8;
 }
+.plain-loading {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #948A80;
+}
 .card-deco {
   display: flex;
   justify-content: flex-end;
   opacity: 0.25;
   margin-top: auto;
+  font-size: 18px;
+}
+.article-quiz-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(64, 158, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(64, 158, 255, 0.06);
+}
+.article-quiz-box strong {
+  color: #3A332E;
+}
+.article-quiz-box p {
+  margin: 4px 0 0;
+  color: #6B635C;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

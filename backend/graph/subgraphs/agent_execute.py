@@ -1,9 +1,11 @@
 import json
 import uuid
+from langgraph.constants import Send
 from langgraph.graph import StateGraph, START, END
 from graph.state import AgentGraphState
 from agents.tools import tavily_search
 from agents.skills import get_skill, get_all_skills, get_skills_description, SkillResult
+from graph.subgraphs.resource_orchestration import resource_orchestration_graph
 
 
 def _get_sse_queue(session_id: str):
@@ -36,6 +38,73 @@ def _has_mistake_intent(message: str) -> bool:
     return any(keyword in message for keyword in ["错题", "错因", "错误题", "薄弱题", "错题本"])
 
 
+def _requires_visual_code_artifact(message: str) -> bool:
+    text = (message or "").lower()
+    visual_terms = [
+        "可视化动画",
+        "动画演示",
+        "可视化演示",
+        "交互演示",
+        "动态演示",
+        "步骤动画",
+        "可视化",
+        "动画",
+        "visualization",
+        "visual",
+        "animation",
+        "animate",
+    ]
+    create_terms = [
+        "生成",
+        "制作",
+        "创建",
+        "设计",
+        "实现",
+        "开发",
+        "写一个",
+        "写个",
+        "做一个",
+        "做个",
+        "画一个",
+        "画个",
+        "给我生成",
+        "给我做",
+        "给我写",
+        "给我一个",
+        "给我多种",
+    ]
+    explain_only_terms = ["解释", "分析", "评价", "怎么看", "为什么"]
+    video_search_terms = ["推荐视频", "搜索视频", "视频资源", "b站", "bilibili", "哔哩哔哩"]
+
+    asks_visual = any(term in text for term in visual_terms)
+    asks_create = any(term in text for term in create_terms)
+    asks_video_search = any(term in text for term in video_search_terms)
+    explain_only = any(term in text for term in explain_only_terms) and not asks_create
+    return asks_visual and asks_create and not asks_video_search and not explain_only
+
+
+def _apply_skill_routing_guards(message: str, selected_skills: list, code_needed: bool, code_lang: str, code_desc: str):
+    valid_skills = get_all_skills()
+    normalized = [skill for skill in selected_skills if skill in valid_skills]
+
+    if _requires_visual_code_artifact(message) and "code_gen" in valid_skills:
+        normalized = [skill for skill in normalized if skill != "code_analysis"]
+        if "code_gen" not in normalized:
+            normalized.insert(0, "code_gen")
+        code_needed = True
+        code_lang = "html"
+        code_desc = message
+
+    return normalized, code_needed, code_lang, code_desc
+
+
+def _requires_resource_orchestration(message: str) -> bool:
+    text = (message or "").lower()
+    create_terms = ["生成", "制作", "创建", "规划", "设计", "给我"]
+    resource_terms = ["资源包", "多模态", "完整资源", "学习方案", "学习资料", "学习路径", "闭环资源"]
+    return any(term in text for term in create_terms) and any(term in text for term in resource_terms)
+
+
 def _json_preview(value, limit: int = 3000) -> str:
     try:
         text = json.dumps(value, ensure_ascii=False, default=str)
@@ -63,6 +132,9 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
     code_lang = "python"
     code_desc = ""
     selected_skills = []  # 默认不强制使用任何skill，由LLM决定
+    use_resource_orchestration = _requires_resource_orchestration(user_message)
+    session_id = state.get("_session_id", "")
+    sse_queue = _get_sse_queue(session_id)
 
     # 获取可用 skills 描述
     skills_desc = get_skills_description()
@@ -118,9 +190,34 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
 - code_analysis 和 code_gen 是独立的：请根据任务需求只选一个，一般不要同时选
 - selected_skills 可以为空数组（表示直接用LLM回答）"""
 
+        running_event = {
+            "type": "step",
+            "step_type": "thinking",
+            "step_id": step_id,
+            "status": "running",
+            "title": "分析任务需求",
+            "agent_name": "规划智能体",
+            "_live_pushed": sse_queue is not None,
+            "data": {"content": ""},
+        }
+        wf.append(running_event)
+        if sse_queue:
+            try:
+                sse_queue.put_nowait(running_event)
+            except Exception:
+                pass
+
         async for token in _llm_stream(system, user):
             thinking_content += token
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
+            token_event = {"type": "token", "step_id": step_id, "delta": token}
+            wf.append(token_event)
+            if sse_queue:
+                try:
+                    sse_queue.put_nowait(token_event)
+                    from core.sse_registry import mark_live_token_step
+                    mark_live_token_step(session_id, step_id)
+                except Exception:
+                    pass
 
         try:
             if "{" in thinking_content and "}" in thinking_content:
@@ -144,14 +241,25 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
             if "quiz_gen" not in selected_skills and "quiz_gen" in get_all_skills():
                 selected_skills.append("quiz_gen")
 
+        selected_skills, code_needed, code_lang, code_desc = _apply_skill_routing_guards(
+            user_message, selected_skills, code_needed, code_lang, code_desc
+        )
+        if use_resource_orchestration:
+            selected_skills = ["resource_orchestration"]
+
         wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
     else:
         thinking_content = f"分析任务：{user_message}"
         wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "data": {"content": thinking_content}})
+        selected_skills, code_needed, code_lang, code_desc = _apply_skill_routing_guards(
+            user_message, selected_skills, code_needed, code_lang, code_desc
+        )
+        if use_resource_orchestration:
+            selected_skills = ["resource_orchestration"]
         wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
 
+    execution_route = "resource_orchestration" if use_resource_orchestration else ("skill" if selected_skills else "direct_answer")
     return {
-        **state,
         "workflow_outputs": wf,
         "all_modules_data": {
             **(state.get("all_modules_data") or {}),
@@ -160,59 +268,88 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
             "code_lang": code_lang,
             "code_desc": code_desc,
             "selected_skills": selected_skills,
+            "use_resource_orchestration": use_resource_orchestration,
+            "execution_route": execution_route,
         },
     }
 
 
-async def skills_node(state: AgentGraphState) -> AgentGraphState:
-    """Skills 执行节点：按顺序执行 plan 选定的 skills"""
+def _dispatch_skill_nodes(state: AgentGraphState):
+    ad = state.get("all_modules_data") or {}
+    if ad.get("use_resource_orchestration"):
+        return "resource_orchestration"
+    selected_skills = ad.get("selected_skills", [])
+    if not selected_skills:
+        return "skill_collect"
+    return [
+        Send("skill_execute", {**state, "current_skill_name": skill_name})
+        for skill_name in selected_skills
+    ]
+
+
+async def skill_execute_node(state: AgentGraphState) -> AgentGraphState:
+    """单个 Skill 执行节点，由 LangGraph 动态并行派发"""
     user_message = state.get("user_message", "")
     user_id = state.get("user_id", "")
-    wf = state.get("workflow_outputs", [])
+    wf = []
     ad = state.get("all_modules_data") or {}
-    selected_skills = ad.get("selected_skills", ["deep_search"])
+    skill_name = state.get("current_skill_name", "")
 
-    skill_results = {}
     context = {
         "user_message": user_message,
         "user_id": user_id,
         "all_modules_data": ad,
         "profile": state.get("profile"),
         "profile_text": state.get("profile_text", ""),
+        "persist": False,
     }
 
     # 取出 SSE 队列（由 _agent_stream 注入到 state）
     sse_queue = _get_sse_queue(state.get("_session_id", ""))
 
-    for skill_name in selected_skills:
-        skill = get_skill(skill_name)
-        if not skill:
+    skill = get_skill(skill_name)
+    if not skill:
+        return {"skill_result_items": [{"skill_name": skill_name, "data": {"error": "未知 skill"}, "success": False}]}
+    skill._sse_queue = sse_queue
+    skill._session_id = state.get("_session_id", "")
+    try:
+        result = await skill.execute(context, wf)
+        data = result.data if result.success else {"error": result.error}
+        return {
+            "skill_result_items": [{"skill_name": skill_name, "data": data, "success": result.success}],
+            "skill_workflow_outputs": wf,
+        }
+    except Exception as e:
+        return {
+            "skill_result_items": [{"skill_name": skill_name, "data": {"error": str(e)}, "success": False}],
+            "skill_workflow_outputs": wf,
+        }
+    finally:
+        skill._sse_queue = None
+        skill._session_id = ""
+
+
+async def skill_collect_node(state: AgentGraphState) -> AgentGraphState:
+    """汇总并行 skill 结果，写回原 all_modules_data 结构"""
+    user_message = state.get("user_message", "")
+    ad = dict(state.get("all_modules_data") or {})
+    skill_results = {}
+    for item in state.get("skill_result_items") or []:
+        skill_name = item.get("skill_name")
+        if not skill_name:
             continue
-        # 将队列绑定到 skill 实例，emit_step 会用它实时推送
-        skill._sse_queue = sse_queue
-        try:
-            result = await skill.execute(context, wf)
-            skill_results[skill_name] = result.data if result.success else {"error": result.error}
-
-            # 将 deep_search 结果写入 all_modules_data 供后续 result 节点使用
-            if skill_name == "deep_search" and result.success:
-                ad["search_result"] = {
-                    "results": result.data.get("search_results", []),
-                    "answer": result.data.get("answer", ""),
-                    "query": ad.get("search_keywords", user_message),
-                }
-                # 更新 context 以便后续 skill 可使用搜索结果
-                context["all_modules_data"] = ad
-        except Exception as e:
-            skill_results[skill_name] = {"error": str(e)}
-        finally:
-            skill._sse_queue = None
-
+        data = item.get("data") or {}
+        skill_results[skill_name] = data
+        if skill_name == "deep_search" and item.get("success"):
+            ad["search_result"] = {
+                "results": data.get("search_results", []),
+                "answer": data.get("answer", ""),
+                "query": ad.get("search_keywords", user_message),
+            }
     ad["skill_results"] = skill_results
 
     return {
-        **state,
-        "workflow_outputs": wf,
+        "workflow_outputs": list(state.get("workflow_outputs") or []) + list(state.get("skill_workflow_outputs") or []),
         "all_modules_data": ad,
     }
 
@@ -226,6 +363,26 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
     search_result = ad.get("search_result", {})
     skill_results = ad.get("skill_results", {})
     selected_skills = ad.get("selected_skills", [])
+    agent_context = ad.get("agent_context") or {}
+    mistakes = agent_context.get("mistakes") or {}
+    mistake_total = int((mistakes or {}).get("total") or 0)
+    mistake_prompt_context = ""
+    if _has_mistake_intent(user_message):
+        try:
+            from services.agent_context_service import build_mistake_prompt_context
+            mistake_prompt_context = build_mistake_prompt_context(mistakes)
+        except Exception:
+            mistake_prompt_context = ""
+    if "resource_orchestration" in selected_skills:
+        ad = dict(ad)
+        skill_results = dict(skill_results or {})
+        skill_results["resource_orchestration"] = {
+            "resources": state.get("generated_resources") or [],
+            "failures": state.get("orchestration_failures") or [],
+            "course_name": state.get("course_name"),
+            "knowledge_points": state.get("knowledge_points") or [],
+        }
+        ad["skill_results"] = skill_results
     profile_text = state.get("profile_text", "暂无画像")
     history = state.get("history", [])[-6:]
 
@@ -277,6 +434,13 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 - 涉及视频学习 → [建议] 搜索视频【主题】
 没有合适情况则不写建议。"""
 
+        if mistake_prompt_context:
+            direct_prompt += (
+                "\n\n【真实错题本摘要】\n"
+                f"{mistake_prompt_context}\n"
+                "如果上面显示已有错题记录，禁止声称错题本为空、没有历史错题或缺少错题内容。"
+            )
+
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": ""}})
         if sse_queue:
             try: sse_queue.put_nowait(wf[-1])
@@ -297,7 +461,7 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
             final_md = f"**{user_message}**\n\n（LLM 未配置，无法回答）"
 
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": final_md}})
-        return {**state, "workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
+        return {"workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
 
     # ── 有 skill 模式：整合各 skill 结果 ──
     has_search = "deep_search" in selected_skills and results
@@ -307,6 +471,12 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
         result_header += f"### 搜索摘要\n{answer or '（未获取AI摘要）'}\n\n### 相关资源\n"
         for r in results[:5]:
             result_header += f"\n- **[{r.get('title', '链接')}]({r.get('url', '#')})**"
+
+    if _has_mistake_intent(user_message):
+        if mistake_total > 0 and mistake_prompt_context:
+            result_header += f"### 错题本依据\n{mistake_prompt_context}\n\n"
+        else:
+            result_header += "### 错题本状态\n当前没有读取到错题本记录，无法基于历史错题做个性化归因。\n\n"
 
     skill_summary_parts = []
     for skill_name, sdata in skill_results.items():
@@ -348,6 +518,14 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 </a>\n'''
                 video_html += '</div>'
                 skill_summary_parts.append(video_html)
+            elif skill_name == "resource_orchestration" and sdata.get("resources"):
+                resources_text = "\n### 已生成学习资源\n"
+                for resource in sdata.get("resources", [])[:8]:
+                    resources_text += f"- {resource.get('resource_type', 'resource')}：{resource.get('title', '')}\n"
+                failures = sdata.get("failures") or []
+                if failures:
+                    resources_text += f"\n失败项：{len(failures)} 个，已保留成功生成的资源。"
+                skill_summary_parts.append(resources_text)
 
     llm_summary = ""
     if use_llm and (has_search or selected_skills):
@@ -374,6 +552,8 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 任务：{user_message}
 {search_block}
 技能执行结果：{_json_preview(skill_results)}
+真实错题本摘要：
+{mistake_prompt_context or '当前没有可用错题摘要。'}
 {rag_context}
 
 要求：
@@ -401,13 +581,19 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                     mark_live_token_step(state.get("_session_id", ""), step_id)
                 except Exception: pass
 
+    if mistake_total > 0 and any(text in llm_summary for text in ["错题本为空", "没有历史错题", "暂无错题", "缺少错题内容"]):
+        llm_summary = (
+            "已读取到你的错题本记录。下面的分析基于上方“错题本依据”中的真实题目、学生答案、正确答案和知识点展开。\n\n"
+            + mistake_prompt_context
+        )
+
     final_md = result_header
     if llm_summary:
         final_md += f"\n\n### AI 分析\n{llm_summary}"
     for part in skill_summary_parts:
         final_md += part
 
-    skill_names_display = {"deep_search": "深度搜索", "code_analysis": "代码生成", "mindmap_gen": "思维导图", "quiz_gen": "习题生成", "video_search": "视频检索"}
+    skill_names_display = {"deep_search": "深度搜索", "code_analysis": "代码生成", "mindmap_gen": "思维导图", "quiz_gen": "习题生成", "video_search": "视频检索", "resource_orchestration": "多智能体资源编排"}
     stats_rows = "| 需求分析 | ✅ | 完成 |\n"
     for sname in selected_skills:
         sdata = skill_results.get(sname, {})
@@ -418,19 +604,23 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
     final_md += f"\n### 执行统计\n| 步骤 | 状态 | 说明 |\n|------|------|------|\n{stats_rows}"
 
     wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "汇总分析报告", "agent_name": "汇总智能体", "data": {"content": final_md}})
-    return {**state, "workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
+    return {"workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
 
 
 def build_agent_execute_graph():
     """构建 Agent 执行图：plan → skills → result"""
     b = StateGraph(AgentGraphState)
     b.add_node("plan", plan_node)
-    b.add_node("skills", skills_node)
+    b.add_node("skill_execute", skill_execute_node)
+    b.add_node("resource_orchestration", resource_orchestration_graph)
+    b.add_node("skill_collect", skill_collect_node)
     b.add_node("result", result_node)
 
     b.add_edge(START, "plan")
-    b.add_edge("plan", "skills")
-    b.add_edge("skills", "result")
+    b.add_conditional_edges("plan", _dispatch_skill_nodes, ["skill_execute", "resource_orchestration", "skill_collect"])
+    b.add_edge("skill_execute", "skill_collect")
+    b.add_edge("resource_orchestration", "result")
+    b.add_edge("skill_collect", "result")
     b.add_edge("result", END)
 
     return b.compile()

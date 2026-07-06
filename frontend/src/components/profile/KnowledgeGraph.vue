@@ -36,6 +36,10 @@ function resolveGraphFile(discipline?: string): string | null {
 
 let graphData: { nodes: any[]; links: any[]; categories: any[] } | null = null
 
+const isExternalEmptyGraph = computed(() =>
+  Boolean(props.graphData && (!props.graphData.nodes || props.graphData.nodes.length === 0))
+)
+
 // 功能5: 计算"下一步推荐"节点 —— 前置依赖全绿/橙但自身是红的节点
 const nextStepNodes = computed(() => {
   if (!graphData) return []
@@ -62,6 +66,10 @@ async function loadGraph() {
   // 优先使用外部传入的图谱数据
   if (props.graphData) {
     graphData = props.graphData
+    if (!graphData.nodes?.length) {
+      chart?.clear()
+      return
+    }
     renderChart()
     return
   }
@@ -179,7 +187,11 @@ watch(() => props.knowledgeBase, renderChart, { deep: true })
       推荐优先学习：
       <el-tag v-for="n in nextStepNodes" :key="n" size="small" color="#f3e8ff" style="border-color:#9b59b6;color:#6c3483;margin-left:6px;cursor:pointer" @click="emit('node-click', n)">{{ n }}</el-tag>
     </div>
-    <div ref="chartRef" class="kg-chart" />
+    <div v-if="isExternalEmptyGraph" class="kg-empty">
+      <div class="kg-empty-title">暂无可渲染的知识点节点</div>
+      <div class="kg-empty-desc">当前课程还没有配置课内知识点图谱，因此不展示空白画布。</div>
+    </div>
+    <div v-else ref="chartRef" class="kg-chart" />
   </div>
 </template>
 
@@ -189,4 +201,7 @@ watch(() => props.knowledgeBase, renderChart, { deep: true })
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; flex-shrink: 0; }
 .kg-next { font-size: 12px; color: #6B635C; margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .kg-chart { width: 100%; height: 420px; }
+.kg-empty { height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #ead8c4; border-radius: 10px; background: #fffaf4; color: #7A6A5C; }
+.kg-empty-title { font-weight: 700; color: #3A332E; }
+.kg-empty-desc { font-size: 13px; }
 </style>
