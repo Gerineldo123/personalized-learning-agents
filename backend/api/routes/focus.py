@@ -1,10 +1,13 @@
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta, timezone
-from collections import Counter
+
 from api.deps import get_db
 from models.focus import FocusSession
+from services.profile_update_service import apply_focus_session
 
 router = APIRouter(prefix="/focus", tags=["专注"])
 
@@ -27,15 +30,8 @@ def create_session(body: FocusSessionIn, user_id: str, db: Session = Depends(get
     db.commit()
     db.refresh(session)
 
-    # 专注会话结束后异步更新画像（仅完成时）
     if body.completed:
-        import asyncio as _asyncio
-        from agents.profile_agent import ProfileAgent
-        from agents.base import AgentState as _AgentState
-        _asyncio.create_task(ProfileAgent().process(
-            _AgentState(user_id=user_id, user_message=f"刚完成一次专注，时长{body.duration_min}分钟，更新专注行为画像"),
-            trigger="focus",
-        ))
+        apply_focus_session(db, user_id)
 
     return {"id": session.id}
 
@@ -50,9 +46,13 @@ def get_stats(user_id: str, db: Session = Depends(get_db)):
     )
     if not sessions:
         return {
-            "total_sessions": 0, "completed_sessions": 0,
-            "interrupt_rate": 0, "total_minutes": 0,
-            "weekly_avg_min": 0, "peak_hours": [], "recent_sessions": [],
+            "total_sessions": 0,
+            "completed_sessions": 0,
+            "interrupt_rate": 0,
+            "total_minutes": 0,
+            "weekly_avg_min": 0,
+            "peak_hours": [],
+            "recent_sessions": [],
         }
 
     total = len(sessions)
@@ -61,7 +61,11 @@ def get_stats(user_id: str, db: Session = Depends(get_db)):
 
     now = datetime.now(timezone.utc)
     four_weeks_ago = now - timedelta(weeks=4)
-    recent = [s for s in sessions if (s.started_at.replace(tzinfo=timezone.utc) if s.started_at.tzinfo is None else s.started_at) >= four_weeks_ago]
+    recent = [
+        s
+        for s in sessions
+        if (s.started_at.replace(tzinfo=timezone.utc) if s.started_at.tzinfo is None else s.started_at) >= four_weeks_ago
+    ]
     weekly_avg = round(sum(s.duration_min for s in recent) / 4)
 
     hour_counts = Counter(s.started_at.hour for s in sessions if s.completed)

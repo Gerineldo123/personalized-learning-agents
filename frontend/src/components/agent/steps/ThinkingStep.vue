@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
 import type { AgentStep, ThinkingData } from '../../../types/agent'
 
 const props = defineProps<{ step: AgentStep }>()
@@ -7,30 +7,14 @@ const props = defineProps<{ step: AgentStep }>()
 const expanded = ref(props.step.status === 'running')
 const displayedContent = ref('')
 
-let charIndex = 0
-let timer: ReturnType<typeof setInterval> | null = null
-
 watch(
-  () => props.step,
+  () => ({
+    status: props.step.status,
+    content: ((props.step.data as ThinkingData).content || ''),
+  }),
   (newStep) => {
-    const newData = newStep.data as ThinkingData
-    if (newStep.status === 'running' && newData.content) {
-      if (timer) clearInterval(timer)
-      charIndex = 0
-      displayedContent.value = ''
-      expanded.value = true
-      timer = setInterval(() => {
-        if (charIndex < newData.content.length) {
-          displayedContent.value += newData.content[charIndex]
-          charIndex++
-        } else {
-          if (timer) clearInterval(timer)
-        }
-      }, 15)
-    } else if (newStep.status === 'completed') {
-      displayedContent.value = newData.content
-      if (timer) clearInterval(timer)
-    }
+    displayedContent.value = newStep.content
+    if (newStep.status === 'running') expanded.value = true
   },
   { deep: true, immediate: true },
 )
@@ -38,19 +22,15 @@ watch(
 function toggleExpand() {
   expanded.value = !expanded.value
 }
-
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
 </script>
 
 <template>
   <div class="step-card" :class="{ expanded }">
     <div class="step-header" @click="toggleExpand">
-      <span class="step-icon">🦉</span>
+      <span class="step-icon">🧭</span>
       <span class="step-title">{{ step.title }}</span>
       <span class="step-status" :class="step.status">
-        {{ step.status === 'running' ? '思考中...' : step.status === 'completed' ? '完成' : '错误' }}
+        {{ step.status === 'running' ? '规划中...' : step.status === 'completed' ? '完成' : '错误' }}
       </span>
       <span class="step-arrow">{{ expanded ? '▾' : '▸' }}</span>
     </div>

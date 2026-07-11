@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 
+from langgraph.config import get_stream_writer
 from langgraph.constants import Send
 from langgraph.graph import END, StateGraph
 
@@ -12,6 +13,8 @@ from agents.video_agent import VideoAgent
 from core.database import SessionLocal
 from graph.state import AgentGraphState
 from models.course_path import CoursePath
+from services.agent_collaboration_service import collaboration_event, collaboration_events_from_workflow
+from services.curriculum_service import course_name_map, get_course_kp_graph, load_curriculum_by_major
 from services.kp_service import default_focus_kps, infer_course_from_text
 
 
@@ -26,6 +29,7 @@ RESOURCE_PLAN = {
 }
 
 DEFAULT_RESOURCE_TYPES = ["article", "mindmap", "quiz", "code", "ppt", "video"]
+MIN_COURSE_PATH_KPS = 3
 
 
 def _profile_snapshot(profile) -> dict:
@@ -49,6 +53,13 @@ def _profile_snapshot(profile) -> dict:
 
 def _event(stage: str, data) -> dict:
     return {"stage": stage, "data": data}
+
+
+def _write_agent_event(stage: str, data) -> None:
+    try:
+        get_stream_writer()({"type": "agent_event", "event": collaboration_event(stage, data)})
+    except Exception:
+        pass
 
 
 def _resource_info(resource_type: str, state: AgentState) -> dict:
@@ -79,16 +90,92 @@ def _extract_content_preview(agent_state: AgentState) -> str:
         return ""
 
 
-def _upsert_learning_path(user_id: str, course_name: str | None, focus_kps: list[str], resources: list[dict]) -> dict:
+def _profile_major(profile) -> str:
+    return str(getattr(profile, "major", "") or "")
+
+
+def _curriculum_course(course_name: str | None, major: str = "") -> dict | None:
+    if not course_name:
+        return None
+    try:
+        curriculum = load_curriculum_by_major(major or "")
+    except Exception:
+        return None
+    courses = course_name_map(curriculum)
+    return courses.get(course_name) or next(
+        (course for course in curriculum.get("courses", []) if course.get("name") == course_name),
+        None,
+    )
+
+
+def _course_graph_kps(course_name: str | None, major: str = "") -> list[str]:
+    if not course_name:
+        return []
+    graph = get_course_kp_graph(course_name, major or "")
+    return [str(node.get("id")).strip() for node in graph.get("nodes", []) if node.get("id")]
+
+
+def _classify_study_scope(
+    *,
+    topic: str,
+    explicit_course: str | None,
+    course_name: str | None,
+    focus_kps: list[str],
+    profile,
+) -> tuple[str, list[str], list[str], str]:
+    major = _profile_major(profile)
+    course = _curriculum_course(course_name, major)
+    course_kps = _course_graph_kps(course_name, major) if course and course.get("kp_file") else []
+    allowed = set(course_kps)
+    bound_kps = [kp for kp in focus_kps if kp in allowed] if allowed else []
+
+    if course and course_kps:
+        course_text_match = bool(course_name and course_name in (topic or ""))
+        if explicit_course or course_text_match:
+            if len(bound_kps) < MIN_COURSE_PATH_KPS:
+                bound_kps = course_kps[:4]
+            return "course", bound_kps, course_kps, "matched_curriculum_course"
+        if bound_kps:
+            return "knowledge_point", bound_kps, course_kps, "matched_course_knowledge_point"
+
+    if course and not course_kps:
+        return "extension", [], [], "course_has_no_kp_file"
+    if course_name and focus_kps:
+        return "extension", [], [], "matched_outside_user_curriculum"
+    return "extension", [], [], "not_bound_to_curriculum_graph"
+
+
+def _upsert_learning_path(
+    user_id: str,
+    course_name: str | None,
+    focus_kps: list[str],
+    resources: list[dict],
+    *,
+    study_scope: str = "",
+    course_kps: list[str] | None = None,
+) -> dict:
     if not course_name:
         return {"skipped": True, "reason": "未识别课程节点，未更新学习路径"}
+
+    if study_scope != "course":
+        return {"skipped": True, "reason": "知识点专项或拓展学习不生成课程学习路径", "study_scope": study_scope}
+
+    allowed = set(course_kps or focus_kps)
+    valid_kps = [kp for kp in focus_kps if kp in allowed]
+    if len(valid_kps) < MIN_COURSE_PATH_KPS:
+        return {
+            "skipped": True,
+            "reason": f"课程路径至少需要覆盖 {MIN_COURSE_PATH_KPS} 个课程知识点，当前覆盖不足",
+            "study_scope": study_scope,
+            "covered_knowledge_points": valid_kps,
+        }
 
     now = datetime.now(timezone.utc).isoformat()
     typed_resources = [
         {"id": r.get("resource_id"), "type": r.get("resource_type"), "title": r.get("title")}
         for r in resources if r.get("resource_id")
     ]
-    path_titles = focus_kps[:6] or [course_name]
+    path_titles = valid_kps[:6]
     steps = []
     for idx, title in enumerate(path_titles, start=1):
         steps.append({
@@ -99,9 +186,14 @@ def _upsert_learning_path(user_id: str, course_name: str | None, focus_kps: list
             "resource_queries": [course_name, title],
             "checkpoint": f"能说明“{title}”的核心概念，并完成至少一道相关练习。",
             "status": "pending",
+            "mastery_status": "unverified",
             "completed_at": None,
+            "course_name": course_name,
+            "knowledge_points": [title],
+            "resource_types": ["article", "mindmap", "quiz"],
             "resource_ids": [r["id"] for r in typed_resources],
             "resources": typed_resources,
+            "path_scope": "course",
         })
 
     db = SessionLocal()
@@ -156,18 +248,35 @@ async def profile_diagnosis_node(state: AgentGraphState) -> dict:
     if not focus_kps:
         focus_kps = default_focus_kps(course_name, topic, limit=4) if course_name else default_focus_kps(None, topic, limit=4)
 
+    study_scope, focus_kps, course_kps, scope_reason = _classify_study_scope(
+        topic=topic,
+        explicit_course=explicit_course,
+        course_name=course_name,
+        focus_kps=focus_kps,
+        profile=profile,
+    )
+    if study_scope == "extension":
+        course_name = None
+
     profile_data = _profile_snapshot(profile)
     diagnosis = {
         "course_name": course_name,
         "focus_knowledge_points": focus_kps,
         "weak_points": profile_data.get("weak_points", []),
         "learning_goal": profile_data.get("learning_goal"),
+        "study_scope": study_scope,
+        "scope_reason": scope_reason,
+        "course_knowledge_point_count": len(course_kps),
     }
+    workflow = [_event("profile_analyzed", profile_data), _event("diagnosis_done", diagnosis)]
     return {
         "course_name": course_name,
         "knowledge_points": focus_kps,
+        "study_scope": study_scope,
+        "course_knowledge_points": course_kps,
         "profile_analysis": diagnosis,
-        "workflow_outputs": [_event("profile_analyzed", profile_data), _event("diagnosis_done", diagnosis)],
+        "workflow_outputs": workflow,
+        "agent_events": collaboration_events_from_workflow(workflow),
     }
 
 
@@ -182,10 +291,12 @@ async def resource_plan_node(state: AgentGraphState) -> dict:
         for rtype in requested
     ]
     jobs = [{"resource_type": rtype} for rtype in requested if rtype != "article"]
+    workflow = [_event("resource_planned", plan)]
     return {
         "requested_resource_types": requested,
         "resource_jobs": jobs,
-        "workflow_outputs": [_event("resource_planned", plan)],
+        "workflow_outputs": workflow,
+        "agent_events": collaboration_events_from_workflow(workflow),
     }
 
 
@@ -236,6 +347,7 @@ async def _run_resource_node(state: AgentGraphState, resource_type: str, message
 
     agent_name = RESOURCE_PLAN.get(resource_type, ("content_gen", ""))[0]
     started = _event("resource_started", {"resource_type": resource_type, "agent": agent_name})
+    _write_agent_event("resource_started", started["data"])
     try:
         if resource_type == "mindmap":
             await MindMapAgent().process(agent_state)
@@ -247,18 +359,24 @@ async def _run_resource_node(state: AgentGraphState, resource_type: str, message
             await ContentGenAgent().process(agent_state)
     except Exception as exc:
         failure = {"resource_type": resource_type, "error": str(exc)}
+        _write_agent_event("resource_failed", failure)
+        events = [started, _event("resource_failed", failure)]
         return {
             "orchestration_failures": [failure],
-            "orchestration_events": [started, _event("resource_failed", failure)],
+            "orchestration_events": events,
+            "agent_events": collaboration_events_from_workflow(events),
         }
 
     info = _resource_info(resource_type, agent_state)
     preview = _extract_content_preview(agent_state)
     if preview:
         info["content_preview"] = preview[:2000]
+    _write_agent_event("resource_created", info)
+    events = [started, _event("resource_created", info)]
     return {
         "generated_resources": [info] if info.get("resource_id") or info.get("ppt_session") else [],
-        "orchestration_events": [started, _event("resource_created", info)],
+        "orchestration_events": events,
+        "agent_events": collaboration_events_from_workflow(events),
     }
 
 
@@ -267,7 +385,11 @@ async def safety_review_node(state: AgentGraphState) -> dict:
         "status": "passed",
         "policy": "关键词安全检查 + 生成提示反幻觉约束；各资源生成后写入安全过滤结果。",
     }
-    return {"workflow_outputs": list(state.get("orchestration_events") or []) + [_event("safety_reviewed", data)]}
+    event = _event("safety_reviewed", data)
+    return {
+        "workflow_outputs": list(state.get("orchestration_events") or []) + [event],
+        "agent_events": collaboration_events_from_workflow([event]),
+    }
 
 
 async def graph_tagging_node(state: AgentGraphState) -> dict:
@@ -277,7 +399,11 @@ async def graph_tagging_node(state: AgentGraphState) -> dict:
         "knowledge_points": state.get("knowledge_points") or [],
         "resource_count": len(resources),
     }
-    return {"workflow_outputs": list(state.get("workflow_outputs") or []) + [_event("knowledge_tagged", data)]}
+    event = _event("knowledge_tagged", data)
+    return {
+        "workflow_outputs": list(state.get("workflow_outputs") or []) + [event],
+        "agent_events": collaboration_events_from_workflow([event]),
+    }
 
 
 async def path_update_node(state: AgentGraphState) -> dict:
@@ -286,10 +412,14 @@ async def path_update_node(state: AgentGraphState) -> dict:
         state.get("course_name"),
         state.get("knowledge_points") or [],
         state.get("generated_resources") or [],
+        study_scope=state.get("study_scope") or "",
+        course_kps=state.get("course_knowledge_points") or [],
     )
+    event = _event("path_updated", path_info)
     return {
         "path_info": path_info,
-        "workflow_outputs": list(state.get("workflow_outputs") or []) + [_event("path_updated", path_info)],
+        "workflow_outputs": list(state.get("workflow_outputs") or []) + [event],
+        "agent_events": collaboration_events_from_workflow([event]),
     }
 
 
@@ -311,9 +441,59 @@ async def finalize_node(state: AgentGraphState) -> dict:
         f"- 失败项：{len(failures)} 个，已保留可用资源并继续闭环\n\n"
         f"建议按学习路径完成资源，并通过题库提交结果更新知识点掌握度。"
     )
+    event = _event("done", done)
     return {
         "response": response,
-        "workflow_outputs": list(state.get("workflow_outputs") or []) + [_event("done", done)],
+        "workflow_outputs": list(state.get("workflow_outputs") or []) + [event],
+        "agent_events": collaboration_events_from_workflow([event]),
+    }
+
+
+async def finalize_node(state: AgentGraphState) -> dict:
+    resources = [r for r in (state.get("generated_resources") or []) if r.get("resource_id")]
+    ppt_sessions = [r for r in (state.get("generated_resources") or []) if r.get("ppt_session")]
+    failures = state.get("orchestration_failures") or []
+    course_name = state.get("course_name")
+    knowledge_points = state.get("knowledge_points") or []
+    path_info = state.get("path_info") or {}
+    study_scope = state.get("study_scope") or "extension"
+    scope_label = {
+        "course": "课程学习",
+        "knowledge_point": "知识点专项",
+        "extension": "拓展学习",
+    }.get(study_scope, "拓展学习")
+    done = {
+        "resources": resources,
+        "ppt_sessions": ppt_sessions,
+        "failures": failures,
+        "path": path_info,
+        "study_scope": study_scope,
+        "scope_label": scope_label,
+    }
+    type_items = [r["resource_type"] for r in resources] + ["ppt_session" for _ in ppt_sessions]
+    type_names = "、".join(type_items) or "暂无资源"
+    focus_names = "、".join(knowledge_points) or (course_name or "未绑定课程")
+    path_text = (
+        f"已更新 {path_info.get('total_steps', 0)} 个步骤"
+        if not path_info.get("skipped")
+        else path_info.get("reason")
+    )
+    response = (
+        "## 个性化学习方案已生成\n\n"
+        f"- 学习类型：{scope_label}\n"
+        f"- 课程节点：{course_name or '未绑定培养方案课程'}\n"
+        f"- 知识点标签：{focus_names}\n"
+        f"- 已生成资源：{type_names}\n"
+        f"- PPT 分步会话：{len(ppt_sessions)} 个\n"
+        f"- 学习路径：{path_text}\n"
+        f"- 失败项：{len(failures)} 个\n\n"
+        "说明：学习路径只用于课程级、多知识点学习；知识点专项和拓展学习只生成资源包。掌握度仍由题目提交结果更新。"
+    )
+    event = _event("done", done)
+    return {
+        "response": response,
+        "workflow_outputs": list(state.get("workflow_outputs") or []) + [event],
+        "agent_events": collaboration_events_from_workflow([event]),
     }
 
 

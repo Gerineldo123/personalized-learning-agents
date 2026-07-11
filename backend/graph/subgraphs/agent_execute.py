@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from langgraph.constants import Send
 from langgraph.graph import StateGraph, START, END
@@ -6,6 +7,12 @@ from graph.state import AgentGraphState
 from agents.tools import tavily_search
 from agents.skills import get_skill, get_all_skills, get_skills_description, SkillResult
 from graph.subgraphs.resource_orchestration import resource_orchestration_graph
+
+
+def _strip_suggestion_lines(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"(?m)^\s*[\[【]建议[\]】].*(?:\n|$)", "", text).strip()
 
 
 def _get_sse_queue(session_id: str):
@@ -93,7 +100,7 @@ def _apply_skill_routing_guards(message: str, selected_skills: list, code_needed
             normalized.insert(0, "code_gen")
         code_needed = True
         code_lang = "html"
-        code_desc = message
+        code_desc = (code_desc or message).strip()
 
     return normalized, code_needed, code_lang, code_desc
 
@@ -111,6 +118,24 @@ def _json_preview(value, limit: int = 3000) -> str:
     except Exception:
         text = str(value)
     return text if len(text) <= limit else text[:limit] + "..."
+
+
+def _skill_results_for_summary(skill_results: dict) -> dict:
+    """压缩技能结果给汇总智能体，避免大段代码/HTML 覆盖任务主题。"""
+    compact = {}
+    for skill_name, value in (skill_results or {}).items():
+        if not isinstance(value, dict):
+            compact[skill_name] = value
+            continue
+        if skill_name in {"code_gen", "code_analysis"}:
+            item = {k: v for k, v in value.items() if k not in {"code"}}
+            code = value.get("code") or ""
+            if code:
+                item["code_preview"] = str(code)[:800]
+            compact[skill_name] = item
+        else:
+            compact[skill_name] = value
+    return compact
 
 
 async def plan_node(state: AgentGraphState) -> AgentGraphState:
@@ -427,12 +452,7 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 
 请直接回答上述问题，使用Markdown格式，包含必要的代码块和公式。
 
-【主动建议规则】回答末尾可根据情况附加一条建议（格式：[建议] 内容）：
-- 涉及系统学习某主题 → [建议] 系统学习【主题】
-- 涉及错题复习 → [建议] 分析错题
-- 涉及水平评估 → [建议] 学习评估
-- 涉及视频学习 → [建议] 搜索视频【主题】
-没有合适情况则不写建议。"""
+禁止输出任何 `[建议]`、`【建议】` 或类似建议按钮格式。需要工具完成的任务由任务模式入口承接。"""
 
         if mistake_prompt_context:
             direct_prompt += (
@@ -460,6 +480,7 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
         else:
             final_md = f"**{user_message}**\n\n（LLM 未配置，无法回答）"
 
+        final_md = _strip_suggestion_lines(final_md)
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "completed", "title": "AI 回答", "agent_name": "对话智能体", "data": {"content": final_md}})
         return {"workflow_outputs": wf, "response": final_md, "all_modules_data": ad}
 
@@ -526,6 +547,13 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                 if failures:
                     resources_text += f"\n失败项：{len(failures)} 个，已保留成功生成的资源。"
                 skill_summary_parts.append(resources_text)
+            elif skill_name == "code_gen" and sdata.get("code"):
+                generated_type = sdata.get("type", "code")
+                task_desc = sdata.get("task_desc") or user_message
+                if generated_type == "anime":
+                    skill_summary_parts.append(f"\n### 可视化动画\n已生成可视化动画草稿。\n\n**生成主题**：{task_desc}")
+                else:
+                    skill_summary_parts.append(f"\n### 代码案例\n已生成代码案例草稿。\n\n**生成主题**：{task_desc}")
 
     llm_summary = ""
     if use_llm and (has_search or selected_skills):
@@ -551,20 +579,20 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 学生画像与系统模块上下文：{profile_text}
 任务：{user_message}
 {search_block}
-技能执行结果：{_json_preview(skill_results)}
+技能执行结果：{_json_preview(_skill_results_for_summary(skill_results))}
 真实错题本摘要：
 {mistake_prompt_context or '当前没有可用错题摘要。'}
 {rag_context}
 
 要求：
+- 如果技能结果包含 task_desc，必须以 task_desc 作为已生成内容的主题依据。
+- 如果 code_preview 或代码内容看起来与 task_desc 明显不一致，必须明确提示“生成内容与规划主题不一致”，不要把错误主题当作成功结果总结。
 - 如果任务涉及错题，必须基于错题本中的题目、学生答案、正确答案和知识点分析薄弱点。
 - 如果已生成练习题，说明这些题如何对应错题暴露出的薄弱点。
 - 如果系统上下文中对应列表为空，才可以提示暂无对应数据。
 - 请回答任务问题并简短总结。
 
-【主动建议规则】回答末尾可附加一条建议（格式：[建议] 内容）：
-- 系统学习 → [建议] 系统学习【主题】  分析错题 → [建议] 分析错题
-- 学习评估 → [建议] 学习评估  视频学习 → [建议] 搜索视频【主题】"""
+禁止输出任何 `[建议]`、`【建议】` 或类似建议按钮格式。"""
 
         wf.append({"type": "step", "step_type": "result", "step_id": step_id, "status": "running", "title": "汇总分析报告", "agent_name": "汇总智能体", "data": {"content": result_header}})
         if sse_queue:
@@ -589,11 +617,12 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 
     final_md = result_header
     if llm_summary:
+        llm_summary = _strip_suggestion_lines(llm_summary)
         final_md += f"\n\n### AI 分析\n{llm_summary}"
     for part in skill_summary_parts:
         final_md += part
 
-    skill_names_display = {"deep_search": "深度搜索", "code_analysis": "代码生成", "mindmap_gen": "思维导图", "quiz_gen": "习题生成", "video_search": "视频检索", "resource_orchestration": "多智能体资源编排"}
+    skill_names_display = {"deep_search": "深度搜索", "code_analysis": "代码分析", "code_gen": "代码/动画生成", "mindmap_gen": "思维导图", "quiz_gen": "习题生成", "video_search": "视频检索", "resource_orchestration": "多智能体资源编排"}
     stats_rows = "| 需求分析 | ✅ | 完成 |\n"
     for sname in selected_skills:
         sdata = skill_results.get(sname, {})

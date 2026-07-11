@@ -7,6 +7,7 @@ from models.quiz_record import QuizRecord
 from models.mistake_question import MistakeQuestion
 from schemas.chat import QuizSubmitRequest
 from services.event_service import emit
+from services.profile_update_service import apply_quiz_result
 
 
 class CodeJudgeRequest(BaseModel):
@@ -16,6 +17,73 @@ class CodeJudgeRequest(BaseModel):
     code_lang: str = "python"
 
 router = APIRouter(prefix="/api/quiz", tags=["答题"])
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _binding_kps(value) -> list[str]:
+    bindings = value if isinstance(value, list) else []
+    kps: list[str] = []
+    for item in bindings:
+        if isinstance(item, dict):
+            kps.extend([str(kp).strip() for kp in _as_list(item.get("knowledge_points")) if str(kp).strip()])
+    return list(dict.fromkeys(kps))
+
+
+def _resource_binding_kps(resource) -> list[str]:
+    content = resource.content if resource and isinstance(resource.content, dict) else {}
+    return _binding_kps(content.get("course_bindings")) or _as_list(getattr(resource, "knowledge_points", []))
+
+
+def _question_kps(question: dict, resource) -> list[str]:
+    return (
+        _binding_kps(question.get("course_bindings"))
+        or _as_list(question.get("knowledge_points"))
+        or _resource_binding_kps(resource)
+    )
+
+
+def _normalized_options(question: dict) -> list[dict]:
+    raw_options = question.get("options") if isinstance(question.get("options"), list) else []
+    normalized = []
+    for index, option in enumerate(raw_options):
+        fallback_key = chr(65 + index)
+        if isinstance(option, str):
+            text = option.strip()
+            key = text[:1].upper() if text[:1].upper() in {"A", "B", "C", "D"} else fallback_key
+            if key == text[:1].upper() and len(text) > 1 and text[1] in ".．、)） ":
+                text = text[2:].strip()
+            normalized.append({"key": key, "text": text, "label": f"{key}. {text}"})
+        elif isinstance(option, dict):
+            key = str(option.get("key") or fallback_key).strip().upper()[:1]
+            text = str(option.get("text") or option.get("label") or "").strip()
+            normalized.append({"key": key, "text": text, "label": f"{key}. {text}"})
+    return [item for item in normalized if item.get("key") in {"A", "B", "C", "D"}]
+
+
+def _choice_answer_key(question: dict) -> str:
+    raw = str(question.get("answer") or "").strip()
+    leading = raw[:1].upper()
+    if leading in {"A", "B", "C", "D"}:
+        return leading
+    for option in _normalized_options(question):
+        if raw in {option.get("text"), option.get("label")}:
+            return str(option.get("key") or raw)
+    return raw
+
+
+def _is_wrong_answer(question: dict, user_ans: str) -> bool:
+    q_type = str(question.get("type") or "single_choice").lower()
+    if q_type in {"fill_blank", "short_answer"}:
+        return user_ans.strip().lower() != str(question.get("answer") or "").strip().lower()
+    if q_type == "coding":
+        try:
+            return float(user_ans) < 1.0
+        except ValueError:
+            return True
+    return user_ans.strip().upper() != _choice_answer_key(question)
 
 
 @router.post("/judge")
@@ -132,6 +200,7 @@ async def submit_quiz(
 
     submitted_answers = record.answers or {}
     question_kp_scores: dict[str, list[float]] = {}
+    wrong_questions: list[dict] = []
     for q in questions:
         qid = q.get('id')
         if qid is None:
@@ -139,26 +208,19 @@ async def submit_quiz(
         qid_str = str(qid)
         user_ans = str(submitted_answers.get(qid_str, submitted_answers.get(qid, '')))
         correct_ans = str(q.get('answer', ''))
-        q_type = q.get('type', 'single_choice')
-        # fill_blank: case-insensitive strip comparison
-        if q_type == 'fill_blank':
-            is_wrong = user_ans.strip().lower() != correct_ans.strip().lower()
-        elif q_type == 'coding':
-            # coding answers stored as score ratio string like "0.5"; treat <1.0 as wrong
-            try:
-                is_wrong = float(user_ans) < 1.0
-            except ValueError:
-                is_wrong = True
-        else:
-            is_wrong = user_ans != correct_ans
-        q_kps = q.get('knowledge_points') if isinstance(q.get('knowledge_points'), list) else []
-        if not q_kps and resource:
-            q_kps = resource.knowledge_points or []
+        is_wrong = _is_wrong_answer(q, user_ans)
+        q_kps = _question_kps(q, resource)
         for kp in q_kps:
             if kp:
                 question_kp_scores.setdefault(kp, []).append(0.0 if is_wrong else 1.0)
         if not user_ans or not is_wrong:
             continue
+        wrong_questions.append({
+            "question": q,
+            "knowledge_points": q_kps,
+            "user_answer": user_ans,
+            "correct_answer": correct_ans,
+        })
         exists = (
             db.query(MistakeQuestion)
             .filter(
@@ -185,43 +247,42 @@ async def submit_quiz(
             ))
     db.commit()
 
-    await emit("quiz.submitted", {
-        "user_id": req.user_id,
-        "resource_id": req.resource_id,
-        "score": req.score,
-    })
-
-    # Prefer question-level graph tags; fall back to resource-level tags for legacy resources.
-    from services.kp_service import match_kp, update_knowledge_base
+    # Prefer question-level graph tags; question helper already falls back to resource-level tags per question.
+    kp_scores = {}
     if question_kp_scores:
         kp_scores = {
             kp: sum(scores) / max(len(scores), 1)
             for kp, scores in question_kp_scores.items()
         }
-        update_knowledge_base(db, req.user_id, kp_scores)
-    else:
-        matched_kps = []
-        if resource:
-            matched_kps = resource.knowledge_points or []
-        if not matched_kps and resource:
-            kp_text = (resource.title or "") + " " + " ".join(resource.tags or [])
-            matched_kps = match_kp(kp_text)
-        if matched_kps:
-            update_knowledge_base(db, req.user_id, {kp: req.score for kp in matched_kps})
 
     if resource:
         resource.learning_status = "completed"
         resource.progress = 1.0
         resource.completed_at = datetime.utcnow()
-        db.commit()
 
-    # 异步更新画像：根据最新答题情况重新分析知识水平和薄弱点
-    import asyncio as _asyncio
-    from agents.profile_agent import ProfileAgent
-    from agents.base import AgentState as _AgentState
-    _asyncio.create_task(ProfileAgent().process(_AgentState(
-        user_id=req.user_id,
-        user_message=f"根据最新答题更新画像（本次得分：{req.score:.0%}）",
-    )))
+    mastery_result = apply_quiz_result(
+        db,
+        req.user_id,
+        kp_scores,
+        wrong_questions,
+        req.score,
+        resource_id=req.resource_id,
+    )
 
-    return {"ok": True, "id": record.id}
+    updated_points = mastery_result.get("updated_knowledge_points", [])
+    await emit("quiz.submitted", {
+        "user_id": req.user_id,
+        "resource_id": req.resource_id,
+        "score": req.score,
+        "mastery_updated": bool(updated_points),
+        "updated_knowledge_points": updated_points,
+    })
+
+    return {
+        "ok": True,
+        "id": record.id,
+        "score": req.score,
+        "mastery_updated": bool(updated_points),
+        "updated_knowledge_points": updated_points,
+        "knowledge_mastery_delta": mastery_result.get("knowledge_mastery_delta", {}),
+    }

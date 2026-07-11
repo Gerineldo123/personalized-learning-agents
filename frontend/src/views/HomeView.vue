@@ -1,55 +1,39 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import * as echarts from 'echarts'
 import api from '../api'
 import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
 
-const hasFocusSessions = computed(() => {
-  try {
-    const raw = localStorage.getItem('focus-sessions')
-    if (!raw) return false
-    const sessions = JSON.parse(raw)
-    return Array.isArray(sessions) && sessions.length > 0
-  } catch {
-    return false
-  }
-})
-
-const barChartRef = ref<HTMLDivElement>()
-const radarChartRef = ref<HTMLDivElement>()
 const homeQuery = ref('')
 const insightsRowRef = ref<HTMLDivElement>()
 const insightsVisible = ref(false)
-const weeklyUsage = ref({
-  days: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-  morning: [0, 0, 0, 0, 0, 0, 0],
-  afternoon: [0, 0, 0, 0, 0, 0, 0],
-  evening: [0, 0, 0, 0, 0, 0, 0],
-})
-const hasWeeklyUsageData = computed(() => {
-  const all = [
-    ...weeklyUsage.value.morning,
-    ...weeklyUsage.value.afternoon,
-    ...weeklyUsage.value.evening,
-  ]
-  return all.some((x) => Number(x) > 0)
-})
-let barChart: echarts.ECharts | null = null
-let radarChart: echarts.ECharts | null = null
 let insightsObserver: IntersectionObserver | null = null
 
 const profile = ref<any>(null)
-const abilityDims = ['知识记忆', '逻辑推理', '应用实践', '信息整合', '应试能力']
-const courseColors = ['#E35749', '#49BBC8', '#F3B86B']
-const hasRadarData = computed(() => {
-  return !!(profile.value?.weak_courses?.length)
-})
-
 const suggestedQuestions = ref<string[]>([])
+const kColors = ['#f8d5a4', '#ee9b8f', '#95d7da']
+
+const knowledgeAreas = ref([
+  { name: '文章', type: 'article', icon: '📄', count: 0, color: kColors[0] },
+  { name: '题库', type: 'quiz', icon: '❓', count: 0, color: kColors[1] },
+  { name: '代码', type: 'code', icon: '💻', count: 0, color: kColors[2] },
+  { name: '思维导图', type: 'mindmap', icon: '🧠', count: 0, color: kColors[0] },
+  { name: 'PPT课件', type: 'ppt', icon: '📊', count: 0, color: kColors[1] },
+  { name: '全部资源', type: '', icon: '📦', count: 0, color: kColors[2] },
+])
+
+const defaultCounts = { article: 0, quiz: 0, code: 0, mindmap: 0, ppt: 0, all: 0 }
+
+async function goAgent(query?: string) {
+  const q = (query ?? homeQuery.value).trim()
+  await router.push({
+    path: '/agent',
+    query: q ? { from: 'home', t: String(Date.now()), q, auto_submit: '1' } : {},
+  })
+}
 
 async function loadSuggestedQuestions() {
   if (!userStore.userId) return
@@ -58,73 +42,42 @@ async function loadSuggestedQuestions() {
     const items: Array<{ title?: string }> = r.data.items || []
     const questions: string[] = []
     for (const item of items) {
-      const title = item.title
+      const title = (item.title || '').trim()
       if (!title || title.length < 2) continue
-      if (title.length <= 20) {
-        questions.push(`讲解一下"${title}"的核心概念`)
-        questions.push(`"${title}"的重点是什么？`)
-      } else {
-        questions.push(`请帮我理解"${title}"`)
-      }
-      if (questions.length >= 16) break
+      questions.push(title.length <= 20 ? `讲解一下“${title}”的核心概念` : `请帮我理解“${title}”`)
+      if (questions.length >= 8) break
     }
     suggestedQuestions.value = questions
-  } catch { suggestedQuestions.value = [] }
+  } catch {
+    suggestedQuestions.value = []
+  }
 }
-
-function suggestOpenChat(q: string) {
-  router.push({
-    path: '/agent',
-    query: { from: 'home', t: String(Date.now()), q },
-  })
-}
-
-const kColors = ['#f8d5a4', '#ee9b8f', '#95d7da']
-const knowledgeAreas = ref([
-  { name: 'article', type: 'article', icon: '📄', count: 0, color: kColors[0] },
-  { name: 'quiz', type: 'quiz', icon: '❓', count: 0, color: kColors[1] },
-  { name: 'code', type: 'code', icon: '💻', count: 0, color: kColors[2] },
-  { name: 'mindmap', type: 'mindmap', icon: '🧠', count: 0, color: kColors[0] },
-  { name: 'ppt', type: 'ppt', icon: '📊', count: 0, color: kColors[1] },
-  { name: 'all resources', type: '', icon: '📦', count: 0, color: kColors[2] },
-])
-
-const defaultCounts = { article: 0, quiz: 0, code: 0, mindmap: 0, ppt: 0, all: 0 }
 
 async function loadKnowledgeAreaCounts() {
   const userId = userStore.userId
-  if (!userId) {
-    knowledgeAreas.value = [
-      { name: 'article', type: 'article', icon: '📄', count: 0, color: kColors[0] },
-      { name: 'quiz', type: 'quiz', icon: '❓', count: 0, color: kColors[1] },
-      { name: 'code', type: 'code', icon: '💻', count: 0, color: kColors[2] },
-      { name: 'mindmap', type: 'mindmap', icon: '🧠', count: 0, color: kColors[0] },
-      { name: 'ppt', type: 'ppt', icon: '📊', count: 0, color: kColors[1] },
-      { name: 'all resources', type: '', icon: '📦', count: 0, color: kColors[2] },
-    ]
-    return
-  }
   const counts = { ...defaultCounts }
-  try {
-    const res = await api.get('/resources', { params: { user_id: userId } })
-    const items: Array<{ resource_type?: string }> = res.data.items || []
-    for (const item of items) {
-      const type = item.resource_type || ''
-      counts.all += 1
-      if (type === 'article') counts.article += 1
-      else if (type === 'quiz') counts.quiz += 1
-      else if (type === 'code') counts.code += 1
-      else if (type === 'mindmap') counts.mindmap += 1
-      else if (type === 'ppt') counts.ppt += 1
-    }
-  } catch {}
+  if (userId) {
+    try {
+      const res = await api.get('/resources', { params: { user_id: userId } })
+      const items: Array<{ resource_type?: string }> = res.data.items || []
+      for (const item of items) {
+        const type = item.resource_type || ''
+        counts.all += 1
+        if (type === 'article') counts.article += 1
+        else if (type === 'quiz') counts.quiz += 1
+        else if (type === 'code') counts.code += 1
+        else if (type === 'mindmap') counts.mindmap += 1
+        else if (type === 'ppt') counts.ppt += 1
+      }
+    } catch { /* ignore */ }
+  }
   knowledgeAreas.value = [
-    { name: 'article', type: 'article', icon: '📄', count: counts.article, color: kColors[0] },
-    { name: 'quiz', type: 'quiz', icon: '❓', count: counts.quiz, color: kColors[1] },
-    { name: 'code', type: 'code', icon: '💻', count: counts.code, color: kColors[2] },
-    { name: 'mindmap', type: 'mindmap', icon: '🧠', count: counts.mindmap, color: kColors[0] },
-    { name: 'ppt', type: 'ppt', icon: '📊', count: counts.ppt, color: kColors[1] },
-    { name: 'all resources', type: '', icon: '📦', count: counts.all, color: kColors[2] },
+    { name: '文章', type: 'article', icon: '📄', count: counts.article, color: kColors[0] },
+    { name: '题库', type: 'quiz', icon: '❓', count: counts.quiz, color: kColors[1] },
+    { name: '代码', type: 'code', icon: '💻', count: counts.code, color: kColors[2] },
+    { name: '思维导图', type: 'mindmap', icon: '🧠', count: counts.mindmap, color: kColors[0] },
+    { name: 'PPT课件', type: 'ppt', icon: '📊', count: counts.ppt, color: kColors[1] },
+    { name: '全部资源', type: '', icon: '📦', count: counts.all, color: kColors[2] },
   ]
 }
 
@@ -132,126 +85,79 @@ function openResourcesByType(type: string) {
   router.push({ path: '/resources', query: type ? { type } : {} })
 }
 
-function initBarChart() {
-  if (!barChartRef.value) return
-  if (!hasWeeklyUsageData.value) { barChart?.dispose(); barChart = null; return }
-  const maxPerDay = weeklyUsage.value.days.map((_, i) => {
-    return Number(weeklyUsage.value.morning[i] || 0) + Number(weeklyUsage.value.afternoon[i] || 0) + Number(weeklyUsage.value.evening[i] || 0)
-  })
-  const yMax = Math.max(1, Math.ceil(Math.max(...maxPerDay)))
-  barChart = echarts.init(barChartRef.value)
-  barChart.setOption({
-    tooltip: { trigger: 'axis', backgroundColor: '#FFFBF5', borderColor: '#EFE6DC', borderRadius: 8, textStyle: { color: '#3A332E', fontSize: 12 } },
-    legend: { data: ['上午', '下午', '晚间'], bottom: 0, textStyle: { color: '#7C5C3C', fontSize: 11, fontWeight: 500 }, itemWidth: 10, itemHeight: 10, itemGap: 16 },
-    grid: { left: 40, right: 12, top: 32, bottom: 36 },
-    xAxis: { type: 'category', data: weeklyUsage.value.days, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#948A80', fontSize: 10 } },
-    yAxis: { type: 'value', min: 0, max: yMax, interval: 1, splitLine: { lineStyle: { color: '#EFE6DC' } }, axisLabel: { color: '#948A80', fontSize: 10 }, axisLine: { show: false }, axisTick: { show: false } },
-    series: [
-      { name: '上午', type: 'bar', stack: 'total', barWidth: 24, data: weeklyUsage.value.morning, itemStyle: { color: '#AECDD0', borderRadius: [4, 4, 0, 0] } },
-      { name: '下午', type: 'bar', stack: 'total', barWidth: 24, data: weeklyUsage.value.afternoon, itemStyle: { color: '#F3B86B' } },
-      { name: '晚间', type: 'bar', stack: 'total', barWidth: 24, data: weeklyUsage.value.evening, itemStyle: { color: '#FCDDDA', borderRadius: [0, 0, 4, 4] } },
-    ],
-  })
-}
-
-async function loadWeeklyUsage() {
-  if (!userStore.userId) return
-  try {
-    const r = await api.get('/conversations/weekly-usage', { params: { user_id: userStore.userId } })
-    weeklyUsage.value = {
-      days: r.data.days || weeklyUsage.value.days,
-      morning: r.data.morning || weeklyUsage.value.morning,
-      afternoon: r.data.afternoon || weeklyUsage.value.afternoon,
-      evening: r.data.evening || weeklyUsage.value.evening,
-    }
-  } catch {}
-}
-
 async function loadProfile() {
   if (!userStore.userId) return
   try {
     const r = await api.get('/profile', { params: { user_id: userStore.userId } })
-    if (r.data.found) profile.value = r.data.profile
-    else profile.value = null
-  } catch { profile.value = null }
+    profile.value = r.data.found ? r.data.profile : null
+  } catch {
+    profile.value = null
+  }
 }
 
-function initRadarChart() {
-  if (!radarChartRef.value) return
-  const weakCourses = profile.value?.weak_courses || []
-  const seriesData: any[] = []
-  const legendData: string[] = []
-  weakCourses.slice(0, 3).forEach((course: any, i: number) => {
-    const scores = course.course_ability_scores || {}
-    const values = abilityDims.map(d => scores[d] || 0)
-    const color = courseColors[i]
-    seriesData.push({ value: values, name: course.name || `课程${i + 1}`, lineStyle: { color }, itemStyle: { color }, areaStyle: { color } })
-    legendData.push(course.name || `课程${i + 1}`)
-  })
-  radarChart = echarts.init(radarChartRef.value)
-  radarChart.setOption({
-    radar: {
-      center: ['50%', '50%'], radius: '60%',
-      indicator: abilityDims.map(d => ({ name: d, max: 10 })),
-      axisName: { color: '#3A332E', fontSize: 11, fontWeight: 500, borderRadius: 3, padding: [3, 5] },
-      axisLine: { lineStyle: { color: '#EFE6DC' } },
-      splitLine: { lineStyle: { color: '#EFE6DC' } },
-      splitArea: { areaStyle: { color: ['rgba(255,251,245,0.3)', 'rgba(255,251,245,0.5)'] } },
-    },
-    series: [{ type: 'radar', lineStyle: { width: 2 }, areaStyle: { opacity: 0.15 }, data: seriesData }],
-    legend: { data: legendData, bottom: 0, textStyle: { color: '#7C5C3C', fontSize: 11 }, itemWidth: 10, itemHeight: 10 },
-  })
-}
+const totalResourceCount = computed(() => knowledgeAreas.value.find(area => area.type === '')?.count || 0)
+const quizResourceCount = computed(() => knowledgeAreas.value.find(area => area.type === 'quiz')?.count || 0)
+const articleResourceCount = computed(() => knowledgeAreas.value.find(area => area.type === 'article')?.count || 0)
+const knowledgeBase = computed<Record<string, number>>(() => profile.value?.knowledge_base || {})
+const measuredKnowledgeCount = computed(() => Object.keys(knowledgeBase.value).length)
+const masteredKnowledgeCount = computed(() => Object.values(knowledgeBase.value).filter(score => Number(score || 0) >= 0.8).length)
+const weakPoints = computed<string[]>(() => (profile.value?.weak_points || []).filter(Boolean))
+const weakPointsPreview = computed(() => weakPoints.value.slice(0, 8))
+
+const loopStats = computed(() => [
+  { label: '学习资源', value: totalResourceCount.value, unit: '个', hint: '文章、题库、导图、课件等资源总量', path: '/resources' },
+  { label: '题库资源', value: quizResourceCount.value, unit: '套', hint: '掌握度只由题目提交自动更新', path: '/resources', query: { type: 'quiz' } },
+  { label: '已测知识点', value: measuredKnowledgeCount.value, unit: '个', hint: `已掌握 ${masteredKnowledgeCount.value} 个`, path: '/profile' },
+  { label: '薄弱知识点', value: weakPoints.value.length, unit: '个', hint: '来自错题和微测验诊断', path: '/profile' },
+])
+
+const nextActions = computed(() => [
+  {
+    title: weakPoints.value.length ? '优先处理薄弱知识点' : '先完成一次诊断测验',
+    desc: weakPoints.value.length ? `当前有 ${weakPoints.value.length} 个薄弱知识点，建议生成专项练习。` : '画像中的薄弱点还不充分，建议先做微测验或题库。',
+    path: weakPoints.value.length ? '/resources' : '/profile',
+  },
+  {
+    title: quizResourceCount.value ? '继续做题更新掌握度' : '先生成题库资源',
+    desc: quizResourceCount.value ? '提交题目后会直接刷新画像和知识图谱掌握度。' : '题库较少，建议从课程或知识点生成专项题库。',
+    path: '/resources',
+    query: quizResourceCount.value ? { type: 'quiz' } : {},
+  },
+  {
+    title: articleResourceCount.value ? '从资源进入复习闭环' : '补齐讲解资源',
+    desc: articleResourceCount.value ? '可从文章生成测试题，形成“学—测—更新掌握度”闭环。' : '文章资源较少，建议先生成课程总览或知识点讲解。',
+    path: '/resources',
+    query: articleResourceCount.value ? { type: 'article' } : {},
+  },
+])
 
 onMounted(async () => {
-  await Promise.all([loadWeeklyUsage(), loadProfile()])
-  await nextTick()
-  initBarChart()
-  initRadarChart()
-  window.addEventListener('resize', () => { barChart?.resize(); radarChart?.resize() })
-  loadKnowledgeAreaCounts()
-  loadSuggestedQuestions()
-
+  await Promise.all([loadProfile(), loadKnowledgeAreaCounts(), loadSuggestedQuestions()])
   if (insightsRowRef.value) {
-    insightsObserver = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            insightsVisible.value = true
-            insightsObserver?.disconnect()
-            insightsObserver = null
-            break
-          }
-        }
-      },
-      { threshold: 0.2 }
-    )
+    insightsObserver = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        insightsVisible.value = true
+        insightsObserver?.disconnect()
+        insightsObserver = null
+      }
+    }, { threshold: 0.2 })
     insightsObserver.observe(insightsRowRef.value)
   }
 })
 
 onBeforeUnmount(() => {
-  if (insightsObserver) { insightsObserver.disconnect(); insightsObserver = null }
+  if (insightsObserver) insightsObserver.disconnect()
 })
 
 watch(() => userStore.userId, async () => {
-  loadKnowledgeAreaCounts()
-  await Promise.all([loadWeeklyUsage(), loadProfile()])
-  await nextTick()
-  initBarChart()
-  initRadarChart()
+  await Promise.all([loadProfile(), loadKnowledgeAreaCounts(), loadSuggestedQuestions()])
 })
 
-function openAiChat() {
-  const q = homeQuery.value.trim()
-  router.push({
-    path: '/agent',
-    query: { from: 'home', t: String(Date.now()), ...(q ? { q } : {}) },
-  })
-}
-
 function handleSearchKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter') { e.preventDefault(); openAiChat() }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    goAgent()
+  }
 }
 </script>
 
@@ -260,20 +166,14 @@ function handleSearchKeydown(e: KeyboardEvent) {
     <div class="canva-bg">
       <div class="hero-section animate-up animate-delay-1">
         <div class="hero-heading">今天想学点什么？</div>
-        <button class="hero-search animate-up animate-delay-2" type="button" @click="openAiChat">
+        <button class="hero-search animate-up animate-delay-2" type="button" @click="goAgent()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#948A80" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="#948A80" stroke-width="2" stroke-linecap="round"/></svg>
-          <input
-            v-model="homeQuery"
-            class="hero-search-input"
-            placeholder="查找你需要的知识点，回车即可和 AI 对话"
-            @keydown="handleSearchKeydown"
-            @click.stop
-          />
+          <input v-model="homeQuery" class="hero-search-input" placeholder="查找你需要的知识点，回车即可和 AI 对话" @keydown="handleSearchKeydown" @click.stop />
         </button>
         <div v-if="suggestedQuestions.length > 0" class="hero-suggest">
           <div class="hero-suggest-track">
-            <button v-for="(q, i) in suggestedQuestions" :key="'hs-' + i" class="hero-suggest-btn" @click="suggestOpenChat(q)">{{ q }}</button>
-            <button v-for="(q, i) in suggestedQuestions" :key="'hs-dup-' + i" class="hero-suggest-btn" @click="suggestOpenChat(q)">{{ q }}</button>
+            <button v-for="(q, i) in suggestedQuestions" :key="'hs-' + i" class="hero-suggest-btn" @click="goAgent(q)">{{ q }}</button>
+            <button v-for="(q, i) in suggestedQuestions" :key="'hs-dup-' + i" class="hero-suggest-btn" @click="goAgent(q)">{{ q }}</button>
           </div>
         </div>
       </div>
@@ -293,53 +193,40 @@ function handleSearchKeydown(e: KeyboardEvent) {
         <div class="card-main-section card-main-right">
           <div class="card-main-title">快捷入口</div>
           <div class="quick-actions">
-            <button class="qa-btn" @click="router.push('/agent')">
-              <span class="qa-dot" style="background:#E35749"></span>
-              <div><div class="qa-label">AI 智能助手</div><div class="qa-sub">智能问答助手</div></div>
-            </button>
-            <button class="qa-btn" @click="router.push('/profile')">
-              <span class="qa-dot" style="background:#49BBC8"></span>
-              <div><div class="qa-label">学习画像</div><div class="qa-sub">个性化诊断</div></div>
-            </button>
-            <button class="qa-btn" @click="router.push('/mistakes')">
-              <span class="qa-dot" style="background:#F3B86B"></span>
-              <div><div class="qa-label">错题本</div><div class="qa-sub">查漏补缺提升</div></div>
-            </button>
-            <button class="qa-btn" @click="router.push('/resources')">
-              <span class="qa-dot" style="background:#AECDD0"></span>
-              <div><div class="qa-label">学习资源</div><div class="qa-sub">丰富学习材料</div></div>
-            </button>
+            <button class="qa-btn" @click="goAgent()"><span class="qa-dot" style="background:#E35749"></span><div><div class="qa-label">AI 智能助手</div><div class="qa-sub">智能问答助手</div></div></button>
+            <button class="qa-btn" @click="router.push('/profile')"><span class="qa-dot" style="background:#49BBC8"></span><div><div class="qa-label">学习画像</div><div class="qa-sub">个性化诊断</div></div></button>
+            <button class="qa-btn" @click="router.push('/mistakes')"><span class="qa-dot" style="background:#F3B86B"></span><div><div class="qa-label">错题本</div><div class="qa-sub">查漏补缺提升</div></div></button>
+            <button class="qa-btn" @click="router.push('/resources')"><span class="qa-dot" style="background:#AECDD0"></span><div><div class="qa-label">学习资源</div><div class="qa-sub">丰富学习材料</div></div></button>
           </div>
         </div>
       </div>
 
       <div ref="insightsRowRef" class="insights-row" :class="{ 'in-view': insightsVisible }">
-        <div class="card-stats" @click="router.push('/path')">
-          <div class="card-stats-title">专注成长</div>
-          <div v-if="hasWeeklyUsageData" class="card-stats-chart" ref="barChartRef"></div>
-          <div v-if="!hasFocusSessions" class="card-stats-empty">本周尚无专注记录</div>
-          <div v-else class="home-focus-summary">
-            <div class="home-focus-icon">⏱</div>
-            <div>
-              <strong>已有专注行为数据</strong>
-              <span>进入专注成长查看时长、完成率和中断情况。</span>
-            </div>
+        <div class="card-stats">
+          <div class="card-stats-title">学习闭环概览</div>
+          <div class="loop-grid">
+            <button v-for="item in loopStats" :key="item.label" class="loop-card" @click="router.push({ path: item.path, query: item.query || {} })">
+              <span class="loop-label">{{ item.label }}</span>
+              <strong>{{ item.value }}<em>{{ item.unit }}</em></strong>
+              <span class="loop-hint">{{ item.hint }}</span>
+            </button>
           </div>
+          <div class="loop-note">掌握度只会在提交题目后自动变化，资源学习和路径学习只记录学习行为。</div>
         </div>
 
         <div class="card-radar clickable-card" @click="router.push('/profile')">
-          <div class="card-radar-title">能力对比</div>
-          <div v-if="hasRadarData" class="card-radar-chart" ref="radarChartRef"></div>
-          <div v-else class="card-stats-empty">暂无学习画像数据</div>
+          <div class="card-radar-title">下一步建议</div>
+          <div v-if="weakPointsPreview.length" class="weak-chip-list">
+            <span v-for="point in weakPointsPreview" :key="point" class="weak-chip">{{ point }}</span>
+          </div>
+          <div v-else class="next-empty">暂无明确薄弱点。完成微测验或题库后，这里会显示优先补强的知识点。</div>
+          <div class="next-action-list">
+            <button v-for="action in nextActions" :key="action.title" class="next-action" @click.stop="router.push({ path: action.path, query: action.query || {} })">
+              <strong>{{ action.title }}</strong>
+              <span>{{ action.desc }}</span>
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div class="indicator-row">
-        <span class="indicator-dot active"></span>
-        <span class="indicator-dot"></span>
-        <span class="indicator-dot"></span>
-        <span class="indicator-dot"></span>
-        <span class="indicator-dot"></span>
       </div>
     </div>
   </div>
@@ -572,7 +459,6 @@ function handleSearchKeydown(e: KeyboardEvent) {
   border-radius: 12px;
   padding: 28px;
   box-shadow: 0 4px 24px rgba(58, 51, 46, 0.08);
-  cursor: pointer;
 }
 
 .card-stats-title {
@@ -586,34 +472,60 @@ function handleSearchKeydown(e: KeyboardEvent) {
 }
 .card-stats-title::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #F3B86B; }
 
-.card-stats-chart { width: 100%; height: 260px; }
-.card-stats-empty { width: 100%; height: 260px; display: flex; align-items: center; justify-content: center; color: #948A80; font-size: 12px; }
-
-.home-focus-summary {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid #EFE6DC;
-  color: #6B635C;
-  font-size: 13px;
+.loop-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
-.home-focus-icon {
-  width: 50px;
-  height: 50px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 16px;
-  background: rgba(64, 158, 255, 0.08);
-  font-size: 24px;
+.loop-card {
+  min-height: 96px;
+  padding: 14px;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #FFFBF5, #FFF5EB);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
-.home-focus-summary strong {
+.loop-card:hover {
+  transform: translateY(-2px);
+  border-color: #E8C29C;
+  box-shadow: 0 6px 18px rgba(58, 51, 46, 0.08);
+}
+.loop-label {
+  display: block;
+  color: #7A6A5C;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.loop-card strong {
   display: block;
   color: #3A332E;
-  margin-bottom: 4px;
+  font-size: 28px;
+  line-height: 1;
+}
+.loop-card em {
+  margin-left: 4px;
+  color: #948A80;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
+.loop-hint {
+  display: block;
+  margin-top: 9px;
+  color: #948A80;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.loop-note {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(73, 187, 200, 0.09);
+  color: #6B635C;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .card-radar {
@@ -636,18 +548,65 @@ function handleSearchKeydown(e: KeyboardEvent) {
   gap: 8px;
 }
 .card-radar-title::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #E35749; }
-.card-radar-chart { width: 100%; height: 260px; }
-
-.indicator-row {
-  position: absolute;
-  right: 80px;
-  bottom: 100px;
-  z-index: 3;
+.weak-chip-list {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.weak-chip {
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #F6D5A7;
+  border-radius: 999px;
+  background: #FFF8ED;
+  color: #D9891B;
+  font-size: 12px;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.next-empty {
+  min-height: 48px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #FFF5EB;
+  color: #948A80;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+.next-action-list {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
-.indicator-dot { width: 10px; height: 10px; border-radius: 50%; background: #DBA878; opacity: 0.3; }
-.indicator-dot.active { opacity: 1; box-shadow: 0 0 6px rgba(219, 168, 120, 0.4); }
+.next-action {
+  padding: 12px 14px;
+  border: 1.5px solid #EFE6DC;
+  border-radius: 12px;
+  background: #FFFBF5;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s, border-color 0.2s, background 0.2s;
+}
+.next-action:hover {
+  transform: translateY(-1px);
+  border-color: #E8C29C;
+  background: #FFF5EB;
+}
+.next-action strong {
+  display: block;
+  color: #3A332E;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+.next-action span {
+  color: #948A80;
+  font-size: 12px;
+  line-height: 1.5;
+}
 
 @media (max-width: 1024px) {
   .canva-page { margin: -28px -32px; width: calc(100% + 64px); }
@@ -664,7 +623,6 @@ function handleSearchKeydown(e: KeyboardEvent) {
   .hero-heading { font-size: 32px; }
   .hero-section { margin-bottom: 40px; }
   .knowledge-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .indicator-row { display: none; }
   .hero-search { width: 90%; }
 }
 </style>

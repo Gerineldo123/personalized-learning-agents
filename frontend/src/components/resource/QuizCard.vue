@@ -51,8 +51,8 @@ function loadProgress() {
     if (!raw) return
     const saved = JSON.parse(raw)
     answers.value = saved.answers || {}
-    showExplanation.value = saved.showExplanation || {}
     submitted.value = Boolean(saved.submitted)
+    showExplanation.value = submitted.value ? (saved.showExplanation || {}) : {}
     latestScore.value = typeof saved.latestScore === 'number' ? saved.latestScore : latestScore.value
     latestSubmittedAt.value = saved.latestSubmittedAt || latestSubmittedAt.value
     markedSet.value = saved.markedSet || {}
@@ -125,12 +125,10 @@ watch([answers, showExplanation, submitted, latestScore, latestSubmittedAt, mark
 
 function selectAnswer(qId: number, option: string) {
   answers.value[qId] = option
-  showExplanation.value[qId] = true
 }
 
 function confirmFillBlank(q: QuizQuestion) {
-  if (!answers.value[q.id]?.trim()) return
-  showExplanation.value[q.id] = true
+  if (!answers.value[q.id]?.trim()) ElMessage.warning('请先填写答案')
 }
 
 async function runCode(q: QuizQuestion) {
@@ -189,7 +187,20 @@ const correctCount = computed(() => {
 })
 
 const totalCount = computed(() => props.content.questions?.length || 0)
+const answeredCount = computed(() => {
+  let count = 0
+  for (const q of props.content.questions || []) {
+    const type = effectiveType(q)
+    if (type === 'coding') {
+      if (answers.value[q.id] !== undefined && answers.value[q.id] !== '') count++
+    } else if (String(answers.value[q.id] || '').trim()) {
+      count++
+    }
+  }
+  return count
+})
 const latestScorePct = computed(() => latestScore.value == null ? null : Math.round(latestScore.value * 100))
+const scoreText = computed(() => submitted.value ? `${correctCount.value} / ${totalCount.value}` : `已答 ${answeredCount.value} / ${totalCount.value}`)
 
 function normalizedOptions(q: QuizQuestion): Array<{ key: string; text: string; label: string }> {
   const rawOptions = Array.isArray(q.options) ? q.options : []
@@ -256,22 +267,30 @@ async function markToMistake(q: QuizQuestion) {
 
 async function submitQuiz() {
   if (!props.userId || !props.resourceId) return
-  const answered = Object.keys(answers.value).length
-  if (answered < (props.content.questions?.length || 0)) {
+  if (answeredCount.value < (props.content.questions?.length || 0)) {
     ElMessage.warning('请完成所有题目后再提交'); return
   }
   submitting.value = true
   try {
     const total = totalCount.value
     const score = total > 0 ? correctCount.value / total : 0
-    await api.post('/quiz/submit', {
+    const resp = await api.post('/quiz/submit', {
       user_id: props.userId, resource_id: props.resourceId,
       answers: answers.value, score, time_spent: 0,
     })
     submitted.value = true
+    showExplanation.value = (props.content.questions || []).reduce((acc: Record<number, boolean>, q) => {
+      acc[q.id] = true
+      return acc
+    }, {})
     latestScore.value = score
     latestSubmittedAt.value = new Date().toISOString()
-    ElMessage.success(`正确率 ${Math.round(score * 100)}%`)
+    const updatedCount = resp.data?.updated_knowledge_points?.length || 0
+    ElMessage.success(
+      updatedCount > 0
+        ? `正确率 ${Math.round(score * 100)}%，已自动更新 ${updatedCount} 个知识点掌握度`
+        : `正确率 ${Math.round(score * 100)}%，本题库暂无可更新的知识点标签`
+    )
   } catch { ElMessage.error('提交失败') } finally { submitting.value = false }
 }
 </script>
@@ -280,7 +299,7 @@ async function submitQuiz() {
   <div class="quiz-card">
     <div class="quiz-header">
       <h3>{{ content.title || '练习题' }}</h3>
-      <span class="score">{{ correctCount }} / {{ totalCount }}</span>
+      <span class="score">{{ scoreText }}</span>
       <div class="actions">
         <el-button v-if="submitted" size="small" type="warning" plain @click="restartQuiz">重新作答</el-button>
         <el-button type="primary" size="small" :loading="submitting || loadingLatest" :disabled="submitted" @click="submitQuiz">
@@ -313,7 +332,7 @@ async function submitQuiz() {
 
       <!-- 单选题 -->
       <template v-if="effectiveType(q) === 'single_choice'">
-        <el-radio-group v-model="answers[q.id]" :disabled="showExplanation[q.id]"
+        <el-radio-group v-model="answers[q.id]" :disabled="submitted"
           @change="(val: string) => selectAnswer(q.id, val)">
           <el-radio v-for="opt in normalizedOptions(q)" :key="opt.key" :value="opt.key">
             <span class="option-key">{{ opt.key }}.</span>
@@ -325,8 +344,7 @@ async function submitQuiz() {
       <!-- 填空题 -->
       <template v-else-if="effectiveType(q) === 'fill_blank'">
         <div class="fill-blank-row">
-          <el-input v-model="answers[q.id]" :disabled="showExplanation[q.id]" placeholder="输入答案..." style="width:320px" @keyup.enter="confirmFillBlank(q)" />
-          <el-button v-if="!showExplanation[q.id]" size="small" type="primary" @click="confirmFillBlank(q)">确认</el-button>
+          <el-input v-model="answers[q.id]" :disabled="submitted" placeholder="输入答案，提交后统一判分..." style="width:320px" @keyup.enter="confirmFillBlank(q)" />
         </div>
       </template>
 
@@ -365,7 +383,7 @@ async function submitQuiz() {
       </template>
 
       <!-- 解析区 -->
-      <div v-if="showExplanation[q.id]" class="quiz-result">
+      <div v-if="submitted && showExplanation[q.id]" class="quiz-result">
         <el-tag :type="isCorrect(q) ? 'success' : 'danger'" size="small">
           {{ isCorrect(q) ? '正确' : (effectiveType(q) === 'coding' ? `通过率 ${Math.round((judgeResults[q.id]?.score ?? 0) * 100)}%` : '错误') }}
         </el-tag>

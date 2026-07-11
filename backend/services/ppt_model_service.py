@@ -141,6 +141,19 @@ def _docmee_base_url() -> str:
     return (_ppt_cfg().base_url or DOCMEE_DEFAULT_BASE_URL).rstrip("/")
 
 
+def _docmee_embed_config(token: str) -> dict:
+    base_url = _docmee_base_url()
+    return {
+        "base_url": base_url,
+        "token": token,
+        "sdk_url": os.getenv(
+            "DOCMEE_AIPPT_SDK_URL",
+            "https://oss.docmee.cn/ajax/libs/docmee/sdk-ui/dist/index.global.js",
+        ),
+        "domain": os.getenv("DOCMEE_AIPPT_DOMAIN", base_url),
+    }
+
+
 async def _docmee_post_json(client: httpx.AsyncClient, path: str, headers: dict, body: dict) -> dict:
     resp = await client.post(_docmee_base_url() + path, headers=headers, json=body)
     if resp.status_code != 200:
@@ -347,20 +360,170 @@ async def create_ppt_session(
         db.close()
 
 
-    base_url = _docmee_base_url()
     return {
         "session_id": session_id,
         "token": token,
         "expires_at": (datetime.utcnow() + timedelta(hours=2)).isoformat(),
-        "embed_config": {
-            "base_url": base_url,
-            "token": token,
-            "sdk_url": os.getenv(
-                "DOCMEE_AIPPT_SDK_URL",
-                "https://oss.docmee.cn/ajax/libs/docmee/sdk-ui/dist/index.global.js",
-            ),
-            "domain": os.getenv("DOCMEE_AIPPT_DOMAIN", base_url),
-        },
+        "topic": topic,
+        "course_name": course_name,
+        "knowledge_points": knowledge_points,
+        "scope": "graph" if course_name and knowledge_points else "extension",
+        "embed_config": _docmee_embed_config(token),
+    }
+
+
+def launch_ppt_session(session_id: str, user_id: str) -> dict:
+    from core.database import SessionLocal
+    from models.ppt_session import PptSession
+    from datetime import datetime
+
+    db = SessionLocal()
+    try:
+        session = db.query(PptSession).filter(
+            PptSession.session_id == session_id,
+            PptSession.user_id == user_id,
+        ).first()
+        if not session:
+            return {"found": False}
+        if session.status == "completed":
+            return {
+                "found": True,
+                "status": "completed",
+                "session_id": session.session_id,
+                "resource_id": session.resource_id,
+                "topic": session.topic,
+                "course_name": session.course_name or "",
+                "knowledge_points": session.knowledge_points or [],
+                "scope": "graph" if session.course_name and (session.knowledge_points or []) else "extension",
+            }
+        if session.expires_at and session.expires_at < datetime.utcnow():
+            return {
+                "found": True,
+                "status": "expired",
+                "session_id": session.session_id,
+                "topic": session.topic,
+                "course_name": session.course_name or "",
+                "knowledge_points": session.knowledge_points or [],
+                "scope": "graph" if session.course_name and (session.knowledge_points or []) else "extension",
+            }
+        if not session.docmee_token:
+            raise RuntimeError("PPT session token is missing")
+        return {
+            "found": True,
+            "status": session.status,
+            "session_id": session.session_id,
+            "topic": session.topic,
+            "course_name": session.course_name or "",
+            "knowledge_points": session.knowledge_points or [],
+            "scope": "graph" if session.course_name and (session.knowledge_points or []) else "extension",
+            "embed_config": _docmee_embed_config(session.docmee_token),
+        }
+    finally:
+        db.close()
+
+
+def resolve_ppt_binding(user_id: str, topic: str, context: str = "") -> dict:
+    from core.database import SessionLocal
+    from models.course_path import CoursePath
+    from models.student import StudentProfile
+    from services.kp_service import course_kp_map, kp_course_map, match_kp, get_course_kps
+
+    clean_topic = re.sub(r"\s+", " ", str(topic or "")).strip()
+    search_text = " ".join([clean_topic, str(context or "")]).strip()
+    if not clean_topic:
+        return {
+            "status": "extension_confirm",
+            "topic": clean_topic,
+            "binding": None,
+            "candidates": [],
+            "message": "PPT topic is required.",
+        }
+
+    exact_kps = list(dict.fromkeys(match_kp(search_text)))
+    if exact_kps:
+        course_name = kp_course_map.get(exact_kps[0]) or ""
+        allowed = set(get_course_kps(course_name))
+        knowledge_points = [kp for kp in exact_kps if not allowed or kp in allowed]
+        return {
+            "status": "auto_bound",
+            "topic": clean_topic,
+            "binding": {
+                "course_name": course_name,
+                "knowledge_points": knowledge_points,
+                "source": "exact_knowledge_point",
+                "confidence": 1.0,
+            },
+            "candidates": [],
+        }
+
+    def candidate_key(item: dict) -> tuple:
+        return (item.get("course_name") or "", ",".join(item.get("knowledge_points") or []), item.get("source") or "")
+
+    candidates: list[dict] = []
+
+    matched_courses = sorted(
+        [course for course in course_kp_map if course and course in search_text],
+        key=len,
+        reverse=True,
+    )
+    for course in matched_courses[:3]:
+        candidates.append({
+            "course_name": course,
+            "knowledge_points": get_course_kps(course)[:5],
+            "source": "exact_course",
+            "confidence": 0.75,
+        })
+
+    db = SessionLocal()
+    try:
+        profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+        weak_points = [str(kp).strip() for kp in (getattr(profile, "weak_points", None) or []) if str(kp).strip()]
+        for kp in weak_points[:8]:
+            course = kp_course_map.get(kp)
+            if course:
+                candidates.append({
+                    "course_name": course,
+                    "knowledge_points": [kp],
+                    "source": "weak_point",
+                    "confidence": 0.55,
+                })
+
+        active_paths = (
+            db.query(CoursePath)
+            .filter(CoursePath.user_id == user_id, CoursePath.status == "active")
+            .order_by(CoursePath.updated_at.desc())
+            .limit(3)
+            .all()
+        )
+        for path in active_paths:
+            path_kps: list[str] = []
+            for step in path.steps or []:
+                path_kps.extend([str(kp).strip() for kp in (step.get("knowledge_points") or []) if str(kp).strip()])
+            path_kps = list(dict.fromkeys(path_kps))[:5]
+            if path.course_name:
+                candidates.append({
+                    "course_name": path.course_name,
+                    "knowledge_points": path_kps,
+                    "source": "active_path",
+                    "confidence": 0.5,
+                })
+    finally:
+        db.close()
+
+    deduped: list[dict] = []
+    seen = set()
+    for item in candidates:
+        key = candidate_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    return {
+        "status": "needs_choice" if deduped else "extension_confirm",
+        "topic": clean_topic,
+        "binding": None,
+        "candidates": deduped[:8],
     }
 
 
@@ -449,25 +612,45 @@ async def complete_ppt_session(
                 "template_id": template_id or session.template_id,
                 "remote_ppt_id": ppt_id,
                 "cover_url": cover_url or session.cover_url,
+                "ppt_context": {
+                    "scope": "graph" if session.course_name and (session.knowledge_points or []) else "extension",
+                    "binding_source": "session",
+                    "session_id": session_id,
+                    "topic": session.topic,
+                    "course_name": session.course_name or "",
+                    "knowledge_points": session.knowledge_points or [],
+                },
             }
 
-            from services.kp_service import infer_resource_tags
-            text_for_tags = " ".join([
-                title,
-                session.course_name or "",
-                " ".join(session.knowledge_points or []),
-                json.dumps(ppt_data, ensure_ascii=False),
-            ])
-            graph_tags = infer_resource_tags(
-                text_for_tags,
-                course_name=session.course_name,
-                knowledge_points=session.knowledge_points or [],
-            )
-            tags = list(dict.fromkeys(
-                ["ppt"]
-                + [x for x in [graph_tags.get("course_name")] if x]
-                + list(graph_tags.get("knowledge_points") or [])
-            ))
+            is_graph_bound = bool(session.course_name and (session.knowledge_points or []))
+            if is_graph_bound:
+                from services.kp_service import infer_resource_tags
+                text_for_tags = " ".join([
+                    title,
+                    session.course_name or "",
+                    " ".join(session.knowledge_points or []),
+                    json.dumps(ppt_data, ensure_ascii=False),
+                ])
+                graph_tags = infer_resource_tags(
+                    text_for_tags,
+                    course_name=session.course_name,
+                    knowledge_points=session.knowledge_points or [],
+                )
+                tags = list(dict.fromkeys(
+                    ["ppt"]
+                    + [x for x in [graph_tags.get("course_name")] if x]
+                    + list(graph_tags.get("knowledge_points") or [])
+                ))
+                resource_course_name = graph_tags.get("course_name")
+                resource_kps = graph_tags.get("knowledge_points") or []
+                resource_kp_weights = graph_tags.get("kp_weights") or {}
+                tag_confidence = graph_tags.get("tag_confidence") or 0
+            else:
+                tags = ["ppt", "extension"]
+                resource_course_name = None
+                resource_kps = []
+                resource_kp_weights = {}
+                tag_confidence = 0
 
             resource = LearningResource(
                 user_id=user_id,
@@ -475,11 +658,30 @@ async def complete_ppt_session(
                 title=title,
                 content=ppt_data,
                 tags=tags,
-                course_name=graph_tags.get("course_name"),
-                knowledge_points=graph_tags.get("knowledge_points") or [],
-                kp_weights=graph_tags.get("kp_weights") or {},
-                tag_confidence=graph_tags.get("tag_confidence") or 0,
+                course_name=resource_course_name,
+                knowledge_points=resource_kps,
+                kp_weights=resource_kp_weights,
+                tag_confidence=tag_confidence,
             )
+            try:
+                from services.resource_lineage_service import set_resource_lineage
+                set_resource_lineage(
+                    resource,
+                    relation_type="ppt_session",
+                    group_id=f"ppt_session:{session_id}",
+                    group_type="ppt_session",
+                    source_module="aippt",
+                    source_context={
+                        "session_id": session_id,
+                        "topic": session.topic,
+                        "course_name": session.course_name,
+                        "knowledge_points": session.knowledge_points or [],
+                        "template_id": template_id or session.template_id,
+                        "remote_ppt_id": ppt_id,
+                    },
+                )
+            except Exception:
+                pass
             db.add(resource)
             db.flush()
 

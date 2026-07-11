@@ -25,20 +25,6 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 你可以帮助学生解答各种学习问题、提供知识讲解、进行学习规划讨论等。
 如果你认为需要构建画像、生成学习资源、规划路径等，可以建议用户说明需求。
 
-【思维链要求 — 在正式回答前提供推理过程】
-每次回答必须在开头输出一个推理环节，格式为：
-
-<thinking>
-（你的分析思路：理解问题 → 拆解要点 → 确定回答框架）
-</thinking>
-
-然后输出正常回答。
-注意：
-- <thinking> 和 </thinking> 必须各占单独一行
-- 推理内容简洁但完整，控制在 100-300 字
-- 不要将正常回答的内容放入 thinking 标签内
-- thinking 标签内不要使用代码块
-
 【回答格式要求 — 请参照以下模板组织你的回答】
 
 使用 ### 作为小节标题，用 --- 分隔不同小节。整体结构清晰、层级分明。
@@ -50,19 +36,16 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 - 输出示例用 # 注释标注在 print 语句旁边
 - 代码块之后紧跟一个 **要点解析** 小节，用 - 列表逐条解释关键知识点
 
-涉及概念对比时，优先使用 Markdown 表格，表头加粗，列对齐。
+涉及概念对比或信息汇总时，优先使用 Markdown 表格。表格必须使用标准 Markdown 多行格式：
+- 表头、分隔行、每一行数据都必须单独换行
+- 不要把整张表压成一行
+- 不要使用 `||` 表示换行
 
 回答末尾可根据情况添加：
 - **扩展思考**：与本知识点相关的进阶话题或跨学科联系
 - 进一步学习的建议，引导学生继续探索
 
-【主动建议规则】
-如果检测到以下情况，在回答最末尾（换行后）附加建议，格式严格为：[建议] 内容
-- 学生多次询问同类主题或表达困惑/不理解 → [建议] 系统学习【{{topic}}】（用具体主题替换{{topic}}）
-- 学生提到做错题、不会做题、想巩固 → [建议] 分析错题
-- 学生问到学习方向或评估水平 → [建议] 学习评估
-- 学生明确询问视频/教学视频/视频推荐 → [建议] 搜索视频【{{topic}}】（用具体主题替换{{topic}}）
-每次最多给出1条建议，没有合适情况则不写建议。
+重要：禁止输出任何 `[建议]`、`【建议】` 或类似可点击建议按钮的标记。需要工具完成的任务由前端任务模式入口承接。
 
 {hallu}
 
@@ -99,61 +82,12 @@ class ChatAgent(BaseAgent):
         stream_resp = await chat_completion(messages, temperature=0.7, stream=True)
 
         collected = ""
-        thinking_collected = ""
-        raw_buf = ""
-        in_thinking = False
-        seen_thinking = False
-
-        OPEN_TAG = "<thinking>\n"
-        CLOSE_TAG = "\n</thinking>"
-
         async for chunk in stream_resp:
             delta = chunk.choices[0].delta
             if not delta.content:
                 continue
-
-            raw_buf += delta.content
-
-            while True:
-                if not in_thinking:
-                    idx = raw_buf.find(OPEN_TAG)
-                    if idx == -1:
-                        chunk_out = raw_buf
-                        raw_buf = ""
-                        collected += chunk_out
-                        yield chunk_out
-                        break
-                    before = raw_buf[:idx]
-                    raw_buf = raw_buf[idx + len(OPEN_TAG):]
-                    if before:
-                        collected += before
-                        yield before
-                    in_thinking = True
-                    seen_thinking = True
-                    yield json.dumps({"type": "thinking_start"}, ensure_ascii=False)
-                else:
-                    idx = raw_buf.find(CLOSE_TAG)
-                    if idx == -1:
-                        safe_len = max(0, len(raw_buf) - len(CLOSE_TAG))
-                        if safe_len > 0:
-                            part = raw_buf[:safe_len]
-                            thinking_collected += part
-                            raw_buf = raw_buf[safe_len:]
-                            yield json.dumps({"type": "thinking", "text": part}, ensure_ascii=False)
-                        else:
-                            break
-                    else:
-                        part = raw_buf[:idx]
-                        thinking_collected += part
-                        raw_buf = raw_buf[idx + len(CLOSE_TAG):]
-                        if part:
-                            yield json.dumps({"type": "thinking", "text": part}, ensure_ascii=False)
-                        yield json.dumps({"type": "thinking_end"}, ensure_ascii=False)
-                        in_thinking = False
-
-        if raw_buf:
-            collected += raw_buf
-            yield raw_buf
+            collected += delta.content
+            yield delta.content
         state["response"] = collected
 
     def _profile_text(self, state: AgentState) -> str:

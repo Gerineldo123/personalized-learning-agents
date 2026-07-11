@@ -3,20 +3,51 @@ import api from './index'
 export interface CreateSessionParams {
   user_id: string
   topic: string
-  course_name: string
-  knowledge_points: string[]
+  course_name?: string
+  knowledge_points?: string[]
 }
 
 export interface CreateSessionResult {
   session_id: string
   token: string
   expires_at: string
+  topic?: string
+  course_name?: string
+  knowledge_points?: string[]
+  scope?: 'graph' | 'extension'
   embed_config: {
     base_url: string
     token: string
     sdk_url?: string
     domain?: string
   }
+}
+
+export interface PptBindingCandidate {
+  course_name: string
+  knowledge_points: string[]
+  source: string
+  confidence: number
+}
+
+export interface PptBindingResult {
+  status: 'auto_bound' | 'needs_choice' | 'extension_confirm'
+  topic: string
+  binding: PptBindingCandidate | null
+  candidates: PptBindingCandidate[]
+  message?: string
+}
+
+export interface LaunchSessionResult {
+  found: boolean
+  session_id: string
+  status: string
+  topic: string
+  course_name?: string
+  knowledge_points?: string[]
+  scope?: 'graph' | 'extension'
+  resource_id?: number
+  embed_config?: CreateSessionResult['embed_config']
 }
 
 export interface CompleteSessionParams {
@@ -61,8 +92,16 @@ export function createPptSession(params: CreateSessionParams): Promise<CreateSes
   return api.post('/ppt/sessions', params).then(r => r.data)
 }
 
+export function resolvePptBinding(params: { user_id: string; topic: string; context?: string }): Promise<PptBindingResult> {
+  return api.post('/ppt/resolve-binding', params).then(r => r.data)
+}
+
 export function completePptSession(sessionId: string, params: CompleteSessionParams): Promise<CompleteSessionResult> {
   return api.post(`/ppt/sessions/${sessionId}/complete`, params).then(r => r.data)
+}
+
+export function launchPptSession(sessionId: string, userId: string): Promise<LaunchSessionResult> {
+  return api.get(`/ppt/sessions/${sessionId}/launch`, { params: { user_id: userId } }).then(r => r.data)
 }
 
 export function getPptSessionStatus(sessionId: string, userId: string): Promise<SessionStatus> {

@@ -219,12 +219,24 @@ def build_user_curriculum_graph(
     courses_by_id = {course.get("id"): course for course in courses if course.get("id")}
 
     mastery_by_id: dict[str, float] = {}
+    course_metrics_by_id: dict[str, dict[str, float | int]] = {}
     evidence_by_id: dict[str, bool] = {}
     for course in courses:
         kps = get_course_kps(course)
-        scores = [float(kb.get(kp, 0) or 0) for kp in kps]
-        evidence = any(kp in kb for kp in kps)
-        mastery_by_id[course.get("id")] = round(sum(scores) / len(scores), 4) if scores else 0
+        measured_scores = [float(kb.get(kp, 0) or 0) for kp in kps if kp in kb]
+        all_scores = [float(kb.get(kp, 0) or 0) for kp in kps]
+        evidence = bool(measured_scores)
+        measured_mastery = round(sum(measured_scores) / len(measured_scores), 4) if measured_scores else 0
+        overall_mastery = round(sum(all_scores) / len(all_scores), 4) if all_scores else 0
+        coverage_ratio = round(len(measured_scores) / len(kps), 4) if kps else 0
+        mastery_by_id[course.get("id")] = measured_mastery
+        course_metrics_by_id[course.get("id")] = {
+            "measured_mastery": measured_mastery,
+            "overall_mastery": overall_mastery,
+            "coverage_ratio": coverage_ratio,
+            "measured_kp_count": len(measured_scores),
+            "total_kp_count": len(kps),
+        }
         evidence_by_id[course.get("id")] = evidence
 
     def prereq_satisfied(course: dict) -> bool:
@@ -255,7 +267,8 @@ def build_user_curriculum_graph(
         course_id = course.get("id")
         name = course.get("name") or course_id
         sem_rank = semester_rank(course.get("semester"))
-        mastery = mastery_by_id.get(course_id, 0)
+        metrics = course_metrics_by_id.get(course_id, {})
+        mastery = float(metrics.get("measured_mastery", mastery_by_id.get(course_id, 0)) or 0)
         has_evidence = evidence_by_id.get(course_id, False)
         status = manual_status.get(name) or ""
 
@@ -280,6 +293,11 @@ def build_user_curriculum_graph(
             "credits": course.get("credits"),
             "status": status,
             "mastery": mastery,
+            "measured_mastery": mastery,
+            "overall_mastery": metrics.get("overall_mastery", mastery),
+            "coverage_ratio": metrics.get("coverage_ratio", 0),
+            "measured_kp_count": metrics.get("measured_kp_count", 0),
+            "total_kp_count": metrics.get("total_kp_count", 0),
             "kp_file": course.get("kp_file"),
         })
 

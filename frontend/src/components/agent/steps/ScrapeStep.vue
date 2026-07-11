@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref } from 'vue'
 import type { AgentStep, ScrapeData } from '../../../types/agent'
 
@@ -29,24 +29,24 @@ function toggleFullContent() {
 <template>
   <div class="step-card" :class="{ expanded }">
     <div class="step-header" @click="toggleExpand">
-      <span class="step-icon">🌐</span>
+      <span class="step-icon">馃寪</span>
       <span class="step-title">{{ step.title }}</span>
       <span class="step-arrow">{{ expanded ? '▾' : '▸' }}</span>
     </div>
     <div v-show="expanded" class="step-content">
       <div class="scrape-url">
         <strong>目标 URL：</strong>
-        <a :href="data.url" target="_blank" rel="noopener">{{ data.url }}</a>
+        <a :href="data.url">{{ data.url }}</a>
       </div>
       <div v-if="data.content" class="scrape-preview">
-        <div class="preview-label">提取内容：</div>
+        <div class="preview-label">鎻愬彇鍐呭锛</div>
         <div class="preview-text">{{ displayContent }}</div>
         <button
           v-if="data.content.length > 300"
           class="toggle-btn"
           @click="toggleFullContent"
         >
-          {{ fullContent ? '收起' : '展开更多...' }}
+          {{ fullContent ? '鏀惰捣' : '灞曞紑鏇村...' }}
         </button>
       </div>
     </div>

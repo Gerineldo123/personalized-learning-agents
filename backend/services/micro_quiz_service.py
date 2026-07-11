@@ -1,8 +1,12 @@
 import json
+import os
 from collections import Counter
 from typing import Any
 
 from core.llm_client import chat_completion
+
+MAX_MICRO_QUIZ_QUESTIONS = int(os.getenv("MICRO_QUIZ_MAX_QUESTIONS", "6"))
+MICRO_QUIZ_TIMEOUT_SECONDS = float(os.getenv("MICRO_QUIZ_TIMEOUT_SECONDS", "30"))
 
 
 LOW_QUALITY_PATTERNS = [
@@ -33,9 +37,9 @@ def _core_kps(graph: dict, limit: int) -> list[str]:
 def _targets_for_courses(diagnostic_courses: list[dict], knowledge_graphs: dict) -> list[dict]:
     course_count = len(diagnostic_courses)
     if course_count <= 1:
-        per_course_limit = 5
+        per_course_limit = min(4, MAX_MICRO_QUIZ_QUESTIONS)
     elif course_count == 2:
-        per_course_limit = 3
+        per_course_limit = 2
     else:
         per_course_limit = 2
 
@@ -49,7 +53,7 @@ def _targets_for_courses(diagnostic_courses: list[dict], knowledge_graphs: dict)
                 "course_name": course_name,
                 "knowledge_point": kp,
             })
-    return targets[:8]
+    return targets[:MAX_MICRO_QUIZ_QUESTIONS]
 
 
 def _extract_json(raw: str) -> dict:
@@ -196,7 +200,7 @@ async def generate_micro_quiz(diagnostic_courses: list[dict], knowledge_graphs: 
         resp = await chat_completion([
             {"role": "system", "content": "你只输出严格 JSON。"},
             {"role": "user", "content": _prompt(targets)},
-        ], temperature=0.2)
+        ], temperature=0.2, timeout=MICRO_QUIZ_TIMEOUT_SECONDS, retries=0)
         raw = resp.choices[0].message.content
         data = _extract_json(raw)
     except Exception as exc:
@@ -234,7 +238,7 @@ async def generate_micro_quiz(diagnostic_courses: list[dict], knowledge_graphs: 
             failures.append(_failure(target["course_name"], target["knowledge_point"], "missing_valid_question"))
 
     return {
-        "questions": valid_questions[:8],
+        "questions": valid_questions[:MAX_MICRO_QUIZ_QUESTIONS],
         "meta": {
             "generated_by": "llm",
             "generation_failures": failures,

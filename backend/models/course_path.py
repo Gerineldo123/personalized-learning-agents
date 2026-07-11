@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Float
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, JSON, Float
 from core.database import Base
 from datetime import datetime, timezone
 
@@ -14,5 +14,8 @@ class CoursePath(Base):
     done_steps = Column(Integer, default=0)
     progress = Column(Float, default=0.0)
     status = Column(String, default="active")
+    display_name = Column(String, nullable=True)
+    is_archived = Column(Boolean, default=False)
+    archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

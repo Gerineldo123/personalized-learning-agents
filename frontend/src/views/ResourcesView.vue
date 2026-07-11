@@ -7,8 +7,10 @@ import { useEventStore } from '../stores/event'
 import MindMapViewer from '../components/resource/MindMapViewer.vue'
 import QuizCard from '../components/resource/QuizCard.vue'
 import PptViewer from '../components/resource/PptViewer.vue'
+import ResourceLineagePanel from '../components/resource/ResourceLineagePanel.vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdownEnhanced as renderMdCommon, codeBlockStore } from '../utils/markdown'
+import type { AgentCollaborationEvent } from '../types/agent'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -27,6 +29,7 @@ const typeFilter = ref('')
 const courseFilter = ref('')
 const kpFilter = ref('')
 const statusFilter = ref('')
+const lineageGroupFilter = ref('')
 const curriculumCourses = ref<any[]>([])
 const kpOptions = ref<any[]>([])
 const loading = ref(false)
@@ -47,6 +50,8 @@ const graphKnowledgePoints = ref<string[]>([])
 const graphKpOptions = ref<any[]>([])
 const graphPackageType = ref('知识点补弱')
 const graphPackageLoading = ref(false)
+const graphCollaborationEvents = ref<AgentCollaborationEvent[]>([])
+const graphPackageStreamResult = ref<any>(null)
 const genLoading = ref(false)
 const starterLoading = ref(false)
 const orchestrateLoading = ref(false)
@@ -54,6 +59,7 @@ const demoLoading = ref(false)
 const autoTagLoading = ref(false)
 const feedbackLoading = ref(false)
 const articleQuizLoading = ref(false)
+const lineageRebuildLoading = ref(false)
 const recommendItems = ref<any[]>([])
 const manageMode = ref(false)
 const selectedIds = ref<number[]>([])
@@ -100,6 +106,12 @@ function renderMarkdown(content: any): string {
   return renderMdCommon(markdownSource(content))
 }
 
+function animeHtmlContent(content: any): string {
+  if (typeof content === 'string') return content
+  if (!content || typeof content !== 'object') return ''
+  return content.code || content.html || content.text || ''
+}
+
 function handleDetailClick(e: MouseEvent) {
   const copyBtn = (e.target as HTMLElement).closest('.code-copy-btn') as HTMLElement | null
   if (copyBtn) {
@@ -125,7 +137,7 @@ function courseDisplayName(seed: any) {
   return seed?.course || seed?.course_name || seed?.label || seed?.topic || ''
 }
 
-const resourceTypes = ['', 'article', 'quiz', 'code', 'mindmap', 'ppt', 'video', 'evaluation']
+const resourceTypes = ['', 'article', 'quiz', 'code', 'anime', 'mindmap', 'ppt', 'video', 'evaluation']
 const genTypeOptions = [
   { value: 'article', label: '文章' },
   { value: 'quiz', label: '题库' },
@@ -163,6 +175,7 @@ const graphPackageOptions = [
 function packageIncludesPpt(packageType: string) {
   return ['课程总览', 'PPT课件', '完整资源包'].includes(packageType)
 }
+void packageIncludesPpt
 const feedbackOptions = [
   { value: 'too_hard', label: '太难' },
   { value: 'too_easy', label: '太简单' },
@@ -340,6 +353,10 @@ watch(() => eventStore.lastEvent, (evt) => {
       finishGenerationProgress('资源已生成并刷新列表')
     }
   }
+  if ((evt.event === 'quiz.submitted' || evt.event === 'profile.updated') && (!evt.data?.user_id || evt.data.user_id === userStore.userId)) {
+    loadProfileAndSeeds()
+    loadRecommend()
+  }
 })
 
 watch(() => userStore.userId, async (newId) => {
@@ -352,14 +369,17 @@ watch(() => userStore.userId, async (newId) => {
   }
 })
 
-watch(() => route.query.type, (newType) => {
-  typeFilter.value = (newType as string) || ''
-  page.value = 1
-  loadResources()
-})
+watch(() => route.query, async () => {
+  const newType = route.query.type as string
+  const typeChanged = typeFilter.value !== (newType || '')
 
-watch(() => route.query, () => {
-  void applyGraphQuery().then(() => loadResources())
+  if (typeChanged) {
+    typeFilter.value = newType || ''
+    page.value = 1
+  }
+
+  await applyGraphQuery()
+  loadResources()
 }, { deep: true })
 
 async function loadProfileAndSeeds() {
@@ -505,6 +525,7 @@ async function loadResources() {
     if (courseFilter.value) params.course_name = courseFilter.value
     if (kpFilter.value) params.knowledge_point = kpFilter.value
     if (statusFilter.value) params.learning_status = statusFilter.value
+    if (lineageGroupFilter.value) params.lineage_group_id = lineageGroupFilter.value
     const r = await api.get('/resources', { params })
     resources.value = r.data.items || []
     totalResources.value = r.data.total || 0
@@ -523,23 +544,12 @@ function onPageChange(p: number) {
   loadResources()
 }
 
-function openPptStepFlow(topic: string, courseName: string, knowledgePoints: string[]) {
-  router.push({
-    path: '/ppt',
-    query: {
-      topic,
-      course: courseName,
-      kp: knowledgePoints.join(','),
-    },
-  })
-}
-
-function requirePptContext(courseName: string, knowledgePoints: string[]) {
-  if (!courseName || knowledgePoints.length === 0) {
-    ElMessage.warning('PPT 分步生成必须先选择课程和至少一个知识点')
-    return false
-  }
-  return true
+function openPptStepFlow(topic: string, courseName = '', knowledgePoints: string[] = [], sessionId = '') {
+  const query: Record<string, string> = { topic }
+  if (sessionId) query.session_id = sessionId
+  if (courseName) query.course = courseName
+  if (knowledgePoints.length) query.kp = knowledgePoints.join(',')
+  router.push({ path: '/ppt', query })
 }
 
 function handlePptSessionsFromResponse(data: any, fallbackTopic: string, fallbackCourse = '', fallbackKps: string[] = []) {
@@ -549,9 +559,8 @@ function handlePptSessionsFromResponse(data: any, fallbackTopic: string, fallbac
   const course = session.course_name || data.course_name || fallbackCourse
   const kps = session.knowledge_points || data.knowledge_points || fallbackKps
   const topic = session.topic || fallbackTopic
-  if (!course || !kps.length) return false
   ElMessage.info('PPT 已创建分步生成任务，请确认大纲并选择模板')
-  openPptStepFlow(topic, course, kps)
+  openPptStepFlow(topic, course, kps, session.session_id || '')
   return true
 }
 
@@ -561,7 +570,6 @@ async function startGenerate() {
   const selectedTypes = [...genTypes.value]
   const wantsPpt = selectedTypes.includes('ppt')
   const nonPptTypes = selectedTypes.filter(t => t !== 'ppt')
-  if (wantsPpt && !requirePptContext(genCourseName.value, genKnowledgePoints.value)) return
   if (wantsPpt && nonPptTypes.length === 0) {
     showGenDialog.value = false
     openPptStepFlow(genTopic.value.trim(), genCourseName.value, genKnowledgePoints.value)
@@ -696,36 +704,83 @@ async function generateOrchestrated(topic: string, options: { courseName?: strin
   }
 }
 
+function appendGraphAgentEvent(event: AgentCollaborationEvent) {
+  if (!graphCollaborationEvents.value.some((item) => item.event_id === event.event_id)) {
+    graphCollaborationEvents.value.push(event)
+  }
+}
+
+async function streamGraphPackage(params: {
+  user_id: string
+  course_name: string
+  knowledge_points: string
+  package_type: string
+}) {
+  const query = new URLSearchParams(params).toString()
+  const response = await fetch(`/api/resources/generate/graph_package/stream?${query}`, {
+    method: 'POST',
+    headers: { Accept: 'text/event-stream' },
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('无法读取生成流')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let donePayload: any = null
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let eventEnd: number
+    while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+      const event = buffer.slice(0, eventEnd)
+      buffer = buffer.slice(eventEnd + 2)
+      const raw = event
+        .split('\n')
+        .filter((line) => line.startsWith('data: '))
+        .map((line) => line.slice(6))
+        .join('\n')
+      if (!raw) continue
+      let parsed: any
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      if (parsed.type === 'agent_event' && parsed.event) {
+        appendGraphAgentEvent(parsed.event)
+      } else if (parsed.type === 'done') {
+        donePayload = parsed
+      } else if (parsed.type === 'error') {
+        throw new Error(parsed.message || '图谱资源包生成失败')
+      }
+    }
+  }
+  return donePayload
+}
+
 async function generateGraphPackage() {
   if (!graphCourseName.value) { ElMessage.warning('请先选择课程节点'); return }
-  if (packageIncludesPpt(graphPackageType.value) && !requirePptContext(graphCourseName.value, graphKnowledgePoints.value)) return
   graphPackageLoading.value = true
-  const jobId = beginGenerationProgress(
-    '图谱资源包生成',
-    `正在生成${graphPackageType.value}：${graphCourseName.value}`,
-    0,
-  )
+  graphCollaborationEvents.value = []
+  graphPackageStreamResult.value = null
+  closeGenerationProgress()
   try {
-    const r = await api.post('/resources/generate/graph_package', null, {
-      params: {
-        user_id: userStore.userId,
-        course_name: graphCourseName.value,
-        knowledge_points: graphKnowledgePoints.value.join(','),
-        package_type: graphPackageType.value,
-        job_id: jobId,
-      },
-      timeout: 300000,
+    const result = await streamGraphPackage({
+      user_id: userStore.userId,
+      course_name: graphCourseName.value,
+      knowledge_points: graphKnowledgePoints.value.join(','),
+      package_type: graphPackageType.value,
     })
-    finishGenerationProgress('图谱资源包生成完成')
-    const openedPpt = handlePptSessionsFromResponse(r.data, `${graphCourseName.value} ${graphPackageType.value}`, graphCourseName.value, graphKnowledgePoints.value)
-    ElMessage.success(openedPpt ? `已生成 ${r.data.generated || 0} 个非 PPT 图谱资源，PPT 请在分步工作台完成` : `已生成 ${r.data.generated || 0} 个图谱资源`)
+    graphPackageStreamResult.value = result
+    const openedPpt = handlePptSessionsFromResponse(result, `${graphCourseName.value} ${graphPackageType.value}`, graphCourseName.value, graphKnowledgePoints.value)
+    ElMessage.success(openedPpt ? `已生成 ${result?.generated || 0} 个非 PPT 图谱资源，PPT 请在分步工作台完成` : `已生成 ${result?.generated || 0} 个图谱资源`)
     courseFilter.value = graphCourseName.value
     kpFilter.value = graphKnowledgePoints.value[0] || ''
     page.value = 1
     await loadResources()
   } catch (e: any) {
-    const message = e?.response?.data?.detail || '图谱资源包生成失败'
-    failGenerationProgress(message)
+    const message = e?.response?.data?.detail || e?.message || '图谱资源包生成失败'
     ElMessage.error(message)
   } finally {
     graphPackageLoading.value = false
@@ -846,7 +901,7 @@ async function completeSelectedResource() {
       params: { user_id: userStore.userId },
     })
     selected.value = r.data.resource || selected.value
-    ElMessage.success('已完成学习，知识点掌握度已更新')
+    ElMessage.success('已记录学习进度；掌握度将在提交题目后自动更新')
     await loadResources()
   } catch {
     ElMessage.error('完成状态更新失败')
@@ -898,7 +953,7 @@ async function submitResourceFeedback(feedback: string) {
 }
 
 function typeLabel(t: string) {
-  const map: Record<string, string> = { article: '文章', quiz: '题库', code: '代码', mindmap: '思维导图', ppt: '课件', video: '视频', evaluation: '评估' }
+  const map: Record<string, string> = { article: '文章', quiz: '题库', code: '代码', anime: '动画', mindmap: '思维导图', ppt: 'PPT课件', video: '视频', evaluation: '学习评估' }
   return map[t] || t
 }
 
@@ -908,8 +963,85 @@ function statusLabel(status: string) {
 }
 
 function typeTag(t: string) {
-  const map: Record<string, string> = { article: '', quiz: 'warning', code: 'success', mindmap: 'info', ppt: 'danger', video: '', evaluation: 'info' }
+  const map: Record<string, string> = { article: '', quiz: 'warning', code: 'success', anime: 'success', mindmap: 'info', ppt: 'danger', video: '', evaluation: 'info' }
   return map[t] || ''
+}
+
+function lineageBadge(resource: any) {
+  const summary = resource?.lineage_summary || {}
+  if ((summary.child_count || 0) > 0) return `已派生 ${summary.child_count} 个`
+  const map: Record<string, string> = {
+    generated_from_article: '由文章生成',
+    generated_from_quiz: '由题库生成',
+    same_package: '资源包成员',
+    path_step: '路径步骤资源',
+    path_check: '路径检查题',
+    remediation: '补弱资源',
+    ppt_session: 'AiPPT生成',
+    manual: '助手/手动保存',
+  }
+  return map[summary.relation_type] || (summary.has_lineage ? '有关联' : '独立资源')
+}
+
+function lineageTagType(resource: any) {
+  const relation = resource?.lineage_summary?.relation_type
+  if (relation === 'remediation') return 'danger'
+  if (relation === 'path_check' || relation === 'generated_from_article') return 'warning'
+  if (relation === 'same_package' || relation === 'path_step') return 'success'
+  if (relation === 'ppt_session') return 'danger'
+  return 'info'
+}
+
+function viewResourceById(id: number) {
+  if (!id) return
+  viewResource({ id })
+}
+
+function applyLineageGroupFilter(groupId: string) {
+  if (!groupId) return
+  lineageGroupFilter.value = groupId
+  selected.value = null
+  page.value = 1
+  loadResources()
+}
+
+function clearLineageGroupFilter() {
+  lineageGroupFilter.value = ''
+  page.value = 1
+  loadResources()
+}
+
+async function rebuildResourceLineage() {
+  if (!userStore.userId) return
+  lineageRebuildLoading.value = true
+  try {
+    const resp = await api.post('/resources/lineage/rebuild', null, {
+      params: { user_id: userStore.userId },
+    })
+    ElMessage.success(`已重建 ${resp.data?.updated || 0} 个资源关系`)
+    await loadResources()
+  } catch {
+    ElMessage.error('重建资源关系失败')
+  } finally {
+    lineageRebuildLoading.value = false
+  }
+}
+
+function courseBindingsOf(resource: any) {
+  const bindings = resource?.course_bindings || resource?.content?.course_bindings || []
+  return Array.isArray(bindings) ? bindings.filter((item: any) => item && (item.course_name || item.knowledge_points?.length)) : []
+}
+
+function graphCourseTags(resource: any) {
+  const courses = courseBindingsOf(resource).map((item: any) => item.course_name).filter(Boolean)
+  if (resource?.course_name) courses.unshift(resource.course_name)
+  return Array.from(new Set(courses))
+}
+
+function graphKnowledgeTags(resource: any) {
+  const kps = courseBindingsOf(resource).flatMap((item: any) => Array.isArray(item.knowledge_points) ? item.knowledge_points : [])
+  if (Array.isArray(resource?.knowledge_points)) kps.unshift(...resource.knowledge_points)
+  return Array.from(new Set(kps.filter(Boolean)))
 }
 
 function bvidFromUrl(url: string): string {
@@ -950,7 +1082,7 @@ function biliPlayerSrc(url: string): string {
   <div class="resources-view">
     <div class="toolbar animate-up animate-delay-1">
       <el-select v-model="typeFilter" placeholder="全部类型" @change="page = 1; loadResources()" style="width: 160px">
-        <el-option v-for="t in resourceTypes" :key="t" :label="t || '全部'" :value="t" />
+        <el-option v-for="t in resourceTypes" :key="t" :label="t ? typeLabel(t) : '全部'" :value="t" />
       </el-select>
       <el-select v-model="courseFilter" placeholder="按课程筛选" clearable filterable @change="onCourseFilterChange" style="width: 200px">
         <el-option v-for="c in curriculumCourses" :key="c.id" :label="c.id" :value="c.id" />
@@ -966,10 +1098,18 @@ function biliPlayerSrc(url: string): string {
       <el-button style="margin-left: 8px" :loading="autoTagLoading" @click="autoTagResources">
         {{ selectedIds.length > 0 ? '归类所选' : '自动归类' }}
       </el-button>
+      <el-button style="margin-left: 8px" :loading="lineageRebuildLoading" @click="rebuildResourceLineage">
+        重建资源关系
+      </el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(1)">批量置顶</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" @click="batchPin(0)">取消置顶</el-button>
       <el-button v-if="manageMode" style="margin-left: 8px" type="danger" @click="batchDelete">批量删除</el-button>
       <el-button type="primary" @click="showGenDialog = true" style="margin-left: auto">+ 手动生成</el-button>
+    </div>
+
+    <div v-if="lineageGroupFilter" class="lineage-filter-banner animate-up animate-delay-1">
+      <span>正在只看当前资源族：{{ lineageGroupFilter }}</span>
+      <el-button size="small" text @click="clearLineageGroupFilter">清除筛选</el-button>
     </div>
 
     <div v-if="generationProgress.visible" class="generation-progress-card animate-up animate-delay-1">
@@ -1138,8 +1278,9 @@ function biliPlayerSrc(url: string): string {
       <div class="detail-graph-meta">
         <div class="detail-tags">
           <el-tag :type="typeTag(selected.resource_type)" size="small">{{ typeLabel(selected.resource_type) }}</el-tag>
-          <el-tag v-if="selected.course_name" type="success" size="small">{{ selected.course_name }}</el-tag>
-          <el-tag v-for="kp in selected.knowledge_points || []" :key="kp" type="info" size="small">{{ kp }}</el-tag>
+          <el-tag v-for="course in graphCourseTags(selected)" :key="`course-${course}`" type="success" size="small">{{ course }}</el-tag>
+          <el-tag v-for="kp in graphKnowledgeTags(selected)" :key="`kp-${kp}`" type="info" size="small">{{ kp }}</el-tag>
+          <el-tag :type="lineageTagType(selected)" size="small" effect="plain">{{ lineageBadge(selected) }}</el-tag>
           <el-tag size="small" effect="plain">{{ statusLabel(selected.learning_status) }}</el-tag>
         </div>
         <el-button
@@ -1148,7 +1289,7 @@ function biliPlayerSrc(url: string): string {
           type="primary"
           @click="completeSelectedResource"
         >
-          标记完成并更新掌握度
+          标记已学完
         </el-button>
       </div>
       <div class="resource-feedback-box">
@@ -1163,6 +1304,13 @@ function biliPlayerSrc(url: string): string {
           {{ item.label }}
         </el-button>
       </div>
+      <ResourceLineagePanel
+        v-if="selected?.id"
+        :resource-id="selected.id"
+        :user-id="userStore.userId"
+        @open="viewResourceById"
+        @filter-group="applyLineageGroupFilter"
+      />
       <div v-if="selected.resource_type === 'article'" class="article-quiz-box">
         <div>
           <strong>课后检测</strong>
@@ -1181,6 +1329,21 @@ function biliPlayerSrc(url: string): string {
         :user-id="userStore.userId"
         @updated="updateSelectedContent"
       />
+      <div v-else-if="selected.resource_type === 'anime'" class="anime-viewer">
+        <div class="anime-toolbar">
+          <div>
+            <strong>可视化动画预览</strong>
+            <p>动画以沙箱 iframe 方式运行，源文件已保存到学习资源。</p>
+          </div>
+        </div>
+        <iframe
+          v-if="animeHtmlContent(selected.content)"
+          :srcdoc="animeHtmlContent(selected.content)"
+          sandbox="allow-scripts"
+          class="anime-iframe"
+        />
+        <div v-else class="anime-empty">该动画资源缺少可预览的 HTML 内容。</div>
+      </div>
       <div v-else-if="selected.resource_type === 'video'" class="video-viewer">
         <div v-if="biliPlayerSrc(selected.content?.url)" class="video-embed-wrap">
           <iframe
@@ -1191,7 +1354,7 @@ function biliPlayerSrc(url: string): string {
         </div>
         <div v-else class="video-fallback">
           <p>{{ selected.content?.reason }}</p>
-          <a :href="selected.content?.url" target="_blank" rel="noopener">在 B 站打开</a>
+          <a :href="selected.content?.url">在 B 站打开</a>
         </div>
         <div class="video-meta">
           <span class="video-source">{{ selected.content?.source }}</span>
@@ -1216,8 +1379,9 @@ function biliPlayerSrc(url: string): string {
         </div>
         <h4 class="card-title">{{ r.title }}</h4>
         <div class="graph-tags">
-          <el-tag v-if="r.course_name" size="small" type="success">{{ r.course_name }}</el-tag>
-          <el-tag v-for="kp in (r.knowledge_points || []).slice(0, 2)" :key="kp" size="small" type="info">{{ kp }}</el-tag>
+          <el-tag v-for="course in graphCourseTags(r).slice(0, 2)" :key="`course-${r.id}-${course}`" size="small" type="success">{{ course }}</el-tag>
+          <el-tag v-for="kp in graphKnowledgeTags(r).slice(0, 2)" :key="`kp-${r.id}-${kp}`" size="small" type="info">{{ kp }}</el-tag>
+          <el-tag :type="lineageTagType(r)" size="small" effect="plain">{{ lineageBadge(r) }}</el-tag>
           <el-tag size="small" effect="plain">{{ statusLabel(r.learning_status) }}</el-tag>
         </div>
         <div class="card-deco">📘</div>
@@ -1304,6 +1468,19 @@ function biliPlayerSrc(url: string): string {
 .resources-view { max-width: 1280px; padding: 28px 20px 34px; margin: 0 auto; box-sizing: border-box; background: linear-gradient(180deg, #F9D9B8 0%, #FFF5EB 45%, #FFFBF5 100%); }
 .toolbar { display: flex; align-items: center; margin-bottom: 20px; padding-top: 4px; flex-wrap: wrap; gap: 4px; }
 .loading-box { height: 200px; }
+
+.lineage-filter-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: -8px 0 16px;
+  padding: 10px 14px;
+  color: #8a5a28;
+  background: #fff7eb;
+  border: 1px solid #f0ddc5;
+  border-radius: 12px;
+}
 
 .generation-progress-card {
   background: #FFFBF5;
@@ -1573,6 +1750,31 @@ function biliPlayerSrc(url: string): string {
 .video-meta { padding: 14px 18px; }
 .video-source { font-size: 12px; color: #948A80; }
 .video-reason { margin: 6px 0 0; color: #3A332E; font-size: 14px; line-height: 1.6; }
+.anime-viewer {
+  background: #FFFBF5;
+  border-radius: 12px;
+  border: 1px solid #EFE6DC;
+  overflow: hidden;
+}
+.anime-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #EFE6DC;
+  background: #fff8ef;
+}
+.anime-toolbar strong { color: #3A332E; }
+.anime-toolbar p { margin: 4px 0 0; color: #7A6A5C; font-size: 13px; }
+.anime-iframe {
+  width: 100%;
+  height: min(72vh, 760px);
+  min-height: 560px;
+  border: none;
+  background: #fff;
+}
+.anime-empty { padding: 48px; text-align: center; color: #948A80; }
 
 @keyframes floatUpIn {
   from { opacity: 0; transform: translateY(14px); }

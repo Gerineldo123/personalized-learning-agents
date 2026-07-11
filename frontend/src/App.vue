@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from './stores/user'
 import { useAuthStore } from './stores/auth'
@@ -25,28 +25,20 @@ const menuItems = [
 ]
 
 const isAuthPage = computed(() => route.path === '/auth')
+const isFullscreen = computed(() => !!route.meta?.fullscreen)
 
-watch(
-  () => route.path,
-  (p) => {
-    if (!authStore.isLoggedIn && p !== '/auth') {
-      router.replace('/auth')
-    }
-    if (authStore.isLoggedIn && p === '/auth') {
-      router.replace('/')
-    }
-  },
-  { immediate: true },
-)
-
-function navigate(path: string) {
-  router.push(path)
+async function navigate(path: string) {
+  try {
+    await router.push(path)
+  } catch {
+    window.location.href = path
+  }
 }
 
 function logout() {
   authStore.clearAuth()
   userStore.clearUserId()
-  router.push('/auth')
+  router.replace('/auth')
 }
 
 async function deleteAccount() {
@@ -67,7 +59,7 @@ async function deleteAccount() {
     localStorage.removeItem('focus-sessions')
     localStorage.removeItem('focus-completed-count')
     ElMessage.success('账号已注销')
-    router.push('/auth')
+    router.replace('/auth')
   } catch (e: any) {
     if (e === 'cancel' || e === 'close') return
     const message = e?.response?.data?.detail || '账号注销失败'
@@ -108,7 +100,8 @@ async function deleteAccount() {
       </div>
     </el-header>
 
-    <el-main class="app-main">
+    <router-view v-if="isFullscreen" class="app-fullscreen" />
+    <el-main v-else class="app-main">
       <router-view />
     </el-main>
   </el-container>
@@ -226,6 +219,13 @@ async function deleteAccount() {
   overflow-y: auto;
   flex: 1;
   padding: 28px 32px;
+}
+
+.app-fullscreen {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 </style>
 

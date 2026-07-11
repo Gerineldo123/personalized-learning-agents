@@ -43,20 +43,20 @@ export function chatStream(
             const raw = dataLines.join('\n')
             try {
               const parsed = JSON.parse(raw)
-              if (parsed.type === 'thinking_start' && onThinking) {
-                onThinking('start')
+              if (parsed.type === 'thinking_start') {
+                onThinking?.('start')
                 continue
               }
-              if (parsed.type === 'thinking_end' && onThinking) {
-                onThinking('end')
+              if (parsed.type === 'thinking_end') {
+                onThinking?.('end')
                 continue
               }
-              if (parsed.type === 'thinking' && onThinking) {
-                onThinking('chunk', parsed.text || '')
+              if (parsed.type === 'thinking') {
+                onThinking?.('chunk', parsed.text || '')
                 continue
               }
-              if (parsed.type === 'stage' && onStage) {
-                onStage(parsed.stage, parsed.data)
+              if (parsed.type === 'stage') {
+                onStage?.(parsed.stage, parsed.data)
                 continue
               }
             } catch {}

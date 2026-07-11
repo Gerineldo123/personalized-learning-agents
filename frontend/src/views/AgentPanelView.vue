@@ -1,5 +1,6 @@
-<script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onUnmounted, provide } from 'vue'
+﻿<script setup lang="ts">
+import { ref, computed, nextTick, onMounted, onUnmounted, provide, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { useAgentStore } from '../stores/agent'
 import { useThemeStore } from '../stores/theme'
@@ -8,7 +9,7 @@ import { chatStream } from '../api/chat'
 import { workflowStream, type WorkflowType } from '../api/workflow'
 import type { ResourceEvent } from '../api/workflow'
 import { runDemo } from '../mock/agentDemo'
-import type { AgentStep, StepEvent, UploadedFile } from '../types/agent'
+import type { AgentCollaborationEvent, AgentStep, StepEvent, UploadedFile } from '../types/agent'
 import AgentTimeline from '../components/agent/AgentTimeline.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
@@ -17,22 +18,28 @@ import { renderMarkdownEnhanced, escapeHtml } from '../utils/markdown'
 const userStore = useUserStore()
 const agentStore = useAgentStore()
 const themeStore = useThemeStore()
+const route = useRoute()
+const router = useRouter()
 
-onMounted(() => {
-  if (!userStore.userId) userStore.setUserId('user_' + Date.now())
-  provide('userId', userStore.userId)
-  loadConversations()
-  document.addEventListener('click', handleDocumentClick)
+if (!userStore.userId) userStore.setUserId('user_' + Date.now())
+provide('userId', userStore.userId)
+
+onMounted(async () => {
+  await initializeAgentPanel()
+  window.addEventListener('keydown', handleTermKeydown)
 })
-onUnmounted(() => document.removeEventListener('click', handleDocumentClick))
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleTermKeydown)
+  stopTermDrag()
+})
 
-// ── 状态 ──────────────────────────────────────────
+// 鈹€鈹€ 鐘舵€?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 const inputText = ref('')
 const mainContainer = ref<HTMLElement | null>(null)
 const uploadedFile = ref<UploadedFile | null>(null)
 const uploading = ref(false)
 
-// ── 会话管理 ──────────────────────────────────────
+// 鈹€鈹€ 浼氳瘽绠＄悊 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 interface ConvItem { id: number; title: string; updated_at: string }
 const conversations = ref<ConvItem[]>([])
 const currentConvId = ref<number | null>(null)
@@ -40,14 +47,28 @@ const currentConvId = ref<number | null>(null)
 const historyMap = ref<Record<number, { role: string; content: string }[]>>({})
 // convId -> mode ('chat' | 'task')
 const convModeMap = ref<Record<number, 'chat' | 'task'>>({})
-// convId -> chat messages (对话模式)
-interface ChatMsg { role: 'user' | 'assistant'; content: string; streaming?: boolean; uid: number }
+// convId -> chat messages (瀵硅瘽妯″紡)
+type TaskOnlyIntent = 'video' | 'anime' | 'resource' | 'quiz' | 'ppt' | 'mindmap' | 'path' | 'mistake_review'
+interface ChatHandoff {
+  taskText: string
+  intentType: TaskOnlyIntent
+  label: string
+  dismissed?: boolean
+}
+interface ChatMsg {
+  role: 'user' | 'assistant'
+  content: string
+  streaming?: boolean
+  uid: number
+  glossary?: Record<string, string>
+  handoff?: ChatHandoff
+}
 const chatMsgMap = ref<Record<number, ChatMsg[]>>({})
 let msgUid = 0
 
 const currentMode = computed(() => currentConvId.value ? (convModeMap.value[currentConvId.value] || 'chat') : 'chat')
 const currentChatMsgs = computed(() => currentConvId.value ? (chatMsgMap.value[currentConvId.value] || []) : [])
-// 只显示当前会话的任务
+// 鍙樉绀哄綋鍓嶄細璇濈殑浠诲姟
 const currentConvTasks = computed(() =>
   agentStore.tasks.filter((t: any) => t.convId === currentConvId.value)
 )
@@ -55,11 +76,64 @@ const currentTask = computed(() =>
   currentConvTasks.value.find(t => t.id === agentStore.currentTaskId) || currentConvTasks.value[0] || null
 )
 
+function panelStorageKey(suffix: string) {
+  return `agent_panel_${suffix}:${userStore.userId || 'anonymous'}`
+}
+
+function readStoredCurrentConvId(): number | null {
+  try {
+    const raw = localStorage.getItem(panelStorageKey('current_conv_id'))
+    const id = raw ? Number(JSON.parse(raw)) : null
+    return Number.isFinite(id) && id ? id : null
+  } catch {
+    return null
+  }
+}
+
+function saveStoredCurrentConvId(id: number | null) {
+  try {
+    if (id) localStorage.setItem(panelStorageKey('current_conv_id'), JSON.stringify(id))
+    else localStorage.removeItem(panelStorageKey('current_conv_id'))
+  } catch {}
+}
+
+function readStoredConvModes(): Record<number, 'chat' | 'task'> {
+  try {
+    return JSON.parse(localStorage.getItem(panelStorageKey('conv_modes')) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function saveStoredConvModes() {
+  try {
+    localStorage.setItem(panelStorageKey('conv_modes'), JSON.stringify(convModeMap.value))
+  } catch {}
+}
+
+async function initializeAgentPanel() {
+  await loadConversations()
+  convModeMap.value = { ...readStoredConvModes(), ...convModeMap.value }
+  const handled = await consumeAgentQuery()
+  if (!handled) await restoreLastConversation()
+}
+
+async function restoreLastConversation() {
+  if (currentConvId.value) return
+  const storedId = readStoredCurrentConvId()
+  const exists = storedId && conversations.value.some(c => c.id === storedId)
+  const fallbackId = conversations.value[0]?.id || null
+  const targetId = exists ? storedId : fallbackId
+  if (targetId) await selectConversation(targetId)
+}
+
 async function loadConversations() {
   try {
     const r = await api.get('/conversations', { params: { user_id: userStore.userId } })
     conversations.value = r.data.items || []
+    return conversations.value
   } catch {}
+  return []
 }
 
 async function newConversation() {
@@ -70,7 +144,11 @@ async function newConversation() {
     chatMsgMap.value[r.data.id] = []
     convModeMap.value[r.data.id] = 'chat'
     await loadConversations()
-  } catch { ElMessage.error('创建对话失败') }
+    return r.data.id as number
+  } catch {
+    ElMessage.error('创建对话失败')
+    return null
+  }
 }
 
 async function selectConversation(id: number) {
@@ -117,31 +195,39 @@ function setMode(mode: 'chat' | 'task') {
   convModeMap.value[currentConvId.value] = mode
 }
 
-// ── TaskMeta ([建议] 和 资源) ─────────────────────
+watch(currentConvId, (id) => saveStoredCurrentConvId(id))
+watch(convModeMap, () => saveStoredConvModes(), { deep: true })
+watch(() => route.fullPath, async () => {
+  await consumeAgentQuery()
+})
+
+// Task 元信息
 interface TaskMeta {
   suggestions?: Array<{ text: string; action: WorkflowType | null; topic: string }>
   resources?: ResourceEvent[]
+  collaborationEvents?: AgentCollaborationEvent[]
 }
 const taskMeta = ref<Record<number, TaskMeta>>({})
 
-function parseSuggestions(taskId: number, content: string) {
-  const suggestions: TaskMeta['suggestions'] = []
-  const re = /\[建议\]\s*(.+)/g
-  let m
-  while ((m = re.exec(content)) !== null) {
-    const text = m[1].trim()
-    const topic = (text.match(/【(.+?)】/) || [])[1] || text
-    const action: WorkflowType | null = text.includes('分析错题') ? 'review'
-      : text.includes('学习评估') ? 'evaluation'
-      : text.includes('搜索视频') ? 'video'
-      : text.includes('系统学习') ? 'study' : null
-    suggestions.push({ text, action, topic })
-  }
-  if (!taskMeta.value[taskId]) taskMeta.value[taskId] = {}
-  taskMeta.value[taskId].suggestions = suggestions
+function stripSuggestionLines(content: string): string {
+  return String(content || '').replace(/^\s*(?:\[建议\]|【建议】).*(?:\r?\n|$)/gm, '').trim()
 }
 
-// ── 滚动 ──────────────────────────────────────────
+function parseSuggestions(taskId: number, content: string) {
+  void content
+  if (!taskMeta.value[taskId]) taskMeta.value[taskId] = {}
+  taskMeta.value[taskId].suggestions = []
+}
+
+function appendCollaborationEvent(taskId: number, event: AgentCollaborationEvent) {
+  if (!taskMeta.value[taskId]) taskMeta.value[taskId] = {}
+  const events = taskMeta.value[taskId].collaborationEvents || []
+  if (!events.some((item) => item.event_id === event.event_id)) {
+    taskMeta.value[taskId].collaborationEvents = [...events, event]
+  }
+}
+
+// 滚动
 function scrollToBottom() {
   nextTick(() => { if (mainContainer.value) mainContainer.value.scrollTop = mainContainer.value.scrollHeight })
 }
@@ -155,33 +241,79 @@ function scheduleStreamScroll() {
   }, 60)
 }
 
-// ── 对话模式发送 ──────────────────────────────────
+// 对话模式发送
 const isStreaming = ref(false)
 
-async function sendChatMessage() {
-  const text = inputText.value.trim()
+interface ChatSendOptions {
+  textOverride?: string
+  skipTaskHandoff?: boolean
+  forceNewConversation?: boolean
+}
+
+function detectTaskOnlyIntent(text: string): { intentType: TaskOnlyIntent; label: string } | null {
+  const normalized = text.replace(/\s+/g, '')
+  const rules: Array<{ intentType: TaskOnlyIntent; label: string; pattern: RegExp }> = [
+    { intentType: 'anime', label: '动画生成', pattern: /可视化动画|动画演示|演示动画|生成.*动画|可视化.*演示/ },
+    { intentType: 'video', label: '视频搜索', pattern: /推荐.*视频|搜索.*视频|找.*视频|教学视频|视频资源/ },
+    { intentType: 'ppt', label: 'PPT课件', pattern: /PPT|ppt|课件|幻灯片/ },
+    { intentType: 'mindmap', label: '思维导图', pattern: /思维导图|脑图|知识导图/ },
+    { intentType: 'quiz', label: '题库生成', pattern: /生成.*题库|生成.*练习题|生成.*测试题|出题|专项练习|针对性练习/ },
+    { intentType: 'mistake_review', label: '错题补弱', pattern: /分析.*错题|错题.*练习|错题.*补弱|错题.*针对/ },
+    { intentType: 'path', label: '学习路径', pattern: /学习路径|规划.*路径|学习计划|规划.*学习/ },
+    { intentType: 'resource', label: '资源生成', pattern: /生成.*资源|学习资源|资源包|系统学习|多模态.*资源/ },
+  ]
+  return rules.find((rule) => rule.pattern.test(normalized)) || null
+}
+
+async function appendTaskHandoffMessage(text: string, intent: { intentType: TaskOnlyIntent; label: string }, forceNewConversation = false) {
+  if (forceNewConversation || !currentConvId.value) {
+    const id = await newConversation()
+    if (!id) return
+  }
+  setMode('chat')
+  if (inputText.value.trim() === text) inputText.value = ''
+
+  if (!chatMsgMap.value[currentConvId.value!]) chatMsgMap.value[currentConvId.value!] = []
+  const msgs = chatMsgMap.value[currentConvId.value!]
+  msgs.push({ role: 'user', content: text, uid: msgUid++ })
+  await saveMessage('user', text)
+
+  const content = [
+    `这个需求需要切换到 **任务模式** 执行。`,
+    '',
+    `对话模式适合概念解释、公式推导和学习建议；${intent.label} 需要调用对应工具智能体，才能生成可执行或可保存的结果。`,
+  ].join('\n')
+  msgs.push({
+    role: 'assistant',
+    content,
+    uid: msgUid++,
+    handoff: {
+      taskText: text,
+      intentType: intent.intentType,
+      label: intent.label,
+    },
+  })
+  await saveMessage('assistant', content)
+  await loadConversations()
+  scrollToBottom()
+}
+
+async function sendChatMessage(options: ChatSendOptions = {}) {
+  const text = (options.textOverride ?? inputText.value).trim()
   if (!text || isStreaming.value || agentStore.isExecuting) return
 
-  // 检测资源查找意图，提示切换任务模式
-  const resourceIntent = /搜索|查找|找.*资源|生成.*资源|推荐.*视频|搜.*视频|学习资源|系统学习|分析错题|学习评估|制作.*思维导图|生成.*题库|出题/.test(text)
-  if (resourceIntent) {
-    try {
-      await ElMessageBox.confirm(
-        '该需求适合使用「任务模式」，Agent 会自动生成学习资源（文章、题库、思维导图等）。是否切换？',
-        '切换到任务模式',
-        { confirmButtonText: '切换并执行', cancelButtonText: '继续对话', type: 'info' }
-      )
-      setMode('task')
-      await executeTask(text)
-      inputText.value = ''
-      return
-    } catch {
-      // 用户选择继续对话，不拦截
-    }
+  const taskOnlyIntent = detectTaskOnlyIntent(text)
+  if (taskOnlyIntent && !options.skipTaskHandoff) {
+    await appendTaskHandoffMessage(text, taskOnlyIntent, options.forceNewConversation)
+    return
   }
 
-  if (!currentConvId.value) await newConversation()
-  inputText.value = ''
+  if (options.forceNewConversation || !currentConvId.value) {
+    const id = await newConversation()
+    if (!id) return
+  }
+  setMode('chat')
+  if (!options.textOverride || inputText.value.trim() === text) inputText.value = ''
 
   if (!chatMsgMap.value[currentConvId.value!]) chatMsgMap.value[currentConvId.value!] = []
   const msgs = chatMsgMap.value[currentConvId.value!]
@@ -197,24 +329,32 @@ async function sendChatMessage() {
 
   chatStream(
     userStore.userId, text, history,
-    (chunk) => { msgs[aiIdx].content += chunk; scrollToBottom() },
+    (chunk) => { msgs[aiIdx].content += chunk; scheduleStreamScroll() },
     async () => {
       msgs[aiIdx].streaming = false
       isStreaming.value = false
-      const finalContent = msgs[aiIdx].content
+      const finalContent = stripSuggestionLines(msgs[aiIdx].content)
+      msgs[aiIdx].content = finalContent
       await saveMessage('assistant', finalContent)
       await loadConversations()
       try {
         const r = await api.post('/chat/mark-terms', { text: finalContent })
         const marked = r.data.marked_text
+        const glossary = r.data.glossary || {}
+        msgs[aiIdx].glossary = glossary
+        cacheGlossary(glossary)
         if (marked && marked !== finalContent) msgs[aiIdx].content = marked
       } catch {}
     },
-    (err) => { msgs[aiIdx].content = `[错误] ${err.message}`; msgs[aiIdx].streaming = false; isStreaming.value = false },
+    (err) => {
+      msgs[aiIdx].content = `[错误] ${err.message}`
+      msgs[aiIdx].streaming = false
+      isStreaming.value = false
+    },
   )
 }
 
-// ── 任务模式执行 ──────────────────────────────────
+// 任务模式执行
 async function executeTask(taskDescription?: string) {
   const text = (typeof taskDescription === 'string') ? taskDescription : inputText.value.trim()
   if (!text || agentStore.isExecuting) return
@@ -261,10 +401,24 @@ async function executeTask(taskDescription?: string) {
     (err) => { console.error(err); agentStore.isExecuting = false; agentStore.setTaskStatus(task.id, 'completed') },
     uploadedFile.value?.content, uploadedFile.value?.fileName, history,
     (stepId, delta) => { agentStore.appendStepContent(task.id, stepId, delta); scheduleStreamScroll() },
+    (event) => { appendCollaborationEvent(task.id, event); scheduleStreamScroll() },
   )
   agentStore.setAbortController(ctrl)
   uploadedFile.value = null
   scrollToBottom()
+}
+
+function runHandoffTask(msg: ChatMsg) {
+  if (!msg.handoff || agentStore.isExecuting) return
+  const taskText = msg.handoff.taskText
+  msg.handoff.dismissed = true
+  setMode('task')
+  executeTask(taskText)
+}
+
+function dismissHandoff(msg: ChatMsg) {
+  if (!msg.handoff) return
+  msg.handoff.dismissed = true
 }
 
 function handleStepEvent(evt: StepEvent, taskId: number) {
@@ -283,7 +437,7 @@ function handleStepEvent(evt: StepEvent, taskId: number) {
   scrollToBottom()
 }
 
-// ── 工作流触发 ────────────────────────────────────
+// 工作流阶段展示
 const stageTitleMap: Record<string, string> = {
   profile_analyzed: '画像分析',
   diagnosis_done: '学情诊断',
@@ -306,7 +460,8 @@ function stageAgent(stage: string, data: any) {
   if (type === 'mindmap') return '导图智能体'
   if (type === 'quiz') return '出题智能体'
   if (type === 'code') return '代码智能体'
-  if (type === 'ppt') return '课件智能体'
+  if (type === 'anime') return '动画智能体'
+  if (type === 'ppt' || type === 'ppt_session') return '课件智能体'
   if (type === 'video') return '视频智能体'
   if (stage.includes('profile')) return '画像智能体'
   if (stage.includes('diagnosis') || stage.includes('planned')) return '规划智能体'
@@ -322,7 +477,7 @@ function formatStageData(data: any): string {
   if (Array.isArray(data)) {
     return data.map((item) => {
       if (typeof item === 'string') return `- ${item}`
-      const name = item.resource_type || item.stage || item.purpose || item.title || JSON.stringify(item)
+      const name = item.resource_type ? resourceTypeLabel(item.resource_type) : (item.stage || item.purpose || item.title || JSON.stringify(item))
       const desc = item.purpose || item.agent || ''
       return `- ${name}${desc ? `：${desc}` : ''}`
     }).join('\n')
@@ -330,7 +485,7 @@ function formatStageData(data: any): string {
   if (data && typeof data === 'object') {
     const lines: string[] = []
     if (data.course_name) lines.push(`课程：${data.course_name}`)
-    if (data.resource_type) lines.push(`资源类型：${data.resource_type}`)
+    if (data.resource_type) lines.push(`资源类型：${resourceTypeLabel(data.resource_type)}`)
     if (data.title) lines.push(`标题：${data.title}`)
     if (Array.isArray(data.focus_knowledge_points)) lines.push(`重点知识点：${data.focus_knowledge_points.join('、')}`)
     if (Array.isArray(data.knowledge_points)) lines.push(`知识点：${data.knowledge_points.join('、')}`)
@@ -349,11 +504,52 @@ function resourceIcon(type: string): string {
     quiz: '📝',
     mindmap: '🧠',
     code: '💻',
+    anime: '🎞️',
     ppt: '📊',
+    ppt_session: '📊',
     video: '🎬',
     evaluation: '📈',
   }
-  return map[type] || '📦'
+  return map[type] || '📌'
+}
+
+function resourceTypeLabel(type: string): string {
+  const map: Record<string, string> = {
+    article: '文章',
+    quiz: '题库',
+    anime: '动画',
+    mindmap: '思维导图',
+    ppt: 'PPT课件',
+    ppt_session: 'PPT课件',
+    video: '视频',
+    code: '代码',
+    evaluation: '学习评估',
+  }
+  return map[type] || type
+}
+
+function resourceKey(resource: ResourceEvent, index: number): string {
+  return String(resource.resource_id || resource.ppt_session?.session_id || `${resource.resource_type}-${index}`)
+}
+
+function resourceHref(resource: ResourceEvent): string {
+  if (resource.ppt_session) {
+    const session = resource.ppt_session || {}
+    const params = new URLSearchParams()
+    if (session.session_id && !session.pending_binding) params.set('session_id', session.session_id)
+    if (session.topic) params.set('topic', session.topic)
+    if (session.course_name) params.set('course', session.course_name)
+    if (Array.isArray(session.knowledge_points) && session.knowledge_points.length) {
+      params.set('kp', session.knowledge_points.join(','))
+    }
+    if (session.scope === 'extension') params.set('scope', 'extension')
+    return `/ppt${params.toString() ? `?${params.toString()}` : ''}`
+  }
+  return resource.resource_id ? `/resources?open=${resource.resource_id}` : '/resources'
+}
+
+function resourceActionLabel(resource: ResourceEvent): string {
+  return resource.ppt_session ? '进入 AiPPT 分步流程 →' : '查看 →'
 }
 
 function triggerWorkflow(action: WorkflowType, topic: string) {
@@ -402,27 +598,75 @@ function triggerWorkflow(action: WorkflowType, topic: string) {
       await saveMessage('assistant', fullContent)
       await loadConversations()
     },
-    (err) => { agentStore.isExecuting = false; agentStore.setTaskStatus(task.id, 'completed'); ElMessage.error(`工作流失败: ${err.message}`) },
+    (err) => { agentStore.isExecuting = false; agentStore.setTaskStatus(task.id, 'completed'); ElMessage.error(`工作流失败：${err.message}`) },
     (resource) => {
       if (!taskMeta.value[task.id]) taskMeta.value[task.id] = {}
       const resources = taskMeta.value[task.id].resources || []
-      if (!resources.some((r: ResourceEvent) => r.resource_id === resource.resource_id)) {
+      const nextKey = resourceKey(resource, resources.length)
+      if (!resources.some((r: ResourceEvent, i: number) => resourceKey(r, i) === nextKey)) {
         resources.push(resource)
         taskMeta.value[task.id].resources = resources
       }
     },
+    (event) => { appendCollaborationEvent(task.id, event); scrollToBottom() },
   )
 }
+void triggerWorkflow
 
-// ── 提交入口（按模式路由）────────────────────────
+function queryText(value: unknown) {
+  return Array.isArray(value) ? String(value[0] || '') : String(value || '')
+}
+
+function agentLaunchKey(q: string) {
+  return [
+    queryText(route.query.from) || 'unknown',
+    queryText(route.query.t) || 'no-ts',
+    q,
+  ].join('|')
+}
+
+async function cleanAgentQuery() {
+  if (Object.keys(route.query).length === 0) return
+  try {
+    await router.replace({ path: '/agent', query: {} })
+  } catch {}
+}
+
+async function consumeAgentQuery(): Promise<boolean> {
+  if (route.path !== '/agent') return false
+  const q = queryText(route.query.q).trim()
+  const autoSubmit = queryText(route.query.auto_submit) === '1'
+  if (!q || !autoSubmit) {
+    if (!q && queryText(route.query.from) === 'home') await cleanAgentQuery()
+    return false
+  }
+
+  const key = agentLaunchKey(q)
+  const consumedKey = `agent_home_launch_consumed:${key}`
+  if (sessionStorage.getItem(consumedKey)) {
+    await cleanAgentQuery()
+    return false
+  }
+  if (isStreaming.value || agentStore.isExecuting) return true
+
+  sessionStorage.setItem(consumedKey, '1')
+  await cleanAgentQuery()
+  await sendChatMessage({
+    textOverride: q,
+    forceNewConversation: true,
+  })
+  return true
+}
+
+// 提交入口：按当前模式路由
 function handleSubmit() {
   if (currentMode.value === 'chat') sendChatMessage()
   else executeTask()
 }
 
-// ── Markdown + 术语渲染 ──────────────────────────────────
+// Markdown 与术语渲染
 function renderChatContent(content: string): string {
-  let html = renderMarkdownEnhanced(content)
+  let html = renderMarkdownEnhanced(stripSuggestionLines(content))
   html = html.replace(/\[\[(.+?)\]\]/g, (_m, term) => {
     const safe = escapeHtml(term)
     return `<span class="term-highlight" data-term="${safe}">${safe}</span>`
@@ -430,37 +674,190 @@ function renderChatContent(content: string): string {
   return html
 }
 
-const popoverVisible = ref(false)
-const popoverTerm = ref('')
-const popoverExplanation = ref('')
-const popoverLoading = ref(false)
-const popoverLeft = ref(0)
-const popoverTop = ref(0)
+interface TermCard {
+  id: number
+  term: string
+  explanation: string
+  loading: boolean
+  x: number
+  y: number
+  zIndex: number
+  error?: string
+}
+interface TermCacheItem { explanation: string; cached_at: string }
 
-async function explainTerm(term: string, x: number, y: number) {
-  popoverTerm.value = term
-  popoverExplanation.value = ''
-  popoverLoading.value = true
-  popoverVisible.value = true
-  popoverLeft.value = x + 12
-  popoverTop.value = y + 12
-  try {
-    const r = await api.post('/chat/explain-term', { term, user_id: userStore.userId, context: '' })
-    popoverExplanation.value = r.data.explanation || '暂无解释'
-  } catch { popoverExplanation.value = '解释加载失败' }
-  finally { popoverLoading.value = false }
+const termCards = ref<TermCard[]>([])
+let termCardId = 0
+let topTermZIndex = 10000
+const TERM_CARD_WIDTH = 380
+const TERM_CARD_HEIGHT = 420
+
+let activeTermDrag: {
+  id: number
+  startX: number
+  startY: number
+  originX: number
+  originY: number
+} | null = null
+
+function normalizeTerm(term: string) {
+  return String(term || '').replace(/\s+/g, ' ').trim()
 }
 
-function handleChatClick(e: MouseEvent) {
-  const target = (e.target as HTMLElement).closest('.term-highlight') as HTMLElement | null
-  if (target) {
-    e.stopPropagation()
-    explainTerm(target.dataset.term || '', e.clientX, e.clientY)
+function termCacheKey() {
+  return `term_explain_cache_v1:${userStore.userId || 'anonymous'}`
+}
+
+function readTermCache(): Record<string, TermCacheItem> {
+  try {
+    return JSON.parse(localStorage.getItem(termCacheKey()) || '{}')
+  } catch {
+    return {}
   }
 }
 
-// ── 其他工具函数 ──────────────────────────────────
-function handleDocumentClick(_e: MouseEvent) { popoverVisible.value = false }
+function getCachedTermExplanation(term: string): string {
+  return readTermCache()[normalizeTerm(term)]?.explanation || ''
+}
+
+function setCachedTermExplanation(term: string, explanation: string) {
+  const key = normalizeTerm(term)
+  if (!key || !explanation) return
+  const cache = readTermCache()
+  cache[key] = { explanation, cached_at: new Date().toISOString() }
+  try {
+    localStorage.setItem(termCacheKey(), JSON.stringify(cache))
+  } catch {}
+}
+
+function cacheGlossary(glossary: Record<string, string>) {
+  for (const [term, explanation] of Object.entries(glossary || {})) {
+    setCachedTermExplanation(term, explanation)
+  }
+}
+
+function lookupGlossary(glossary: Record<string, string> | undefined, term: string): string {
+  const normalized = normalizeTerm(term)
+  if (!glossary || !normalized) return ''
+  for (const [key, value] of Object.entries(glossary)) {
+    if (normalizeTerm(key) === normalized) return value
+  }
+  return ''
+}
+
+function clampTermCardPosition(x: number, y: number) {
+  const maxX = Math.max(8, window.innerWidth - TERM_CARD_WIDTH - 12)
+  const maxY = Math.max(8, window.innerHeight - TERM_CARD_HEIGHT - 12)
+  return {
+    x: Math.min(Math.max(8, x), maxX),
+    y: Math.min(Math.max(8, y), maxY),
+  }
+}
+
+function bringTermCardToFront(id: number) {
+  const card = termCards.value.find(item => item.id === id)
+  if (card) card.zIndex = ++topTermZIndex
+}
+
+function closeTermCard(id: number) {
+  termCards.value = termCards.value.filter(item => item.id !== id)
+}
+
+function closeTopTermCard() {
+  const top = [...termCards.value].sort((a, b) => b.zIndex - a.zIndex)[0]
+  if (top) closeTermCard(top.id)
+}
+
+function renderTermExplanation(explanation: string) {
+  return renderMarkdownEnhanced(explanation || '暂无解释')
+}
+
+async function explainTerm(term: string, x: number, y: number, glossary?: Record<string, string>) {
+  const normalized = normalizeTerm(term)
+  if (!normalized) return
+
+  const existing = termCards.value.find(card => normalizeTerm(card.term) === normalized)
+  if (existing) {
+    bringTermCardToFront(existing.id)
+    return
+  }
+
+  const pos = clampTermCardPosition(x + 12, y + 12)
+  const glossaryExplanation = lookupGlossary(glossary, normalized)
+  const cachedExplanation = glossaryExplanation || getCachedTermExplanation(normalized)
+  const card: TermCard = {
+    id: ++termCardId,
+    term: normalized,
+    explanation: cachedExplanation,
+    loading: !cachedExplanation,
+    x: pos.x,
+    y: pos.y,
+    zIndex: ++topTermZIndex,
+  }
+  termCards.value.push(card)
+
+  if (cachedExplanation) {
+    if (glossaryExplanation) setCachedTermExplanation(normalized, glossaryExplanation)
+    return
+  }
+
+  try {
+    const r = await api.post('/chat/explain-term', { term: normalized, user_id: userStore.userId, context: '' })
+    const explanation = r.data.explanation || '暂无解释'
+    card.explanation = explanation
+    setCachedTermExplanation(normalized, explanation)
+  } catch {
+    card.error = '解释加载失败'
+  } finally {
+    card.loading = false
+  }
+}
+
+function handleChatClick(e: MouseEvent, msg: ChatMsg) {
+  const target = (e.target as HTMLElement).closest('.term-highlight') as HTMLElement | null
+  if (target) {
+    e.stopPropagation()
+    explainTerm(target.dataset.term || '', e.clientX, e.clientY, msg.glossary)
+  }
+}
+
+function startTermDrag(e: MouseEvent, card: TermCard) {
+  bringTermCardToFront(card.id)
+  activeTermDrag = {
+    id: card.id,
+    startX: e.clientX,
+    startY: e.clientY,
+    originX: card.x,
+    originY: card.y,
+  }
+  window.addEventListener('mousemove', handleTermDrag)
+  window.addEventListener('mouseup', stopTermDrag)
+}
+
+function handleTermDrag(e: MouseEvent) {
+  if (!activeTermDrag) return
+  const card = termCards.value.find(item => item.id === activeTermDrag?.id)
+  if (!card) return
+  const next = clampTermCardPosition(
+    activeTermDrag.originX + e.clientX - activeTermDrag.startX,
+    activeTermDrag.originY + e.clientY - activeTermDrag.startY,
+  )
+  card.x = next.x
+  card.y = next.y
+}
+
+function stopTermDrag() {
+  if (!activeTermDrag) return
+  window.removeEventListener('mousemove', handleTermDrag)
+  window.removeEventListener('mouseup', stopTermDrag)
+  activeTermDrag = null
+}
+
+function handleTermKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeTopTermCard()
+}
+
+// 鈹€鈹€ 鍏朵粬宸ュ叿鍑芥暟 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 function handleRerun() {
   const task = currentTask.value
@@ -473,16 +870,25 @@ async function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  if (file.size > 10 * 1024 * 1024) { ElMessage.warning('文件不能超过 10MB'); return }
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.warning('文件不能超过 10MB')
+    return
+  }
   uploading.value = true
   try {
     const result = await uploadFile(file)
     if (result.ok) {
       uploadedFile.value = { fileName: result.file_name, content: result.content, size: result.size }
       ElMessage.success(`已读取 ${result.file_name}（${(result.size / 1024).toFixed(1)}KB）`)
-    } else ElMessage.error(result.error || '上传失败')
-  } catch { ElMessage.error('上传失败') }
-  finally { uploading.value = false; input.value = '' }
+    } else {
+      ElMessage.error(result.error || '上传失败')
+    }
+  } catch {
+    ElMessage.error('上传失败')
+  } finally {
+    uploading.value = false
+    input.value = ''
+  }
 }
 
 function clearFile() { uploadedFile.value = null }
@@ -503,7 +909,10 @@ function formatConvTime(iso: string) {
 
 function runDemoMode() {
   if (agentStore.isExecuting) return
-  if (!currentConvId.value) { ElMessage.warning('请先创建会话'); return }
+  if (!currentConvId.value) {
+    ElMessage.warning('请先创建会话')
+    return
+  }
   convModeMap.value[currentConvId.value] = 'task'
   const convId = currentConvId.value
   const task = agentStore.createTask('斐波那契数列跨学科分析')
@@ -532,15 +941,13 @@ async function clearAllTasks() {
   } catch {}
 }
 
-// 当前会话的问题列表（对话模式 = 用户消息；任务模式 = 任务标题）
 const questionList = computed(() => {
   if (currentMode.value === 'chat') {
     return currentChatMsgs.value
       .filter(m => m.role === 'user')
       .map((m, i) => ({ label: m.content.slice(0, 30) + (m.content.length > 30 ? '...' : ''), idx: i }))
-  } else {
-    return currentConvTasks.value.map((t, i) => ({ label: t.title.slice(0, 30) + (t.title.length > 30 ? '...' : ''), id: t.id, idx: i }))
   }
+  return currentConvTasks.value.map((t, i) => ({ label: t.title.slice(0, 30) + (t.title.length > 30 ? '...' : ''), id: t.id, idx: i }))
 })
 
 const questionPanelOpen = ref(false)
@@ -548,7 +955,6 @@ const questionPanelOpen = ref(false)
 
 <template>
   <div class="agent-panel" :class="{ dark: themeStore.isDark }">
-    <!-- 左侧：会话列表 -->
     <aside class="conv-sidebar">
       <div class="sidebar-header">
         <div class="sidebar-brand">
@@ -561,19 +967,23 @@ const questionPanelOpen = ref(false)
         <el-button class="new-conv-btn" size="small" type="primary" @click="newConversation">+ 新建</el-button>
       </div>
       <div class="conv-list">
-        <div v-for="c in conversations" :key="c.id" class="conv-item"
-          :class="{ active: c.id === currentConvId }" @click="selectConversation(c.id)">
+        <div
+          v-for="c in conversations"
+          :key="c.id"
+          class="conv-item"
+          :class="{ active: c.id === currentConvId }"
+          @click="selectConversation(c.id)"
+        >
           <div class="conv-item-title">{{ c.title }}</div>
           <div class="conv-item-meta">
             <span class="conv-item-time">{{ formatConvTime(c.updated_at) }}</span>
-            <span class="conv-del-btn" @click.stop="deleteConversation(c.id, $event)">🗑</span>
+            <span class="conv-del-btn" @click.stop="deleteConversation(c.id, $event)">删除</span>
           </div>
         </div>
-        <div v-if="conversations.length === 0" class="conv-empty">暂无会话，点击「+ 新建」开始</div>
+        <div v-if="conversations.length === 0" class="conv-empty">暂无会话，点击“新建”开始</div>
       </div>
     </aside>
 
-    <!-- 右侧：主区域 -->
     <main class="work-area">
       <header class="task-header">
         <div class="header-left title-block">
@@ -589,27 +999,27 @@ const questionPanelOpen = ref(false)
           </div>
         </div>
         <div class="header-right">
-          <!-- 模式切换 -->
           <div v-if="currentConvId" class="mode-switch">
             <button :class="['mode-btn', { active: currentMode === 'chat' }]" @click="setMode('chat')">💬 对话</button>
             <button :class="['mode-btn', { active: currentMode === 'task' }]" @click="setMode('task')">🤖 任务</button>
           </div>
-          <!-- 任务模式工具 -->
           <template v-if="currentMode === 'task' && currentConvId">
             <el-button size="small" text @click="questionPanelOpen = !questionPanelOpen" title="任务列表">📋</el-button>
             <el-button size="small" @click="runDemoMode" :disabled="agentStore.isExecuting">演示</el-button>
             <el-button size="small" type="danger" plain @click="clearAllTasks" :disabled="currentConvTasks.length === 0">清空</el-button>
           </template>
           <el-button text @click="themeStore.toggle">{{ themeStore.isDark ? '☀️' : '🌙' }}</el-button>
-          <el-button v-if="agentStore.isExecuting || isStreaming" type="danger" size="small"
-            @click="agentStore.cancelExecution(); isStreaming = false">停止</el-button>
+          <el-button
+            v-if="agentStore.isExecuting || isStreaming"
+            type="danger"
+            size="small"
+            @click="agentStore.cancelExecution(); isStreaming = false"
+          >停止</el-button>
         </div>
       </header>
 
       <div class="work-content">
         <div class="main-scroll" ref="mainContainer">
-
-          <!-- 未选择会话 -->
           <div v-if="!currentConvId" class="empty-state">
             <div class="empty-hero">
               <div class="empty-icon">🤖</div>
@@ -619,7 +1029,6 @@ const questionPanelOpen = ref(false)
             </div>
           </div>
 
-          <!-- 对话模式 -->
           <template v-else-if="currentMode === 'chat'">
             <div v-if="currentChatMsgs.length === 0" class="empty-state">
               <div class="empty-hero">
@@ -633,25 +1042,42 @@ const questionPanelOpen = ref(false)
                 </div>
               </div>
             </div>
-            <div v-for="msg in currentChatMsgs" :key="msg.uid"
-              :class="['chat-msg', msg.role]">
+            <div v-for="msg in currentChatMsgs" :key="msg.uid" :class="['chat-msg', msg.role]">
               <div v-if="msg.role === 'assistant'" class="msg-avatar assistant-avatar-small">AI</div>
-              <div class="chat-bubble" @click="msg.role === 'assistant' ? handleChatClick($event) : undefined">
+              <div class="chat-bubble" @click="msg.role === 'assistant' ? handleChatClick($event, msg) : undefined">
                 <template v-if="msg.role === 'user'">{{ msg.content }}</template>
-                <template v-else-if="msg.streaming">{{ msg.content }}<span class="cursor">|</span></template>
                 <div v-else class="markdown-body" v-html="renderChatContent(msg.content)" />
+                <span v-if="msg.role === 'assistant' && msg.streaming" class="cursor">|</span>
+                <div
+                  v-if="msg.role === 'assistant' && msg.handoff && !msg.handoff.dismissed"
+                  class="chat-handoff-card"
+                  @click.stop
+                >
+                  <div class="handoff-card-head">
+                    <span class="handoff-badge">{{ msg.handoff.label }}</span>
+                    <span class="handoff-note">需要任务模式</span>
+                  </div>
+                  <div class="handoff-task">{{ msg.handoff.taskText }}</div>
+                  <div class="handoff-actions">
+                    <button class="handoff-primary" :disabled="agentStore.isExecuting" @click.stop="runHandoffTask(msg)">
+                      进入任务模式执行
+                    </button>
+                    <button class="handoff-secondary" @click.stop="dismissHandoff(msg)">
+                      留在对话模式继续提问
+                    </button>
+                  </div>
+                </div>
               </div>
               <div v-if="msg.role === 'user'" class="msg-avatar user-avatar-small">我</div>
             </div>
           </template>
 
-          <!-- 任务模式 -->
           <template v-else>
             <div v-if="currentConvTasks.length === 0" class="empty-state">
               <div class="empty-hero">
                 <div class="empty-icon">🤖</div>
-                <h3>把复杂学习需求交给多智能体</h3>
-                <p>输入目标后，系统会展示规划、检索、生成、审查和结果沉淀过程。</p>
+                <h3>把复杂学习需求交给任务模式</h3>
+                <p>输入目标后，系统会展示规划、生成和汇总过程。</p>
                 <div class="quick-prompts">
                   <button @click="inputText = '围绕我当前薄弱知识点，生成一套学习资源包'">生成资源包</button>
                   <button @click="inputText = '为我规划一条本周学习路径，并说明顺序理由'">规划学习路径</button>
@@ -659,44 +1085,46 @@ const questionPanelOpen = ref(false)
                 </div>
               </div>
             </div>
-            <!-- 任务选择标签（多个任务时显示） -->
             <div v-if="currentConvTasks.length > 1" class="task-tabs">
-              <div v-for="t in currentConvTasks" :key="t.id" class="task-tab"
+              <div
+                v-for="t in currentConvTasks"
+                :key="t.id"
+                class="task-tab"
                 :class="{ active: t.id === (currentTask?.id) }"
-                @click="agentStore.currentTaskId = t.id">
+                @click="agentStore.currentTaskId = t.id"
+              >
                 {{ t.title.slice(0, 20) }}{{ t.title.length > 20 ? '...' : '' }}
-                <span class="tab-del" @click.stop="deleteTask(t.id)">✕</span>
+                <span class="tab-del" @click.stop="deleteTask(t.id)">×</span>
               </div>
             </div>
-            <AgentTimeline v-if="currentTask"
-              :steps="currentTask.steps" :is-executing="agentStore.isExecuting" @rerun="handleRerun" />
-            <!-- [建议] 按钮 -->
-            <div v-if="currentTask && taskMeta[currentTask.id]?.suggestions?.length && currentTask.status === 'completed'"
-              class="suggestion-area">
-              <button v-for="(s, i) in taskMeta[currentTask.id].suggestions" :key="i"
-                class="suggestion-btn" :disabled="agentStore.isExecuting || !s.action"
-                @click="s.action && triggerWorkflow(s.action, s.topic)">{{ s.text }}</button>
-            </div>
-            <!-- 资源卡片 -->
+            <AgentTimeline
+              v-if="currentTask"
+              :steps="currentTask.steps"
+              :is-executing="agentStore.isExecuting"
+              @rerun="handleRerun"
+            />
             <div v-if="currentTask && taskMeta[currentTask.id]?.resources?.length" class="resource-area">
-              <div v-for="r in taskMeta[currentTask.id].resources" :key="r.resource_id" class="resource-card-inline">
-                <span>{{ resourceIcon(r.resource_type) }} {{ r.title || '学习资源' }}</span>
-                <a :href="`/resources?open=${r.resource_id}`" target="_blank" class="resource-jump">查看 →</a>
+              <div v-for="(r, i) in taskMeta[currentTask.id].resources" :key="resourceKey(r, i)" class="resource-card-inline">
+                <span>{{ resourceIcon(r.resource_type) }} {{ resourceTypeLabel(r.resource_type) }} · {{ r.title || '学习资源' }}</span>
+                <a :href="resourceHref(r)" class="resource-jump">{{ resourceActionLabel(r) }}</a>
               </div>
             </div>
           </template>
         </div>
 
-        <!-- 问题列表面板（任务模式） -->
         <aside v-if="questionPanelOpen && currentMode === 'task'" class="question-panel">
           <div class="qp-header">
             <span>任务列表</span>
-            <span class="qp-close" @click="questionPanelOpen = false">✕</span>
+            <span class="qp-close" @click="questionPanelOpen = false">×</span>
           </div>
           <div class="qp-list">
-            <div v-for="(q, i) in questionList" :key="i" class="qp-item"
+            <div
+              v-for="(q, i) in questionList"
+              :key="i"
+              class="qp-item"
               :class="{ active: (q as any).id === currentTask?.id }"
-              @click="agentStore.currentTaskId = (q as any).id">
+              @click="agentStore.currentTaskId = (q as any).id"
+            >
               <span class="qp-badge">{{ i + 1 }}</span>
               <span class="qp-text">{{ q.label }}</span>
             </div>
@@ -705,7 +1133,6 @@ const questionPanelOpen = ref(false)
         </aside>
       </div>
 
-      <!-- 输入区 -->
       <div class="input-area">
         <div class="input-hint">
           <span>{{ currentMode === 'chat' ? '对话模式：适合概念解释、答疑、学习建议' : '任务模式：适合生成资源、分析错题、规划路径' }}</span>
@@ -714,23 +1141,32 @@ const questionPanelOpen = ref(false)
         <div v-if="uploadedFile" class="file-preview">
           <span class="file-name">📄 {{ uploadedFile.fileName }}</span>
           <span class="file-size">{{ formatSize(uploadedFile.size) }}</span>
-          <el-button size="small" text @click="clearFile">✕</el-button>
+          <el-button size="small" text @click="clearFile">×</el-button>
         </div>
         <div class="input-row">
           <label v-if="currentMode === 'task'" class="upload-btn" :class="{ disabled: agentStore.isExecuting }">
-            <input type="file"
+            <input
+              type="file"
               accept=".txt,.md,.pdf,.json,.csv,.xml,.yaml,.yml,.py,.js,.ts,.java,.c,.cpp,.rs,.go,.log"
-              @change="handleFileChange" :disabled="agentStore.isExecuting" />
+              @change="handleFileChange"
+              :disabled="agentStore.isExecuting"
+            />
             <span v-if="uploading">⏳</span><span v-else>📎</span>
           </label>
-          <el-input v-model="inputText" type="textarea" :rows="2"
-            :placeholder="currentMode === 'chat' ? '输入问题，Enter 发送...' : (uploadedFile ? '输入任务描述...' : '描述任务，如：分析离散数学在AI领域的应用...')"
+          <el-input
+            v-model="inputText"
+            type="textarea"
+            :rows="2"
+            :placeholder="currentMode === 'chat' ? '输入问题，Enter 发送...' : (uploadedFile ? '输入任务描述...' : '描述任务，如：分析离散数学在 AI 领域的应用...')"
             :disabled="agentStore.isExecuting || isStreaming"
-            @keydown.enter.exact.prevent="handleSubmit" />
-          <el-button type="primary"
+            @keydown.enter.exact.prevent="handleSubmit"
+          />
+          <el-button
+            type="primary"
             :disabled="(!inputText.trim() && !uploadedFile) || agentStore.isExecuting || isStreaming"
             :loading="agentStore.isExecuting || isStreaming"
-            @click="handleSubmit">
+            @click="handleSubmit"
+          >
             {{ currentMode === 'chat' ? '发送' : '执行' }}
           </el-button>
         </div>
@@ -738,16 +1174,23 @@ const questionPanelOpen = ref(false)
     </main>
   </div>
 
-  <!-- 术语释义弹窗 -->
   <Teleport to="body">
-    <div v-if="popoverVisible" class="term-popover" :style="{ left: popoverLeft + 'px', top: popoverTop + 'px' }" @click.stop>
-      <div class="popover-header">
-        <span class="popover-term">{{ popoverTerm }}</span>
-        <span class="popover-close" @click="popoverVisible = false">✕</span>
+    <div
+      v-for="card in termCards"
+      :key="card.id"
+      class="term-popover"
+      :style="{ left: card.x + 'px', top: card.y + 'px', zIndex: card.zIndex }"
+      @mousedown="bringTermCardToFront(card.id)"
+      @click.stop
+    >
+      <div class="popover-header" @mousedown.prevent="startTermDrag($event, card)">
+        <span class="popover-term">{{ card.term }}</span>
+        <span class="popover-close" @mousedown.stop @click.stop="closeTermCard(card.id)">×</span>
       </div>
       <div class="popover-body">
-        <span v-if="popoverLoading">加载中...</span>
-        <span v-else>{{ popoverExplanation }}</span>
+        <span v-if="card.loading">加载中...</span>
+        <span v-else-if="card.error" class="popover-error">{{ card.error }}</span>
+        <div v-else class="markdown-body" v-html="renderTermExplanation(card.explanation)" />
       </div>
     </div>
   </Teleport>
@@ -756,7 +1199,8 @@ const questionPanelOpen = ref(false)
 <style scoped>
 .agent-panel {
   display: flex;
-  height: calc(100vh - 48px);
+  height: 100%;
+  flex: 1;
   background:
     radial-gradient(circle at 18% 8%, rgba(249, 217, 184, 0.75), transparent 28%),
     radial-gradient(circle at 92% 12%, rgba(232, 194, 156, 0.32), transparent 26%),
@@ -768,7 +1212,7 @@ const questionPanelOpen = ref(false)
 }
 .agent-panel.dark { background: var(--bg-page); color: var(--text-regular); }
 
-/* ── 侧边栏 ── */
+/* 鈹€鈹€ 渚ц竟鏍?鈹€鈹€ */
 .conv-sidebar {
   width: 276px; min-width: 276px;
   background: rgba(255, 251, 245, 0.9);
@@ -820,7 +1264,7 @@ const questionPanelOpen = ref(false)
   text-align: center; padding: 48px 16px; color: #948A80; font-size: 13px; line-height: 2;
 }
 
-/* ── 主区域 ── */
+/* 鈹€鈹€ 涓诲尯鍩?鈹€鈹€ */
 .work-area {
   flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
   background: rgba(255, 251, 245, 0.76);
@@ -862,13 +1306,13 @@ const questionPanelOpen = ref(false)
 .mode-btn.active { background: #FFFBF5; color: #3A332E; box-shadow: 0 6px 14px rgba(58,51,46,0.10); font-weight: 700; }
 .mode-btn:hover:not(.active) { color: #3A332E; background: rgba(249,217,184,0.3); }
 
-/* ── 内容滚动区 ── */
+/* 鈹€鈹€ 鍐呭婊氬姩鍖?鈹€鈹€ */
 .main-scroll { flex: 1; overflow-y: auto; padding: 28px 34px; display: flex; flex-direction: column; gap: 18px; scroll-behavior: smooth; }
 .main-scroll::-webkit-scrollbar, .conv-list::-webkit-scrollbar { width: 8px; }
 .main-scroll::-webkit-scrollbar-thumb, .conv-list::-webkit-scrollbar-thumb { background: rgba(199, 179, 154, 0.7); border-radius: 999px; }
 .main-scroll::-webkit-scrollbar-track, .conv-list::-webkit-scrollbar-track { background: transparent; }
 
-/* ── 空状态 ── */
+/* 鈹€鈹€ 绌虹姸鎬?鈹€鈹€ */
 .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: #948A80; padding: 48px 0; }
 .empty-hero {
   width: min(620px, 100%);
@@ -914,7 +1358,7 @@ const questionPanelOpen = ref(false)
 }
 .empty-primary-btn { margin-top: 20px; background: linear-gradient(135deg, #F9D9B8, #E8C29C); font-weight: 700; }
 
-/* ── 对话气泡 ── */
+/* 鈹€鈹€ 瀵硅瘽姘旀场 鈹€鈹€ */
 .chat-msg { display: flex; align-items: flex-start; gap: 10px; animation: fadeIn 0.3s cubic-bezier(.4,0,.2,1); }
 .chat-msg.user { justify-content: flex-end; }
 .chat-msg.assistant { justify-content: flex-start; }
@@ -943,12 +1387,83 @@ const questionPanelOpen = ref(false)
   box-shadow: 0 10px 24px rgba(58,51,46,0.08);
   animation: bubbleFadeUp 0.3s cubic-bezier(.4,0,.2,1);
 }
+.chat-handoff-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(232, 194, 156, 0.92);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(255, 245, 235, 0.94), rgba(255, 251, 245, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.65);
+}
+.handoff-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.handoff-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: #F9D9B8;
+  color: #7C5C3C;
+  font-size: 12px;
+  font-weight: 700;
+}
+.handoff-note {
+  color: #948A80;
+  font-size: 12px;
+}
+.handoff-task {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 251, 245, 0.9);
+  border: 1px solid #EFE6DC;
+  color: #3A332E;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+.handoff-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.handoff-primary,
+.handoff-secondary {
+  border: 1px solid #E8C29C;
+  border-radius: 999px;
+  padding: 7px 13px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.handoff-primary {
+  background: linear-gradient(135deg, #F9D9B8, #E8C29C);
+  color: #3A332E;
+  font-weight: 700;
+}
+.handoff-secondary {
+  background: #FFFBF5;
+  color: #7C5C3C;
+}
+.handoff-primary:hover:not(:disabled),
+.handoff-secondary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(58,51,46,0.10);
+}
+.handoff-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .cursor { animation: blink 1s step-end infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes bubbleFadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ── 任务标签 ── */
+/* 鈹€鈹€ 浠诲姟鏍囩 鈹€鈹€ */
 .task-tabs { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid #EFE6DC; }
 .task-tab {
   padding: 5px 12px; border-radius: 8px; border: 1px solid #EFE6DC;
@@ -961,7 +1476,7 @@ const questionPanelOpen = ref(false)
 .tab-del { color: #948A80; font-size: 11px; }
 .tab-del:hover { color: var(--color-danger); }
 
-/* ── 建议按钮 ── */
+/* 鈹€鈹€ 寤鸿鎸夐挳 鈹€鈹€ */
 .suggestion-area { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
 .suggestion-btn {
   background: linear-gradient(135deg, #F9D9B8 0%, #E8C29C 100%);
@@ -984,7 +1499,7 @@ const questionPanelOpen = ref(false)
 .resource-jump { color: #DBA878; text-decoration: none; font-size: 12px; font-weight: 500; }
 .resource-jump:hover { text-decoration: underline; }
 
-/* ── 任务列表面板 ── */
+/* 鈹€鈹€ 浠诲姟鍒楄〃闈㈡澘 鈹€鈹€ */
 .question-panel { width: 220px; min-width: 220px; background: #FFFBF5; border-left: 1px solid #EFE6DC; display: flex; flex-direction: column; overflow: hidden; }
 .qp-header { display: flex; align-items: center; justify-content: space-between; padding: 14px; border-bottom: 1px solid #EFE6DC; font-size: 13px; font-weight: 600; color: #3A332E; }
 .qp-close { cursor: pointer; color: #948A80; font-size: 14px; padding: 2px 6px; border-radius: 6px; transition: all 0.2s; }
@@ -997,7 +1512,7 @@ const questionPanelOpen = ref(false)
 .qp-text { font-size: 12px; color: #6B635C; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qp-empty { text-align: center; padding: 24px 16px; color: #948A80; font-size: 12px; }
 
-/* ── 输入区 ── */
+/* 鈹€鈹€ 杈撳叆鍖?鈹€鈹€ */
 .input-area {
   padding: 12px 22px 18px;
   background: rgba(255, 251, 245, 0.94);
@@ -1052,7 +1567,7 @@ const questionPanelOpen = ref(false)
   font-weight: 700;
 }
 
-/* ── 气泡内 Markdown ── */
+/* 鈹€鈹€ 姘旀场鍐?Markdown 鈹€鈹€ */
 .chat-bubble .markdown-body { white-space: normal; }
 .chat-bubble :deep(.term-highlight) { color: #DBA878; font-weight: 600; cursor: pointer; border-bottom: 1px dashed #DBA878; transition: all 0.2s; }
 .chat-bubble :deep(.term-highlight:hover) { background: #FFF5EB; border-radius: 2px; }
@@ -1060,8 +1575,14 @@ const questionPanelOpen = ref(false)
 .chat-bubble :deep(pre) { background: #FFF5EB; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 12px; border: 1px solid #EFE6DC; }
 .chat-bubble :deep(code) { font-family: var(--font-mono); }
 .chat-bubble :deep(ul), .chat-bubble :deep(ol) { padding-left: 20px; margin: 4px 0; }
+.chat-bubble :deep(.markdown-table-wrap) { width: 100%; overflow-x: auto; margin: 10px 0; border: 1px solid #EFE6DC; border-radius: 10px; }
+.chat-bubble :deep(table) { width: 100%; min-width: 480px; border-collapse: collapse; background: #FFFBF5; }
+.chat-bubble :deep(th), .chat-bubble :deep(td) { padding: 8px 10px; border-bottom: 1px solid #EFE6DC; text-align: left; vertical-align: top; }
+.chat-bubble :deep(th) { background: #FFF5EB; color: #3A332E; font-weight: 700; }
+.chat-bubble :deep(tr:last-child td) { border-bottom: none; }
+.chat-bubble :deep(.katex-display) { overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
 
-/* ── 视频卡片 ── */
+/* 鈹€鈹€ 瑙嗛鍗＄墖 鈹€鈹€ */
 .chat-bubble :deep(.video-results) { display: flex; flex-direction: column; gap: 12px; margin: 10px 0; }
 .chat-bubble :deep(.video-results-header) { font-weight: 600; font-size: 14px; color: #3A332E; margin-bottom: 2px; }
 .chat-bubble :deep(.video-card) { display: block; background: #FFFBF5; border: 1px solid #EFE6DC; border-radius: 12px; overflow: hidden; text-decoration: none; color: inherit; transition: all 0.25s; }
@@ -1075,20 +1596,31 @@ const questionPanelOpen = ref(false)
 .chat-bubble :deep(.meta-author) { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: #6B635C; }
 .chat-bubble :deep(.meta-play) { white-space: nowrap; }
 
-/* ── 术语弹窗 ── */
+/* 鈹€鈹€ 鏈寮圭獥 鈹€鈹€ */
 .term-popover {
-  position: fixed; z-index: 9999;
+  position: fixed;
   background: #FFFBF5; border: 1px solid #EFE6DC;
   border-radius: 12px; box-shadow: 0 8px 24px rgba(58,51,46,0.12);
-  min-width: 200px; max-width: 320px;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
   animation: popFadeIn 0.2s cubic-bezier(.4,0,.2,1);
 }
 @keyframes popFadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.popover-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #EFE6DC; }
+.popover-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #EFE6DC; cursor: move; user-select: none; flex-shrink: 0; }
 .popover-term { font-weight: 600; color: #DBA878; font-size: 14px; }
 .popover-close { cursor: pointer; color: #948A80; font-size: 14px; padding: 2px 6px; border-radius: 6px; transition: all 0.2s; }
 .popover-close:hover { color: var(--color-danger); }
-.popover-body { padding: 12px 14px; font-size: 13px; color: #6B635C; line-height: 1.6; }
+.popover-body { padding: 12px 14px; font-size: 13px; color: #6B635C; line-height: 1.6; overflow: auto; min-height: 80px; }
+.popover-error { color: var(--color-danger); }
+.popover-body :deep(.markdown-body) { color: #6B635C; line-height: 1.7; }
+.popover-body :deep(.markdown-body p) { margin: 4px 0 8px; }
+.popover-body :deep(.markdown-body ul), .popover-body :deep(.markdown-body ol) { margin: 6px 0; padding-left: 20px; }
+.popover-body :deep(.markdown-body strong) { color: #3A332E; }
+.popover-body :deep(.markdown-table-wrap) { max-width: 100%; overflow-x: auto; }
+.popover-body :deep(pre) { background: #FFF5EB; border: 1px solid #EFE6DC; border-radius: 8px; padding: 8px; overflow-x: auto; }
 
 @media (max-width: 1024px) {
   .agent-panel { flex-direction: column; height: auto; min-height: calc(100vh - 48px); overflow-y: auto; }
@@ -1107,3 +1639,6 @@ const questionPanelOpen = ref(false)
   .input-row :deep(.el-button) { min-width: 70px; }
 }
 </style>
+
+
+

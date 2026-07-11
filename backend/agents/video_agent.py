@@ -103,12 +103,15 @@ class VideoAgent(BaseAgent):
             first_id = None
             first_title = ""
             for video in videos:
+                content = dict(video)
+                if graph_tags.get("course_bindings"):
+                    content["course_bindings"] = graph_tags.get("course_bindings")
                 title = video.get("title") or "视频推荐"
                 resource = LearningResource(
                     user_id=state.user_id,
                     resource_type="video",
                     title=title,
-                    content=video,
+                    content=content,
                     tags=tags,
                     course_name=graph_tags.get("course_name"),
                     knowledge_points=graph_tags.get("knowledge_points") or [],

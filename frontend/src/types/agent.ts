@@ -82,6 +82,26 @@ export interface AgentTask {
   createdAt: string
 }
 
+export interface AgentCollaborationEvent {
+  type: 'agent_started' | 'agent_progress' | 'agent_completed' | 'agent_failed' | 'graph_done' | string
+  event_id: string
+  task_id?: string
+  agent_key: string
+  agent_name: string
+  role: string
+  stage: string
+  status: 'waiting' | 'running' | 'completed' | 'error' | string
+  timestamp: string
+  input_summary?: string
+  output_summary?: string
+  resource_type?: string
+  resource_id?: number
+  resource_title?: string
+  course_name?: string
+  knowledge_points?: string[]
+  error?: string
+}
+
 export interface StepEvent {
   type: string
   step_type: StepType

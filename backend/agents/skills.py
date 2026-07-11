@@ -11,6 +11,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+from services.resource_title_service import build_resource_title
 
 
 @dataclass
@@ -129,10 +130,19 @@ def make_draft_resource(
     knowledge_points: list[str] | None = None,
     kp_weights: dict | None = None,
 ) -> dict:
+    final_title = title
+    if not final_title or final_title in {f"{resource_type}_resource", "code_resource"}:
+        final_title = build_resource_title(
+            resource_type,
+            content,
+            fallback_text=title,
+            course_name=course_name,
+            knowledge_points=knowledge_points or [],
+        )
     return {
         "client_draft_id": uuid.uuid4().hex,
         "resource_type": resource_type,
-        "title": title or f"{resource_type}_resource",
+        "title": final_title,
         "content": content if isinstance(content, dict) else {"text": content},
         "course_name": course_name,
         "knowledge_points": knowledge_points or [],
@@ -426,10 +436,13 @@ class CodeGenSkill(BaseSkill):
         user_id = context.get("user_id", "")
         ad = context.get("all_modules_data", {})
         code_lang = ad.get("code_lang", "python")
+        code_desc = (ad.get("code_desc") or user_message or "").strip()
+        generation_task = code_desc or user_message
 
         # 检测可视化意图
         VIZ_KEYWORDS = ["可视化", "动画", "演示", "visuali", "animation", "animate", "步骤展示", "动态展示"]
-        is_viz = any(kw in user_message.lower() for kw in VIZ_KEYWORDS)
+        intent_text = f"{user_message}\n{generation_task}".lower()
+        is_viz = any(kw in intent_text for kw in VIZ_KEYWORDS)
 
         sub_steps = [f"⏳ 正在识别{'可视化动画' if is_viz else '代码案例'}生成需求..."]
         step_id = self.emit_step(workflow_outputs, "running", "生成代码案例", {
@@ -460,15 +473,18 @@ class CodeGenSkill(BaseSkill):
                     "language": "html",
                     "streaming_code": True,
                 }, step_id)
-                prompt = f"""你是算法可视化与前端开发专家。请生成一个自包含 HTML 文件（内嵌 CSS + JS），用交互动画讲解主题。
+                prompt = f"""你是教学可视化与前端开发专家。请生成一个自包含 HTML 文件（内嵌 CSS + JS），用交互动画讲解指定主题。
 
-主题：{user_message}
+用户原始需求：{user_message}
+必须实现的主题：{generation_task}
 学生背景：{profile_text or '未知'}
 
 输出要求：
 - 只输出完整 HTML，不要 Markdown 代码块，不要解释文字。
 - 必须以 <!DOCTYPE html> 或 <html 开头，并以 </html> 结尾。
 - 不依赖 CDN、图片或外部文件。
+- 页面标题、概念说明、变量命名、动画步骤必须全部围绕“必须实现的主题”。
+- 禁止替换成其他常见示例，例如 K-Means 聚类、排序算法、汉诺塔、二叉树遍历，除非它们就是必须实现的主题。
 - 页面包含：标题、概念说明、图例、动画演示区、当前步骤说明、进度指示、上一步/下一步/自动播放/重置按钮。
 - JavaScript 预生成 steps 数组，每一步包含状态快照、说明文本和高亮元素；用 renderStep(index) 统一更新页面。
 - 交互支持：按钮切换步骤、自动播放、重置；键盘 ←/→ 切换步骤，空格播放/暂停，R 重置。
@@ -530,8 +546,8 @@ class CodeGenSkill(BaseSkill):
                 }, step_id)
 
                 draft_resource = make_draft_resource(
-                    "code",
-                    f"可视化动画：{user_message[:40]}",
+                    "anime",
+                    f"可视化动画：{generation_task[:40]}",
                     {"code": content, "language": "html"},
                 )
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
@@ -546,7 +562,11 @@ class CodeGenSkill(BaseSkill):
                     "streaming_code": False,
                     "draft_resource": draft_resource,
                 }, step_id)
-                return SkillResult(success=True, data={"code": content, "type": "code", "draft_resource": draft_resource}, summary="可视化动画生成完成")
+                return SkillResult(
+                    success=True,
+                    data={"type": "anime", "task_desc": generation_task, "code": content, "draft_resource": draft_resource},
+                    summary=f"可视化动画生成完成：{generation_task[:60]}",
+                )
 
             # 非可视化：走原有流程
             sub_steps[-1] = "✅ 已识别为代码案例任务"
@@ -572,7 +592,7 @@ class CodeGenSkill(BaseSkill):
                     level = "中级"
             prompt = CODE_PROMPT.format(
                 profile=profile_text or "暂无学生画像",
-                topic=user_message,
+                topic=generation_task,
                 code_lang=code_lang,
                 level=level,
                 hallu=hallu_rules(),
@@ -603,7 +623,7 @@ class CodeGenSkill(BaseSkill):
             safe_content, _ = await check_text(content)
             state = AgentState(
                 user_id=user_id,
-                user_message=user_message,
+                user_message=generation_task,
                 resource_type="code",
                 code_language=code_lang,
                 profile=profile,
@@ -628,7 +648,11 @@ class CodeGenSkill(BaseSkill):
                 "streaming_code": False,
                 "draft_resource": draft_resource,
             }, step_id)
-            return SkillResult(success=True, data={"code": content, "type": resource_type, "draft_resource": draft_resource}, summary="代码案例生成完成")
+            return SkillResult(
+                success=True,
+                data={"type": resource_type, "task_desc": generation_task, "code": content, "draft_resource": draft_resource},
+                summary=f"代码案例生成完成：{generation_task[:60]}",
+            )
 
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成代码案例", {
@@ -959,30 +983,91 @@ class PptGenSkill(BaseSkill):
 
         user_message = context.get("user_message", "")
         user_id = context.get("user_id", "")
+        ad = context.get("all_modules_data", {}) or {}
+
+        def normalize_ppt_topic(value: str) -> str:
+            text = str(value or "").strip().strip("\"'“”‘’")
+            for token in ["PPT", "ppt", "课件", "生成", "制作", "帮我", "请帮我", "给我", "一个", "一份", "助我理解"]:
+                text = text.replace(token, "")
+            for token in ["的重点是什么", "重点是什么", "重点"]:
+                text = text.replace(token, "")
+            text = " ".join(text.replace("：", " ").replace(":", " ").split())
+            parts = [part for part in text.split(" ") if part]
+            if len(parts) == 2:
+                text = f"{parts[0]}与{parts[1]}"
+            elif len(parts) > 2:
+                text = f"{parts[0]}与{''.join(parts[1:])}"
+            return text[:60].strip(" ，。；、")
+
+        topic_candidates = [
+            ad.get("search_keywords"),
+            ad.get("topic"),
+            ad.get("code_desc"),
+            user_message,
+        ]
+        ppt_topic = ""
+        for candidate in topic_candidates:
+            normalized = normalize_ppt_topic(str(candidate or ""))
+            if normalized and normalized.lower() not in {"ppt", "ppt课件"}:
+                ppt_topic = normalized
+                break
+        ppt_topic = ppt_topic or user_message
 
         course_name = str(context.get("course_name") or "").strip()
         knowledge_points = [str(kp).strip() for kp in (context.get("knowledge_points") or []) if str(kp).strip()]
+        resolved_binding = None
+        if not course_name or not knowledge_points:
+            try:
+                from services.ppt_model_service import resolve_ppt_binding
+                resolved_binding = resolve_ppt_binding(user_id or "default", ppt_topic)
+                if resolved_binding.get("status") == "auto_bound":
+                    binding = resolved_binding.get("binding") or {}
+                    course_name = str(binding.get("course_name") or "").strip()
+                    knowledge_points = [
+                        str(kp).strip()
+                        for kp in (binding.get("knowledge_points") or [])
+                        if str(kp).strip()
+                    ]
+            except Exception:
+                resolved_binding = None
         step_id = self.emit_step(workflow_outputs, "running", "创建 AiPPT 分步会话", {
             "sub_steps": ["⏳ 正在创建 AiPPT 工作台会话..."],
         })
         if not course_name or not knowledge_points:
-            message = "生成 PPT 前必须绑定课程和至少一个知识点，请从学习资源或知识图谱入口进入 AiPPT 分步流程。"
+            message = "PPT 需要进入 AiPPT 分步工作台继续配置。你可以选择课程/知识点绑定，或确认创建不参与掌握度更新的拓展课件。"
+            pending_session = {
+                "pending_binding": True,
+                "topic": ppt_topic,
+                "original_task": user_message,
+                "resolve_status": (resolved_binding or {}).get("status") or "extension_confirm",
+                "candidates": (resolved_binding or {}).get("candidates") or [],
+                "scope": "pending",
+            }
             self.emit_step(workflow_outputs, "completed", "创建 AiPPT 分步会话", {
-                "content": message,
-                "sub_steps": [f"❌ {message}"],
+                "content": json.dumps({
+                    "title": ppt_topic or "PPT课件",
+                    "ppt_session": pending_session,
+                    "message": message,
+                }, ensure_ascii=False),
+                "sub_steps": [f"✓ {message}"],
+                "render_type": "ppt_session",
             }, step_id)
-            return SkillResult(success=False, error=message)
+            return SkillResult(
+                success=True,
+                data={"ppt_session": pending_session, "type": "ppt", "status": "pending_binding"},
+                summary="待进入 AiPPT 分步工作台配置",
+            )
         try:
             from services.ppt_model_service import create_ppt_session
             ppt_session = await create_ppt_session(
                 user_id=user_id or "default",
-                topic=user_message,
+                topic=ppt_topic,
                 course_name=course_name,
                 knowledge_points=knowledge_points,
             )
             self.emit_step(workflow_outputs, "completed", "创建 AiPPT 分步会话", {
                 "content": json.dumps({
-                    "title": user_message or "PPT课件",
+                    "title": ppt_topic or "PPT课件",
                     "ppt_session": ppt_session,
                     "message": "请在 AiPPT 工作台确认大纲和模板后生成 PPT。",
                 }, ensure_ascii=False),

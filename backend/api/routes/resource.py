@@ -1,24 +1,37 @@
 ﻿from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from datetime import datetime
 import json
 import uuid
 from api.deps import get_db
+from core.database import SessionLocal
+from core.sse import sse_stream
 from models.resource import LearningResource
 from models.student import StudentProfile
-from models.profile_history import ProfileHistory
 from agents.base import AgentState
 from agents.content_gen_agent import ContentGenAgent
 from agents.mindmap_agent import MindMapAgent
 from agents.video_agent import VideoAgent
 from agents.evaluation_agent import EvaluationAgent
 from agents.orchestrator_agent import OrchestratorAgent
+from graph.subgraphs.resource_orchestration import resource_orchestration_graph
+from services.agent_collaboration_service import collaboration_sse_payload
 from services.event_service import emit
 from services.rag_service import search_rag, index_resource
-from services.kp_service import infer_resource_tags, update_knowledge_base
+from services.kp_service import infer_resource_tags
+from services.resource_title_service import build_resource_title
+from services.profile_update_service import apply_resource_completed, apply_resource_feedback
 from services.safety_service import check_text
 from services.curriculum_service import build_relation_context, load_curriculum_by_major
+from services.resource_lineage_service import (
+    build_lineage_summary_map,
+    build_resource_lineage,
+    get_resource_lineage,
+    rebuild_resource_lineage,
+    set_resource_lineage,
+)
 from services.ppt_preview_service import (
     cleanup_ppt_preview,
     get_ppt_preview_status,
@@ -34,6 +47,7 @@ class ResourceTagRequest(BaseModel):
     course_name: str | None = None
     knowledge_points: list[str] = Field(default_factory=list)
     kp_weights: dict[str, float] | None = None
+    course_bindings: list[dict] = Field(default_factory=list)
 
 
 class ResourceFeedbackRequest(BaseModel):
@@ -51,6 +65,18 @@ class ResourceDraftRequest(BaseModel):
     course_name: str | None = None
     knowledge_points: list[str] = Field(default_factory=list)
     kp_weights: dict[str, float] | None = None
+    course_bindings: list[dict] = Field(default_factory=list)
+
+
+class ResourceLineageRequest(BaseModel):
+    user_id: str
+    relation_type: str = "manual"
+    parent_resource_ids: list[int] = Field(default_factory=list)
+    root_resource_id: int | None = None
+    group_id: str | None = None
+    group_type: str | None = None
+    source_module: str | None = "manual"
+    source_context: dict = Field(default_factory=dict)
 
 
 GRAPH_PACKAGE_TYPES: dict[str, list[str]] = {
@@ -69,6 +95,7 @@ RESOURCE_TYPE_LABELS: dict[str, str] = {
     "article": "文章",
     "quiz": "题库",
     "code": "代码案例",
+    "anime": "可视化动画",
     "mindmap": "思维导图",
     "ppt": "PPT课件",
     "video": "视频推荐",
@@ -105,10 +132,13 @@ def _as_list(value) -> list:
 
 
 def _resource_text(resource: LearningResource) -> str:
+    bindings = _resource_course_bindings(resource)
     parts = [
         resource.title or "",
         resource.course_name or "",
         " ".join(_as_list(resource.knowledge_points)),
+        " ".join([item.get("course_name", "") for item in bindings]),
+        " ".join([kp for item in bindings for kp in _as_list(item.get("knowledge_points"))]),
         " ".join(_as_list(resource.tags)),
     ]
     try:
@@ -129,24 +159,41 @@ def _apply_graph_tags(
 
     inferred = infer_resource_tags(
         _resource_text(resource),
-        course_name=course_name or resource.course_name,
-        knowledge_points=knowledge_points or _as_list(resource.knowledge_points),
+        course_name=course_name,
+        knowledge_points=knowledge_points,
     )
     changed = False
-    if inferred["course_name"] and inferred["course_name"] != resource.course_name:
+    bindings = _normalize_course_bindings(
+        inferred.get("course_bindings"),
+        fallback_course=inferred.get("course_name"),
+        fallback_kps=inferred.get("knowledge_points") or [],
+        fallback_weights=inferred.get("kp_weights") or {},
+    )
+    if bindings:
+        before = (
+            resource.course_name,
+            _as_list(resource.knowledge_points),
+            resource.kp_weights or {},
+            _resource_course_bindings(resource),
+        )
+        _write_course_bindings(resource, bindings)
+        after = (
+            resource.course_name,
+            _as_list(resource.knowledge_points),
+            resource.kp_weights or {},
+            _resource_course_bindings(resource),
+        )
+        changed = changed or before != after
+    elif inferred["course_name"] and inferred["course_name"] != resource.course_name:
         resource.course_name = inferred["course_name"]
-        changed = True
-    if inferred["knowledge_points"] and inferred["knowledge_points"] != _as_list(resource.knowledge_points):
-        resource.knowledge_points = inferred["knowledge_points"]
-        changed = True
-    if inferred["kp_weights"] and inferred["kp_weights"] != (resource.kp_weights or {}):
-        resource.kp_weights = inferred["kp_weights"]
         changed = True
     if inferred["tag_confidence"] and inferred["tag_confidence"] != (resource.tag_confidence or 0):
         resource.tag_confidence = inferred["tag_confidence"]
         changed = True
 
     graph_tags = [x for x in [resource.course_name, *_as_list(resource.knowledge_points)] if x]
+    for binding in _resource_course_bindings(resource):
+        graph_tags.extend([binding.get("course_name"), *_as_list(binding.get("knowledge_points"))])
     tags = list(dict.fromkeys(_as_list(resource.tags) + graph_tags))
     if tags != _as_list(resource.tags):
         resource.tags = tags
@@ -155,6 +202,7 @@ def _apply_graph_tags(
 
 
 def _serialize_resource(resource: LearningResource, include_content: bool = True) -> dict:
+    lineage = get_resource_lineage(resource)
     data = {
         "id": resource.id,
         "resource_type": resource.resource_type,
@@ -163,12 +211,27 @@ def _serialize_resource(resource: LearningResource, include_content: bool = True
         "course_name": resource.course_name,
         "knowledge_points": _as_list(resource.knowledge_points),
         "kp_weights": resource.kp_weights or {},
+        "course_bindings": _resource_course_bindings(resource),
         "tag_confidence": resource.tag_confidence or 0,
         "learning_status": resource.learning_status or "not_started",
         "progress": resource.progress or 0,
         "completed_at": resource.completed_at.isoformat() if resource.completed_at else None,
         "pinned": bool(resource.pinned),
         "created_at": resource.created_at.isoformat() if resource.created_at else None,
+        "lineage": lineage,
+        "lineage_summary": {
+            "relation_type": lineage.get("relation_type") or "unknown",
+            "parent_count": len(lineage.get("parent_resource_ids") or []),
+            "child_count": 0,
+            "group_count": 0,
+            "group_id": lineage.get("group_id"),
+            "group_type": lineage.get("group_type"),
+            "has_lineage": bool(
+                lineage.get("parent_resource_ids")
+                or lineage.get("group_id")
+                or lineage.get("relation_type") not in {None, "", "unknown"}
+            ),
+        },
     }
     if include_content:
         data["content"] = resource.content
@@ -180,6 +243,122 @@ def _equal_kp_weights(knowledge_points: list[str]) -> dict[str, float]:
         return {}
     weight = round(1 / len(knowledge_points), 4)
     return {kp: weight for kp in knowledge_points}
+
+
+def _clean_kps(value) -> list[str]:
+    if isinstance(value, str):
+        raw = value.replace("，", ",").split(",")
+        return list(dict.fromkeys([item.strip() for item in raw if item.strip()]))
+    if isinstance(value, list):
+        return list(dict.fromkeys([str(item).strip() for item in value if str(item).strip()]))
+    return []
+
+
+def _normalize_course_bindings(
+    bindings,
+    fallback_course: str | None = None,
+    fallback_kps: list[str] | None = None,
+    fallback_weights: dict[str, float] | None = None,
+) -> list[dict]:
+    normalized: list[dict] = []
+    raw_bindings = bindings if isinstance(bindings, list) else []
+    for item in raw_bindings:
+        if not isinstance(item, dict):
+            continue
+        course = str(item.get("course_name") or item.get("course") or "").strip()
+        kps = _clean_kps(item.get("knowledge_points") or item.get("kps"))
+        if not course and not kps:
+            continue
+        try:
+            weight = float(item.get("weight", 0) or 0)
+        except (TypeError, ValueError):
+            weight = 0
+        raw_kp_weights = item.get("kp_weights") if isinstance(item.get("kp_weights"), dict) else {}
+        kp_weights = {
+            kp: float(raw_kp_weights.get(kp, 0) or 0)
+            for kp in kps
+            if raw_kp_weights.get(kp) is not None
+        }
+        if kps and not kp_weights:
+            kp_weights = _equal_kp_weights(kps)
+        normalized.append({
+            "course_name": course,
+            "knowledge_points": kps,
+            "weight": weight,
+            "kp_weights": kp_weights,
+        })
+
+    if not normalized and (fallback_course or fallback_kps):
+        kps = _clean_kps(fallback_kps or [])
+        normalized.append({
+            "course_name": (fallback_course or "").strip(),
+            "knowledge_points": kps,
+            "weight": 1.0,
+            "kp_weights": fallback_weights or _equal_kp_weights(kps),
+        })
+
+    if not normalized:
+        return []
+
+    positive_total = sum(item["weight"] for item in normalized if item["weight"] > 0)
+    if positive_total > 0:
+        for item in normalized:
+            item["weight"] = round(max(item["weight"], 0) / positive_total, 4)
+    else:
+        equal_weight = round(1 / len(normalized), 4)
+        for item in normalized:
+            item["weight"] = equal_weight
+    return normalized
+
+
+def _flatten_course_bindings(bindings: list[dict]) -> tuple[str | None, list[str], dict[str, float]]:
+    if not bindings:
+        return None, [], {}
+    primary_course = next((item.get("course_name") for item in bindings if item.get("course_name")), None)
+    kps: list[str] = []
+    weights: dict[str, float] = {}
+    for item in bindings:
+        binding_weight = float(item.get("weight") or 0)
+        kp_weights = item.get("kp_weights") if isinstance(item.get("kp_weights"), dict) else {}
+        item_kps = _clean_kps(item.get("knowledge_points"))
+        if not item_kps:
+            continue
+        fallback_weight = round(1 / len(item_kps), 4)
+        for kp in item_kps:
+            kps.append(kp)
+            weights[kp] = weights.get(kp, 0) + binding_weight * float(kp_weights.get(kp, fallback_weight) or fallback_weight)
+    unique_kps = list(dict.fromkeys(kps))
+    total = sum(weights.values())
+    if total > 0:
+        weights = {kp: round(weights.get(kp, 0) / total, 4) for kp in unique_kps}
+    else:
+        weights = _equal_kp_weights(unique_kps)
+    return primary_course, unique_kps, weights
+
+
+def _write_course_bindings(resource: LearningResource, bindings: list[dict]) -> list[dict]:
+    normalized = _normalize_course_bindings(bindings)
+    course_name, knowledge_points, kp_weights = _flatten_course_bindings(normalized)
+    resource.course_name = course_name
+    resource.knowledge_points = knowledge_points
+    resource.kp_weights = kp_weights
+    content = dict(resource.content) if isinstance(resource.content, dict) else {"text": resource.content}
+    if normalized:
+        content["course_bindings"] = normalized
+    else:
+        content.pop("course_bindings", None)
+    resource.content = content
+    return normalized
+
+
+def _resource_course_bindings(resource: LearningResource) -> list[dict]:
+    content = resource.content if isinstance(resource.content, dict) else {}
+    return _normalize_course_bindings(
+        content.get("course_bindings"),
+        fallback_course=resource.course_name,
+        fallback_kps=_as_list(resource.knowledge_points),
+        fallback_weights=resource.kp_weights or {},
+    )
 
 
 def _package_topic(
@@ -207,6 +386,9 @@ def _attach_relation_context(
     course_name: str,
     knowledge_points: list[str],
     relation_context: dict,
+    group_id: str | None = None,
+    group_type: str | None = None,
+    source_context: dict | None = None,
 ) -> list[int]:
     resources = db.query(LearningResource).filter(
         LearningResource.user_id == user_id,
@@ -215,15 +397,27 @@ def _attach_relation_context(
     updated_ids: list[int] = []
     kp_weights = _equal_kp_weights(knowledge_points)
     for resource in resources:
-        resource.course_name = course_name
-        resource.knowledge_points = knowledge_points
-        resource.kp_weights = kp_weights
+        _write_course_bindings(resource, [{
+            "course_name": course_name,
+            "knowledge_points": knowledge_points,
+            "weight": 1.0,
+            "kp_weights": kp_weights,
+        }])
         resource.tag_confidence = 1.0 if knowledge_points else max(resource.tag_confidence or 0, 0.7)
         tags = [resource.resource_type, course_name, *knowledge_points]
         resource.tags = list(dict.fromkeys(_as_list(resource.tags) + [tag for tag in tags if tag]))
         content = dict(resource.content) if isinstance(resource.content, dict) else {"text": resource.content}
         content["relation_context"] = relation_context
         resource.content = content
+        if group_id:
+            set_resource_lineage(
+                resource,
+                relation_type="same_package",
+                group_id=group_id,
+                group_type=group_type or "resource_package",
+                source_module="learning_resource",
+                source_context=source_context or {},
+            )
         updated_ids.append(resource.id)
     db.commit()
     return updated_ids
@@ -265,6 +459,7 @@ def list_resources(
     resource_type: str | None = Query(None),
     course_name: str | None = Query(None),
     knowledge_point: str | None = Query(None),
+    lineage_group_id: str | None = Query(None),
     learning_status: str | None = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
@@ -273,21 +468,41 @@ def list_resources(
     q = db.query(LearningResource).filter(LearningResource.user_id == user_id)
     if resource_type:
         q = q.filter(LearningResource.resource_type == resource_type)
-    if course_name:
-        q = q.filter(LearningResource.course_name == course_name)
     if learning_status:
         q = q.filter(LearningResource.learning_status == learning_status)
     ordered = q.order_by(LearningResource.pinned.desc(), LearningResource.created_at.desc())
-    if knowledge_point:
-        filtered = [r for r in ordered.all() if knowledge_point in _as_list(r.knowledge_points)]
+
+    def matches_graph_filter(resource: LearningResource) -> bool:
+        bindings = _resource_course_bindings(resource)
+        if course_name:
+            binding_courses = [item.get("course_name") for item in bindings]
+            if resource.course_name != course_name and course_name not in binding_courses:
+                return False
+        if knowledge_point:
+            binding_kps = [kp for item in bindings for kp in _as_list(item.get("knowledge_points"))]
+            if knowledge_point not in _as_list(resource.knowledge_points) and knowledge_point not in binding_kps:
+                return False
+        if lineage_group_id:
+            if get_resource_lineage(resource).get("group_id") != lineage_group_id:
+                return False
+        return True
+
+    if course_name or knowledge_point or lineage_group_id:
+        filtered = [r for r in ordered.all() if matches_graph_filter(r)]
         total = len(filtered)
         resources = filtered[offset:offset + limit]
     else:
         total = q.count()
         resources = ordered.offset(offset).limit(limit).all()
+    lineage_summaries = build_lineage_summary_map(
+        db.query(LearningResource).filter(LearningResource.user_id == user_id).all()
+    )
+    items = [_serialize_resource(r) for r in resources]
+    for item in items:
+        item["lineage_summary"] = lineage_summaries.get(item["id"], item.get("lineage_summary", {}))
     return {
         "total": total,
-        "items": [_serialize_resource(r) for r in resources],
+        "items": items,
     }
 
 
@@ -350,9 +565,15 @@ def recommend_resources(
                 rest.append(r)
         items = (diverse + rest)[:top_k]
 
+    lineage_summaries = build_lineage_summary_map(
+        db.query(LearningResource).filter(LearningResource.user_id == user_id).all()
+    )
+    serialized_items = [_serialize_resource(r, include_content=False) for r in items]
+    for item in serialized_items:
+        item["lineage_summary"] = lineage_summaries.get(item["id"], item.get("lineage_summary", {}))
     return {
         "query": query,
-        "items": [_serialize_resource(r, include_content=False) for r in items],
+        "items": serialized_items,
     }
 
 
@@ -391,24 +612,48 @@ async def save_draft_resource(req: ResourceDraftRequest, db: Session = Depends(g
         course_name=req.course_name,
         knowledge_points=req.knowledge_points,
     )
-    knowledge_points = graph_tags.get("knowledge_points") or req.knowledge_points or []
-    kp_weights = req.kp_weights or graph_tags.get("kp_weights") or _equal_kp_weights(knowledge_points)
+    course_bindings = _normalize_course_bindings(
+        req.course_bindings or graph_tags.get("course_bindings"),
+        fallback_course=graph_tags.get("course_name") or req.course_name,
+        fallback_kps=graph_tags.get("knowledge_points") or req.knowledge_points or [],
+        fallback_weights=req.kp_weights or graph_tags.get("kp_weights") or {},
+    )
+    course_name, knowledge_points, kp_weights = _flatten_course_bindings(course_bindings)
+    content["course_bindings"] = course_bindings
+    binding_tags = []
+    for binding in course_bindings:
+        binding_tags.extend([binding.get("course_name"), *_as_list(binding.get("knowledge_points"))])
     tags = list(dict.fromkeys([
         req.resource_type,
-        *[x for x in [graph_tags.get("course_name") or req.course_name] if x],
+        *[x for x in [course_name] if x],
         *knowledge_points,
+        *[x for x in binding_tags if x],
     ]))
+
+    title = build_resource_title(
+        req.resource_type,
+        content,
+        fallback_text=req.title,
+        course_name=course_name,
+        knowledge_points=knowledge_points,
+    ) if req.resource_type in {"code", "anime"} or not req.title or req.title == f"{req.resource_type}_resource" else req.title
 
     resource = LearningResource(
         user_id=req.user_id,
         resource_type=req.resource_type,
-        title=req.title or f"{req.resource_type}_resource",
+        title=title,
         content=content,
         tags=tags,
-        course_name=graph_tags.get("course_name") or req.course_name,
+        course_name=course_name,
         knowledge_points=knowledge_points,
         kp_weights=kp_weights,
-        tag_confidence=graph_tags.get("tag_confidence") or (1.0 if req.course_name or req.knowledge_points else 0.0),
+        tag_confidence=graph_tags.get("tag_confidence") or (1.0 if req.course_name or req.knowledge_points or req.course_bindings else 0.0),
+    )
+    set_resource_lineage(
+        resource,
+        relation_type="manual",
+        source_module="agent_task",
+        source_context={"client_draft_id": client_draft_id, "resource_type": req.resource_type},
     )
     db.add(resource)
     db.flush()
@@ -433,6 +678,75 @@ def get_resource(resource_id: int, db: Session = Depends(get_db)):
     return {"found": True, **_serialize_resource(resource)}
 
 
+@router.get("/{resource_id}/lineage")
+def get_resource_lineage_api(
+    resource_id: int,
+    user_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(LearningResource).filter(LearningResource.id == resource_id)
+    if user_id:
+        query = query.filter(LearningResource.user_id == user_id)
+    resource = query.first()
+    if not resource:
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return build_resource_lineage(db, resource, user_id)
+
+
+@router.post("/{resource_id}/lineage")
+async def update_resource_lineage(
+    resource_id: int,
+    req: ResourceLineageRequest,
+    db: Session = Depends(get_db),
+):
+    resource = db.query(LearningResource).filter(
+        LearningResource.id == resource_id,
+        LearningResource.user_id == req.user_id,
+    ).first()
+    if not resource:
+        raise HTTPException(status_code=404, detail="资源不存在")
+
+    owned_parent_ids = [
+        item.id
+        for item in db.query(LearningResource.id).filter(
+            LearningResource.user_id == req.user_id,
+            LearningResource.id.in_(req.parent_resource_ids or [-1]),
+        ).all()
+    ]
+    set_resource_lineage(
+        resource,
+        relation_type=req.relation_type,
+        parent_resource_ids=owned_parent_ids,
+        root_resource_id=req.root_resource_id,
+        group_id=req.group_id,
+        group_type=req.group_type,
+        source_module=req.source_module or "manual",
+        source_context=req.source_context or {},
+    )
+    db.commit()
+    db.refresh(resource)
+    await emit("resource.updated", {
+        "user_id": req.user_id,
+        "ids": [resource.id],
+        "action": "lineage",
+    })
+    return {"ok": True, "resource": _serialize_resource(resource)}
+
+
+@router.post("/lineage/rebuild")
+async def rebuild_resource_lineage_api(
+    user_id: str,
+    db: Session = Depends(get_db),
+):
+    result = rebuild_resource_lineage(db, user_id)
+    await emit("resource.updated", {
+        "user_id": user_id,
+        "ids": result.get("ids", []),
+        "action": "lineage_rebuild",
+    })
+    return result
+
+
 @router.post("/{article_id}/generate_quiz_from_article")
 async def generate_quiz_from_article(
     article_id: int,
@@ -449,12 +763,21 @@ async def generate_quiz_from_article(
     if not article:
         raise HTTPException(status_code=404, detail="文章资源不存在")
 
-    course_name = article.course_name or ""
-    knowledge_points = _as_list(article.knowledge_points)
+    article_bindings = _resource_course_bindings(article)
+    course_name, knowledge_points, _ = _flatten_course_bindings(article_bindings)
+    course_name = course_name or article.course_name or ""
+    knowledge_points = knowledge_points or _as_list(article.knowledge_points)
     if not course_name or not knowledge_points:
         inferred = infer_resource_tags(_resource_text(article))
-        course_name = course_name or inferred.get("course_name") or ""
-        knowledge_points = knowledge_points or inferred.get("knowledge_points") or []
+        article_bindings = _normalize_course_bindings(
+            inferred.get("course_bindings"),
+            fallback_course=inferred.get("course_name"),
+            fallback_kps=inferred.get("knowledge_points") or [],
+            fallback_weights=inferred.get("kp_weights") or {},
+        )
+        course_name, knowledge_points, _ = _flatten_course_bindings(article_bindings)
+        course_name = course_name or ""
+        knowledge_points = knowledge_points or []
     if not course_name or not knowledge_points:
         raise HTTPException(status_code=400, detail="文章缺少课程或知识点标签，无法生成可回写掌握度的测试题")
 
@@ -490,12 +813,20 @@ async def generate_quiz_from_article(
     if not quiz:
         raise HTTPException(status_code=502, detail="题库生成失败")
 
-    quiz.course_name = course_name
-    quiz.knowledge_points = knowledge_points
-    quiz.kp_weights = quiz.kp_weights or _equal_kp_weights(knowledge_points)
+    _write_course_bindings(quiz, article_bindings)
     quiz.tag_confidence = 1.0
     quiz.tags = list(dict.fromkeys(_as_list(quiz.tags) + ["quiz", course_name, *knowledge_points]))
-    quiz.content = _ensure_quiz_question_tags(dict(quiz.content or {}), knowledge_points)
+    quiz_content = _ensure_quiz_question_tags(dict(quiz.content or {}), knowledge_points)
+    quiz_content["course_bindings"] = article_bindings
+    quiz.content = quiz_content
+    set_resource_lineage(
+        quiz,
+        relation_type="generated_from_article",
+        parent_resource_ids=[article.id],
+        root_resource_id=get_resource_lineage(article).get("root_resource_id") or article.id,
+        source_module="learning_resource",
+        source_context={"article_id": article.id, "article_title": article.title},
+    )
     db.commit()
     db.refresh(quiz)
     index_resource(quiz.id, user_id, json.dumps(quiz.content or {}, ensure_ascii=False)[:4000], "quiz")
@@ -507,6 +838,7 @@ async def generate_quiz_from_article(
         "article_id": article.id,
         "course_name": course_name,
         "knowledge_points": knowledge_points,
+        "course_bindings": article_bindings,
     })
     return {"ok": True, "resource": _serialize_resource(quiz)}
 
@@ -568,16 +900,18 @@ async def tag_resource(resource_id: int, req: ResourceTagRequest, db: Session = 
     if not resource:
         return {"ok": False, "message": "资源不存在"}
 
-    kp_weights = req.kp_weights or {}
-    if req.knowledge_points and not kp_weights:
-        weight = round(1 / len(req.knowledge_points), 4)
-        kp_weights = {kp: weight for kp in req.knowledge_points}
-
-    resource.course_name = req.course_name
-    resource.knowledge_points = req.knowledge_points
-    resource.kp_weights = kp_weights
+    bindings = _normalize_course_bindings(
+        req.course_bindings,
+        fallback_course=req.course_name,
+        fallback_kps=req.knowledge_points,
+        fallback_weights=req.kp_weights or {},
+    )
+    _write_course_bindings(resource, bindings)
     resource.tag_confidence = 1.0
-    resource.tags = list(dict.fromkeys(_as_list(resource.tags) + [x for x in [req.course_name, *req.knowledge_points] if x]))
+    graph_tags = []
+    for binding in bindings:
+        graph_tags.extend([binding.get("course_name"), *_as_list(binding.get("knowledge_points"))])
+    resource.tags = list(dict.fromkeys(_as_list(resource.tags) + [x for x in graph_tags if x]))
     db.commit()
 
     await emit("resource.updated", {
@@ -631,22 +965,27 @@ async def complete_resource(
     resource.progress = 1.0
     resource.completed_at = datetime.utcnow()
 
-    kps = _as_list(resource.knowledge_points)
-    mastery_score = score
-    if mastery_score is None:
-        mastery_score = 0.8 if resource.resource_type in ("quiz", "evaluation") else 0.65
-    alpha = 0.3 if resource.resource_type in ("quiz", "evaluation") else 0.15
-    if kps:
-        update_knowledge_base(db, user_id, {kp: mastery_score for kp in kps}, alpha=alpha)
-    else:
-        db.commit()
+    bindings = _resource_course_bindings(resource)
+    _, kps, _ = _flatten_course_bindings(bindings)
+    kps = kps or _as_list(resource.knowledge_points)
+    apply_resource_completed(
+        db,
+        user_id,
+        resource.resource_type,
+        resource.id,
+        kps,
+        score if score is not None else 0.0,
+        0.0,
+    )
 
     await emit("resource.completed", {
         "user_id": user_id,
         "resource_id": resource.id,
         "course_name": resource.course_name,
         "knowledge_points": kps,
-        "score": mastery_score,
+        "course_bindings": bindings,
+        "completion_score": score,
+        "mastery_updated": False,
     })
     return {"ok": True, "resource": _serialize_resource(resource)}
 
@@ -668,60 +1007,181 @@ async def feedback_resource(
     if not resource:
         return {"ok": False, "message": "资源不存在"}
 
-    profile = db.query(StudentProfile).filter(StudentProfile.user_id == req.user_id).first()
-    if not profile:
-        profile = StudentProfile(user_id=req.user_id)
-        db.add(profile)
-        db.flush()
-
-    feedback_profile = dict(profile.resource_feedback_profile or {})
-    counts = dict(feedback_profile.get("counts") or {})
-    counts[req.feedback] = counts.get(req.feedback, 0) + 1
-    by_type = dict(feedback_profile.get("by_resource_type") or {})
-    type_counts = dict(by_type.get(resource.resource_type) or {})
-    type_counts[req.feedback] = type_counts.get(req.feedback, 0) + 1
-    by_type[resource.resource_type] = type_counts
-    feedback_profile.update({
-        "counts": counts,
-        "by_resource_type": by_type,
-        "last_feedback": {
-            "resource_id": resource.id,
-            "resource_type": resource.resource_type,
-            "course_name": resource.course_name,
-            "knowledge_points": _as_list(resource.knowledge_points),
-            "feedback": req.feedback,
-            "note": req.note or "",
-            "created_at": datetime.utcnow().isoformat(),
-        },
-    })
-    profile.resource_feedback_profile = feedback_profile
-
-    evidence = dict(profile.profile_evidence or {})
-    evidence["resource_feedback_profile"] = "学习资源反馈"
-    profile.profile_evidence = evidence
-
-    db.add(ProfileHistory(
-        user_id=req.user_id,
-        trigger="resource_feedback",
-        snapshot={
-            "resource_feedback_profile": feedback_profile,
-            "preferred_format": profile.preferred_format or [],
-        },
-        delta={
-            "feedback": req.feedback,
-            "resource_id": resource.id,
-            "resource_type": resource.resource_type,
-        },
-    ))
-    db.commit()
+    profile = apply_resource_feedback(db, req.user_id, resource, req.feedback, req.note)
 
     await emit("resource.feedback", {
         "user_id": req.user_id,
         "resource_id": resource.id,
         "feedback": req.feedback,
     })
-    await emit("profile.updated", {"user_id": req.user_id})
-    return {"ok": True, "resource_feedback_profile": feedback_profile}
+    return {"ok": True, "resource_feedback_profile": profile.resource_feedback_profile or {}}
+
+
+@router.post("/generate/graph_package/stream")
+async def generate_graph_package_stream(
+    user_id: str,
+    course_name: str,
+    knowledge_points: str = "",
+    package_type: str = "知识点补弱",
+):
+    if package_type not in GRAPH_PACKAGE_TYPES:
+        raise HTTPException(status_code=400, detail="不支持的资源包类型")
+    if not course_name.strip():
+        raise HTTPException(status_code=400, detail="请选择课程节点")
+
+    async def event_stream():
+        db = SessionLocal()
+        try:
+            profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
+            kp_list = [kp.strip() for kp in knowledge_points.split(",") if kp.strip()]
+            curriculum = load_curriculum_by_major(profile.major if profile else "")
+            relation_context = build_relation_context(curriculum, course_name.strip())
+            topic = _package_topic(package_type, course_name.strip(), kp_list, relation_context)
+            group_id = f"graph_package:{user_id}:{uuid.uuid4().hex}"
+            before_id = db.query(LearningResource.id).filter(
+                LearningResource.user_id == user_id
+            ).order_by(LearningResource.id.desc()).limit(1).scalar() or 0
+            types = GRAPH_PACKAGE_TYPES[package_type]
+        except Exception as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
+            return
+        finally:
+            db.close()
+
+        state = {
+            "user_id": user_id,
+            "user_message": topic,
+            "profile": profile,
+            "history": [],
+            "messages": [],
+            "response": "",
+            "agent_name": "",
+            "task_plan": [],
+            "agent_feedback": {},
+            "completed_tasks": [],
+            "all_modules_data": {},
+            "course_name": course_name.strip(),
+            "knowledge_points": kp_list,
+            "requested_resource_types": types,
+            "generated_resources": [],
+            "orchestration_failures": [],
+            "orchestration_events": [],
+            "skill_result_items": [],
+            "skill_workflow_outputs": [],
+            "agent_events": [],
+        }
+
+        generated_resources: list[dict] = []
+        failures: list[dict] = []
+        yielded_resources: set[int] = set()
+        yielded_agent_events: set[str] = set()
+        try:
+            async for raw_chunk in resource_orchestration_graph.astream(state, stream_mode=["updates", "custom"]):
+                mode = "updates"
+                chunk = raw_chunk
+                if isinstance(raw_chunk, tuple) and len(raw_chunk) == 2:
+                    mode, chunk = raw_chunk
+                if mode == "custom":
+                    if isinstance(chunk, dict) and chunk.get("type") == "agent_event":
+                        event = chunk.get("event") or {}
+                        key = event.get("event_id") or json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                        if key not in yielded_agent_events:
+                            yielded_agent_events.add(key)
+                            yield json.dumps(chunk, ensure_ascii=False, default=str)
+                    continue
+                if mode != "updates" or not isinstance(chunk, dict):
+                    continue
+                for _, update in chunk.items():
+                    if not isinstance(update, dict):
+                        continue
+                    for event in update.get("agent_events") or []:
+                        key = event.get("event_id") or json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                        if key in yielded_agent_events:
+                            continue
+                        yielded_agent_events.add(key)
+                        yield collaboration_sse_payload(event)
+                    for failure in update.get("orchestration_failures") or []:
+                        failures.append(failure)
+                    for resource in update.get("generated_resources") or []:
+                        generated_resources.append(resource)
+                        rid = resource.get("resource_id")
+                        ppt_session = resource.get("ppt_session")
+                        if rid and rid not in yielded_resources:
+                            yielded_resources.add(rid)
+                            yield json.dumps({
+                                "type": "resource",
+                                "resource_id": rid,
+                                "resource_type": resource.get("resource_type", ""),
+                                "title": resource.get("title", ""),
+                            }, ensure_ascii=False, default=str)
+                        elif ppt_session:
+                            session_id = ppt_session.get("session_id") or json.dumps(ppt_session, ensure_ascii=False, sort_keys=True, default=str)
+                            key = f"ppt:{session_id}"
+                            if key not in yielded_resources:
+                                yielded_resources.add(key)
+                                yield json.dumps({
+                                    "type": "resource",
+                                    "resource_id": None,
+                                    "resource_type": "ppt",
+                                    "title": resource.get("title", "PPT课件分步会话"),
+                                    "ppt_session": ppt_session,
+                                    "status": "pending_step_by_step",
+                                }, ensure_ascii=False, default=str)
+        except Exception as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
+            return
+
+        db = SessionLocal()
+        try:
+            updated_ids = _attach_relation_context(
+                db,
+                user_id,
+                before_id,
+                course_name.strip(),
+                kp_list,
+                relation_context,
+                group_id=group_id,
+                group_type="graph_package",
+                source_context={
+                    "package_type": package_type,
+                    "course_name": course_name.strip(),
+                    "knowledge_points": kp_list,
+                },
+            )
+        except Exception as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
+            return
+        finally:
+            db.close()
+
+        await emit("resource.created", {
+            "user_id": user_id,
+            "topic": topic,
+            "types": types,
+            "package_type": package_type,
+            "course_name": course_name,
+            "knowledge_points": kp_list,
+        })
+        ppt_sessions = [item.get("ppt_session") for item in generated_resources if item.get("ppt_session")]
+        yield json.dumps({
+            "type": "done",
+            "ok": True,
+            "package_type": package_type,
+            "course_name": course_name,
+            "knowledge_points": kp_list,
+            "types": types,
+            "generated": len(updated_ids),
+            "ids": updated_ids,
+            "resources": generated_resources,
+            "ppt_sessions": ppt_sessions,
+            "failures": failures,
+        }, ensure_ascii=False, default=str)
+
+    return StreamingResponse(
+        sse_stream(event_stream()),
+        media_type="text/event-stream; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/generate/graph_package")
@@ -743,6 +1203,7 @@ async def generate_graph_package(
     curriculum = load_curriculum_by_major(profile.major if profile else "")
     relation_context = build_relation_context(curriculum, course_name.strip())
     topic = _package_topic(package_type, course_name.strip(), kp_list, relation_context)
+    group_id = f"graph_package:{user_id}:{uuid.uuid4().hex}"
     before_id = db.query(LearningResource.id).filter(
         LearningResource.user_id == user_id
     ).order_by(LearningResource.id.desc()).limit(1).scalar() or 0
@@ -818,6 +1279,13 @@ async def generate_graph_package(
         course_name.strip(),
         kp_list,
         relation_context,
+        group_id=group_id,
+        group_type="graph_package",
+        source_context={
+            "package_type": package_type,
+            "course_name": course_name.strip(),
+            "knowledge_points": kp_list,
+        },
     )
     await emit("resource.created", {
         "user_id": user_id,
@@ -979,6 +1447,21 @@ async def generate_resource(
 
     ppt_sessions = [state.get("ppt_session") for state in generated_states if state.get("ppt_session")]
     generated_ids = [state.get("resource_db_id") for state in generated_states if state.get("resource_db_id")]
+    if generated_ids:
+        group_id = f"manual_generate:{user_id}:{job_id}"
+        for resource in db.query(LearningResource).filter(
+            LearningResource.user_id == user_id,
+            LearningResource.id.in_(generated_ids),
+        ).all():
+            set_resource_lineage(
+                resource,
+                relation_type="same_package" if len(generated_ids) > 1 else "manual",
+                group_id=group_id if len(generated_ids) > 1 else None,
+                group_type="manual_generate" if len(generated_ids) > 1 else None,
+                source_module="learning_resource",
+                source_context={"topic": topic, "types": types, "job_id": job_id},
+            )
+        db.commit()
     return {
         "ok": True,
         "job_id": job_id,

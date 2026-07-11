@@ -76,6 +76,14 @@ const filteredKb = computed(() => {
   )
 })
 
+function percentOf(value: any) {
+  return Math.round(Number(value || 0) * 100)
+}
+
+function countOf(value: any) {
+  return Number(value || 0)
+}
+
 async function loadGraph() {
   if (!props.userId) return
   const res = await api.get('/curriculum/graph', {
@@ -120,8 +128,11 @@ function renderGraph() {
           return `${params.data.source} → ${params.data.target}<br/>${params.data.type || ''}<br/>${params.data.reason || ''}`
         }
         const data = params.data
-        const mastery = Math.round((data.mastery || 0) * 100)
-        return `${data.name}<br/>第 ${data.semester || '?'} 学期 · ${data.category || ''}<br/>状态：${STATUS_LABEL[data.status] || data.status}<br/>掌握度：${mastery}%`
+        const mastery = percentOf(data.mastery)
+        const coverage = percentOf(data.coverage_ratio)
+        const measured = countOf(data.measured_kp_count)
+        const total = countOf(data.total_kp_count)
+        return `${data.name}<br/>第 ${data.semester || '?'} 学期 · ${data.category || ''}<br/>状态：${STATUS_LABEL[data.status] || data.status}<br/>已测掌握度：${mastery}%<br/>覆盖率：${coverage}%（${measured}/${total}）`
       },
     },
     series: [{
@@ -261,7 +272,11 @@ onUnmounted(() => chart?.dispose())
           </el-tag>
         </div>
 
-        <el-progress :percentage="Math.round((selectedNode.mastery || 0) * 100)" :stroke-width="8" />
+        <el-progress :percentage="percentOf(selectedNode.mastery)" :stroke-width="8" />
+        <div class="course-mastery-meta">
+          <span>已测掌握度 {{ percentOf(selectedNode.mastery) }}%</span>
+          <span>覆盖率 {{ percentOf(selectedNode.coverage_ratio) }}%（{{ countOf(selectedNode.measured_kp_count) }}/{{ countOf(selectedNode.total_kp_count) }}）</span>
+        </div>
 
         <el-alert
           v-if="courseKpData && !hasCourseKpGraph"
@@ -342,6 +357,7 @@ onUnmounted(() => chart?.dispose())
 .course-panel-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .course-panel h3 { margin: 0 0 6px; color: #3A332E; font-size: 17px; }
 .course-panel p { margin: 0; color: #7A6A5C; font-size: 12px; }
+.course-mastery-meta { display: flex; justify-content: space-between; gap: 8px; color: #7A6A5C; font-size: 12px; }
 .relation-block { display: flex; flex-direction: column; gap: 8px; }
 .relation-title { font-size: 13px; font-weight: 600; color: #3A332E; }
 .relation-tags { display: flex; flex-wrap: wrap; gap: 6px; }

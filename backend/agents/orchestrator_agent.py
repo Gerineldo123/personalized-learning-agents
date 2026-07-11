@@ -27,6 +27,7 @@ class OrchestratorAgent(BaseAgent):
             "generated_resources": [],
             "orchestration_failures": [],
             "orchestration_events": [],
+            "agent_events": [],
             "skill_result_items": [],
             "skill_workflow_outputs": [],
         }
@@ -40,6 +41,7 @@ class OrchestratorAgent(BaseAgent):
         state["generated_resources"] = resources
         state["orchestration_failures"] = failures
         state["workflow_outputs"] = result.get("workflow_outputs") or []
+        state["agent_events"] = result.get("agent_events") or []
         state["response"] = json.dumps({
             "agent": self.name,
             "orchestration": "LangGraph: profile_diagnosis -> resource_plan -> article_gen -> parallel_resource_gen -> safety_review -> graph_tagging -> path_update -> finalize",

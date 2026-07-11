@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import api from '../../api'
 import { useUserStore } from '../../stores/user'
 import { ElMessage } from 'element-plus'
@@ -12,6 +12,7 @@ const emit = defineEmits<{
 }>()
 
 const loading = ref(false)
+const generatingQuiz = ref(false)
 const finishing = ref(false)
 const active = ref(0)
 const status = ref('')
@@ -29,33 +30,106 @@ const interviewCount = ref(0)
 const knowledgeGraphs = ref<Record<string, any>>({})
 const graphMarks = ref<Record<string, string>>({})
 const finishResult = ref<any>(null)
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const canStart = computed(() => selectedCourseNames.value.length > 0)
 const blocked = computed(() => !loading.value && status.value === 'blocked')
 
-async function start(courseNames?: string[]) {
+function clearPoll() {
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+function applySessionPayload(data: any) {
+  sessionId.value = data.session_id || sessionId.value
+  status.value = data.status || ''
+  message.value = data.message || ''
+  availableCourses.value = data.available_courses || availableCourses.value || []
+  diagnosticCourses.value = data.diagnostic_courses || []
+  if (diagnosticCourses.value.length) {
+    selectedCourseNames.value = diagnosticCourses.value.map((c: any) => c.course_name)
+  }
+  microQuiz.value = data.micro_quiz || { questions: [] }
+  knowledgeGraphs.value = data.knowledge_graphs || {}
+  interviewQuestion.value = data.interview_question || ''
+}
+
+async function prepare() {
   if (!userStore.userId) return
   loading.value = true
+  try {
+    const r = await api.post('/profile/onboarding/prepare', {
+      user_id: userStore.userId,
+      course_names: [],
+      mode: 'first_build',
+    })
+    status.value = r.data.status || ''
+    message.value = r.data.message || ''
+    availableCourses.value = r.data.available_courses || []
+    selectedCourseNames.value = availableCourses.value.slice(0, 3).map((c: any) => c.course_name)
+    answers.value = {}
+    diagnosis.value = null
+    graphMarks.value = {}
+    finishResult.value = null
+    active.value = 0
+  } catch (e: any) {
+    status.value = 'blocked'
+    microQuiz.value = { questions: [] }
+    ElMessage.error(e?.response?.data?.detail || '建档课程加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function pollSession() {
+  if (!sessionId.value) return
+  try {
+    const r = await api.get(`/profile/onboarding/${sessionId.value}`)
+    applySessionPayload(r.data)
+    if (r.data.status === 'started' && r.data.micro_quiz?.questions?.length) {
+      generatingQuiz.value = false
+      active.value = 1
+      clearPoll()
+      return
+    }
+    if (r.data.status === 'blocked') {
+      generatingQuiz.value = false
+      active.value = 0
+      clearPoll()
+      ElMessage.error(r.data.message || '未生成合格诊断题，请稍后重试')
+      return
+    }
+    pollTimer = setTimeout(pollSession, 1200)
+  } catch (e: any) {
+    generatingQuiz.value = false
+    clearPoll()
+    ElMessage.error(e?.response?.data?.detail || '获取微测验状态失败')
+  }
+}
+
+async function start(courseNames?: string[]) {
+  if (!userStore.userId) return
+  clearPoll()
+  loading.value = true
+  generatingQuiz.value = false
   try {
     const r = await api.post('/profile/onboarding/start', {
       user_id: userStore.userId,
       course_names: courseNames || [],
       mode: 'first_build',
     })
-    sessionId.value = r.data.session_id
-    status.value = r.data.status || ''
-    message.value = r.data.message || ''
-    availableCourses.value = r.data.available_courses || []
-    diagnosticCourses.value = r.data.diagnostic_courses || []
-    selectedCourseNames.value = diagnosticCourses.value.map((c: any) => c.course_name)
-    microQuiz.value = r.data.micro_quiz || { questions: [] }
-    knowledgeGraphs.value = r.data.knowledge_graphs || {}
-    interviewQuestion.value = r.data.interview_question || ''
+    applySessionPayload(r.data)
     answers.value = {}
     diagnosis.value = null
     graphMarks.value = {}
     finishResult.value = null
-    active.value = r.data.status === 'blocked' ? 0 : 0
+    active.value = r.data.status === 'blocked' ? 0 : 1
+    if (r.data.status === 'generating') {
+      generatingQuiz.value = true
+      pollTimer = setTimeout(pollSession, 800)
+    }
   } catch (e: any) {
     status.value = 'blocked'
     microQuiz.value = { questions: [] }
@@ -68,8 +142,14 @@ async function start(courseNames?: string[]) {
 async function restartWithSelection() {
   if (!canStart.value) { ElMessage.warning('请选择至少一门可诊断课程'); return }
   await start(selectedCourseNames.value)
-  if (blocked.value || !microQuiz.value.questions?.length) return
+  if (blocked.value || generatingQuiz.value || !microQuiz.value.questions?.length) return
   active.value = 1
+}
+
+function backToCourseSelection() {
+  clearPoll()
+  generatingQuiz.value = false
+  active.value = 0
 }
 
 async function submitQuiz() {
@@ -162,7 +242,8 @@ function markType(kp: string) {
   return 'info'
 }
 
-onMounted(() => start())
+onMounted(() => prepare())
+onBeforeUnmount(() => clearPoll())
 </script>
 
 <template>
@@ -216,6 +297,19 @@ onMounted(() => start())
       <div v-else-if="active === 1" class="onboard-step">
         <h3>多课程微测验</h3>
         <p class="muted">题目覆盖所选课程的核心知识点，用于生成初始知识掌握画像。</p>
+        <el-alert
+          v-if="generatingQuiz || status === 'generating'"
+          :title="message || '正在生成多课程微测验'"
+          description="系统正在调用大模型围绕所选课程知识图谱出题。你可以停留在此页面等待，生成完成后会自动显示题目。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <el-skeleton v-if="generatingQuiz || status === 'generating'" :rows="4" animated />
+        <el-empty
+          v-else-if="!microQuiz.questions?.length"
+          description="暂无可作答的微测验题目，请返回重新选择课程或稍后重试。"
+        />
         <div v-for="q in microQuiz.questions" :key="q.id" class="question-card">
           <div class="q-meta">{{ q.course_name }} · {{ q.knowledge_point }} · {{ q.difficulty }}</div>
           <div class="q-title">{{ q.question }}</div>
@@ -226,8 +320,8 @@ onMounted(() => start())
           </el-radio-group>
         </div>
         <div class="actions">
-          <el-button @click="active = 0">返回选课</el-button>
-          <el-button type="primary" @click="submitQuiz">提交微测验</el-button>
+          <el-button @click="backToCourseSelection">返回选课</el-button>
+          <el-button type="primary" :disabled="generatingQuiz || !microQuiz.questions?.length" @click="submitQuiz">提交微测验</el-button>
         </div>
       </div>
 

@@ -1,12 +1,14 @@
 import uuid
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.deps import get_db
+from core.database import SessionLocal
 from models.profile_history import ProfileHistory
 from models.profile_onboarding import ProfileOnboardingSession
 from models.student import StudentProfile
@@ -19,6 +21,7 @@ from services.curriculum_service import (
 )
 from services.event_service import emit
 from services.micro_quiz_service import generate_micro_quiz
+from services.profile_update_service import apply_quiz_result
 
 router = APIRouter(prefix="/api/profile/onboarding", tags=["对话式画像建档"])
 
@@ -112,7 +115,7 @@ def _is_correct(question: dict, answer: Any) -> bool:
 
 
 def _answer_score(question: dict, answer: Any) -> float:
-    return 0.82 if _is_correct(question, answer) else 0.22
+    return 1.0 if _is_correct(question, answer) else 0.0
 
 
 def _diagnose(micro_quiz: dict, answers: dict) -> dict:
@@ -204,23 +207,14 @@ def _infer_profile_from_interview(answers: list[dict]) -> dict:
     }
 
 def _apply_graph_marks(diagnosis: dict, graph_marks: dict) -> tuple[dict, list[str]]:
-    kb = dict(diagnosis.get("knowledge_base") or {})
     weak_points = list(diagnosis.get("weak_points") or [])
     high_risk = []
     for kp, mark in (graph_marks or {}).items():
-        if mark == "familiar":
-            kb.setdefault(kp, 0.68)
-        elif mark == "unfamiliar":
-            kb[kp] = min(float(kb.get(kp, 0.35) or 0.35), 0.35)
+        if mark in {"unfamiliar", "focus"}:
             if kp not in weak_points:
                 weak_points.append(kp)
-        elif mark == "focus":
-            kb[kp] = min(float(kb.get(kp, 0.45) or 0.45), 0.45)
-            if kp not in weak_points:
-                weak_points.append(kp)
-        if mark == "familiar" and float(kb.get(kp, 0) or 0) < 0.5:
+        if mark == "familiar" and kp in weak_points:
             high_risk.append(kp)
-    diagnosis["knowledge_base"] = kb
     diagnosis["weak_points"] = weak_points
     diagnosis["high_risk_points"] = high_risk
     return diagnosis, weak_points
@@ -252,8 +246,47 @@ def _weak_courses_from_diagnosis(diagnosis: dict) -> list[dict]:
     return items[:6]
 
 
-def _session_payload(session: ProfileOnboardingSession) -> dict:
+def _knowledge_graphs_for_courses(diagnostic_courses: list[dict], major: str = "") -> dict:
     return {
+        course["course_name"]: _safe_kp_graph(course["course_name"], major)
+        for course in diagnostic_courses
+        if course.get("course_name")
+    }
+
+
+def _course_name_key(courses: list[dict]) -> tuple[str, ...]:
+    return tuple(sorted(str(course.get("course_name") or "") for course in courses if course.get("course_name")))
+
+
+def _cached_micro_quiz(db: Session, user_id: str, diagnostic_courses: list[dict]) -> dict | None:
+    target_key = _course_name_key(diagnostic_courses)
+    if not target_key:
+        return None
+    sessions = (
+        db.query(ProfileOnboardingSession)
+        .filter(
+            ProfileOnboardingSession.user_id == user_id,
+            ProfileOnboardingSession.status.in_(["started", "finished"]),
+        )
+        .order_by(ProfileOnboardingSession.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    for session in sessions:
+        if _course_name_key(session.diagnostic_courses or []) != target_key:
+            continue
+        micro_quiz = session.micro_quiz or {}
+        if micro_quiz.get("questions"):
+            cached = dict(micro_quiz)
+            meta = dict(cached.get("meta") or {})
+            meta["cached"] = True
+            cached["meta"] = meta
+            return cached
+    return None
+
+
+def _session_payload(session: ProfileOnboardingSession, knowledge_graphs: dict | None = None) -> dict:
+    payload = {
         "session_id": session.session_id,
         "user_id": session.user_id,
         "mode": session.mode,
@@ -268,10 +301,82 @@ def _session_payload(session: ProfileOnboardingSession) -> dict:
         "interview_question": INTERVIEW_QUESTIONS[len(session.interview_answers or [])]
         if len(session.interview_answers or []) < len(INTERVIEW_QUESTIONS) else None,
     }
+    payload["knowledge_graphs"] = knowledge_graphs or {}
+    if session.status == "generating":
+        payload["message"] = "正在生成多课程微测验，请稍候"
+        payload["progress"] = 0.18
+        payload["interview_question"] = None
+    elif session.status == "blocked" and not payload.get("message"):
+        payload["message"] = "未生成合格诊断题，请检查 LLM 配置或稍后重试"
+        payload["interview_question"] = None
+    return payload
+
+
+def _is_stale_generating(session: ProfileOnboardingSession, seconds: int = 180) -> bool:
+    if session.status != "generating":
+        return False
+    updated_at = session.updated_at or session.created_at
+    if not updated_at:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - updated_at > timedelta(seconds=seconds)
+
+
+async def _generate_micro_quiz_job(session_id: str) -> None:
+    db = SessionLocal()
+    try:
+        session = db.query(ProfileOnboardingSession).filter(
+            ProfileOnboardingSession.session_id == session_id
+        ).first()
+        if not session or session.status != "generating":
+            return
+        profile = db.query(StudentProfile).filter(StudentProfile.user_id == session.user_id).first()
+        diagnostic_courses = session.diagnostic_courses or []
+        knowledge_graphs = _knowledge_graphs_for_courses(diagnostic_courses, profile.major if profile else "")
+        try:
+            micro_quiz = await generate_micro_quiz(diagnostic_courses, knowledge_graphs) if diagnostic_courses else {
+                "questions": [],
+                "meta": {
+                    "generated_by": "llm",
+                    "generation_failures": [],
+                },
+            }
+        except Exception as exc:
+            micro_quiz = {
+                "questions": [],
+                "meta": {
+                    "generated_by": "llm",
+                    "generation_failures": [{"reason": f"background_generation_failed: {str(exc)[:160]}"}],
+                },
+            }
+        has_questions = bool(micro_quiz.get("questions"))
+        session.micro_quiz = micro_quiz
+        session.status = "started" if has_questions else "blocked"
+        session.stage = "micro_quiz" if has_questions else "blocked"
+        db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/prepare")
+def prepare_onboarding(req: OnboardingStartRequest, db: Session = Depends(get_db)):
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == req.user_id).first()
+    available = _available_courses(profile)
+    return {
+        "ok": True,
+        "status": "ready" if available else "blocked",
+        "available_courses": available,
+        "message": "" if available else "当前专业暂无可用于对话式建档的课程知识点图谱",
+    }
 
 
 @router.post("/start")
-async def start_onboarding(req: OnboardingStartRequest, db: Session = Depends(get_db)):
+async def start_onboarding(
+    req: OnboardingStartRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == req.user_id).first()
     available = _available_courses(profile)
     selected_names = set(req.course_names or [])
@@ -280,20 +385,33 @@ async def start_onboarding(req: OnboardingStartRequest, db: Session = Depends(ge
         if not selected_names or course["course_name"] in selected_names
     ][:3]
 
-    knowledge_graphs = {
-        course["course_name"]: _safe_kp_graph(course["course_name"], profile.major if profile else "")
-        for course in diagnostic_courses
-    }
-    micro_quiz = await generate_micro_quiz(diagnostic_courses, knowledge_graphs) if diagnostic_courses else {
+    knowledge_graphs = _knowledge_graphs_for_courses(diagnostic_courses, profile.major if profile else "")
+    cached_quiz = _cached_micro_quiz(db, req.user_id, diagnostic_courses)
+    micro_quiz = cached_quiz or {
         "questions": [],
         "meta": {
             "generated_by": "llm",
+            "status": "pending",
             "generation_failures": [],
         },
     }
     has_questions = bool(micro_quiz.get("questions"))
-    status = "started" if available and diagnostic_courses and has_questions else "blocked"
-    stage = "micro_quiz" if status == "started" else "blocked"
+    if not available:
+        status = "blocked"
+        stage = "blocked"
+        message = "当前专业暂无可用于对话式建档的课程知识点图谱"
+    elif not diagnostic_courses:
+        status = "blocked"
+        stage = "blocked"
+        message = "未选择有效的可诊断课程"
+    elif has_questions:
+        status = "started"
+        stage = "micro_quiz"
+        message = ""
+    else:
+        status = "generating"
+        stage = "micro_quiz_generating"
+        message = "正在生成多课程微测验，请稍候"
     session = ProfileOnboardingSession(
         session_id=uuid.uuid4().hex,
         user_id=req.user_id,
@@ -308,16 +426,12 @@ async def start_onboarding(req: OnboardingStartRequest, db: Session = Depends(ge
     db.add(session)
     db.commit()
     db.refresh(session)
+    if status == "generating":
+        background_tasks.add_task(_generate_micro_quiz_job, session.session_id)
     payload = _session_payload(session)
     payload["knowledge_graphs"] = knowledge_graphs
-    payload["interview_question"] = INTERVIEW_QUESTIONS[0] if status != "blocked" else None
-    if status == "blocked":
-        if not available:
-            payload["message"] = "当前专业暂无可用于对话式建档的课程知识点图谱"
-        elif not diagnostic_courses:
-            payload["message"] = "未选择有效的可诊断课程"
-        else:
-            payload["message"] = "未生成合格诊断题，请检查 LLM 配置或稍后重试"
+    payload["interview_question"] = INTERVIEW_QUESTIONS[0] if status == "started" else None
+    payload["message"] = message or payload.get("message", "")
     return payload
 
 
@@ -328,7 +442,20 @@ def get_onboarding_session(session_id: str, db: Session = Depends(get_db)):
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="建档会话不存在")
-    return _session_payload(session)
+    if _is_stale_generating(session):
+        session.status = "blocked"
+        session.stage = "blocked"
+        session.micro_quiz = {
+            "questions": [],
+            "meta": {
+                "generated_by": "llm",
+                "generation_failures": [{"reason": "generation_timeout"}],
+            },
+        }
+        db.commit()
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == session.user_id).first()
+    knowledge_graphs = _knowledge_graphs_for_courses(session.diagnostic_courses or [], profile.major if profile else "")
+    return _session_payload(session, knowledge_graphs)
 
 
 @router.post("/answer")
@@ -338,15 +465,50 @@ def answer_onboarding(req: OnboardingAnswerRequest, db: Session = Depends(get_db
     ).first()
     if not session:
         raise HTTPException(status_code=404, detail="建档会话不存在")
+    if session.status == "generating":
+        raise HTTPException(status_code=409, detail="微测验仍在生成中，请稍候")
     if session.status == "blocked":
         raise HTTPException(status_code=400, detail="当前会话没有可诊断课程")
 
     if req.step == "micro_quiz":
+        if not (session.micro_quiz or {}).get("questions"):
+            raise HTTPException(status_code=400, detail="当前建档会话没有可提交的微测验题目")
         answers = req.payload.get("answers") or {}
         diagnosis = _diagnose(session.micro_quiz or {}, answers)
         session.micro_quiz_answers = answers
         session.diagnosis = diagnosis
         session.stage = "interview"
+        details = _as_list(diagnosis.get("details"))
+        wrong_questions = []
+        for item in details:
+            if item.get("correct"):
+                continue
+            question = next(
+                (
+                    q for q in _as_list((session.micro_quiz or {}).get("questions"))
+                    if str(q.get("id")) == str(item.get("id"))
+                ),
+                {},
+            )
+            wrong_questions.append({
+                "question": question,
+                "knowledge_points": [item.get("knowledge_point")] if item.get("knowledge_point") else [],
+                "user_answer": answers.get(str(item.get("id"))),
+                "correct_answer": question.get("answer") if isinstance(question, dict) else "",
+            })
+        quiz_score = (
+            sum(1 for item in details if item.get("correct")) / len(details)
+            if details else 0.0
+        )
+        apply_quiz_result(
+            db,
+            session.user_id,
+            diagnosis.get("knowledge_base") or {},
+            wrong_questions,
+            quiz_score,
+            resource_id=None,
+            alpha=0.8,
+        )
         progress = 0.35
         result = {
             "ok": True,
@@ -354,6 +516,8 @@ def answer_onboarding(req: OnboardingAnswerRequest, db: Session = Depends(get_db
             "next_step": "interview",
             "next_question": INTERVIEW_QUESTIONS[0],
             "diagnosis": diagnosis,
+            "mastery_updated": True,
+            "updated_knowledge_points": list((diagnosis.get("knowledge_base") or {}).keys()),
         }
     elif req.step == "interview":
         answers = list(session.interview_answers or [])
@@ -415,7 +579,7 @@ async def finish_onboarding(req: OnboardingFinishRequest, db: Session = Depends(
         "mistake_tendency": "微测验错题 + 面试困难描述",
     }
 
-    profile.knowledge_base = {**(profile.knowledge_base or {}), **(diagnosis.get("knowledge_base") or {})}
+    evidence["knowledge_base"] = "微测验题目正确率自动更新；知识图谱自评不改掌握度"
     profile.course_mastery = {**(profile.course_mastery or {}), **course_mastery}
     profile.weak_points = list(dict.fromkeys((profile.weak_points or []) + weak_points))[-20:]
     profile.weak_courses = weak_courses or (profile.weak_courses or [])
@@ -423,7 +587,7 @@ async def finish_onboarding(req: OnboardingFinishRequest, db: Session = Depends(
     profile.cognitive_style = interview_profile["cognitive_style"] or profile.cognitive_style
     profile.preferred_format = list(dict.fromkeys((profile.preferred_format or []) + interview_profile["preferred_format"]))
     profile.mistake_tendency = interview_profile["mistake_tendency"]
-    profile.profile_evidence = evidence
+    profile.profile_evidence = {**(profile.profile_evidence or {}), **evidence}
     profile.ability_summary = interview_profile["ability_summary"]
 
     session.status = "finished"

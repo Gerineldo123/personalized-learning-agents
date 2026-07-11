@@ -10,6 +10,69 @@ export function normalizeMathDelimiters(text: string): string {
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr) => `$${String(expr).trim()}$`)
 }
 
+export function stripThinkingBlocks(text: string): string {
+  return String(text || '')
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<thinking>[\s\S]*$/gi, '')
+    .replace(/<\/thinking>/gi, '')
+    .replace(/^\s*\{"type":"thinking(?:_start|_end)?".*?\}\s*$/gm, '')
+}
+
+function closeDanglingFence(text: string): string {
+  const lines = String(text || '').split(/\r?\n/)
+  let openingFenceIndex = -1
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*```/.test(lines[index])) continue
+    openingFenceIndex = openingFenceIndex === -1 ? index : -1
+  }
+
+  if (openingFenceIndex === -1) return text
+
+  // 流式回答中模型偶尔会漏掉代码块结束符，随后输出的 Markdown 表格会被整段当作代码。
+  // 只在能明确识别表头 + 分隔行时提前闭合，避免误伤正常代码示例。
+  for (let index = openingFenceIndex + 1; index < lines.length - 1; index += 1) {
+    const header = lines[index].trim()
+    const divider = lines[index + 1].trim()
+    const isTableHeader = (header.match(/\|/g) || []).length >= 2
+    const isTableDivider = /^\|?\s*:?-{3,}:?(\s*\|\s*:?-{3,}:?)+\s*\|?$/.test(divider)
+    if (isTableHeader && isTableDivider) {
+      lines.splice(index, 0, '```')
+      return lines.join('\n')
+    }
+  }
+
+  return `${text}\n\`\`\``
+}
+
+function normalizeCompactTables(text: string): string {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('|') || !trimmed.includes('||')) return line
+      return line.replace(/\s*\|\|\s*/g, '|\n|')
+    })
+    .join('\n')
+}
+
+function normalizeTableIndentation(text: string): string {
+  const lines = String(text || '').split(/\r?\n/)
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index]
+    const divider = lines[index + 1]
+    const isTableHeader = (header.match(/\|/g) || []).length >= 2
+    const isTableDivider = /^\s*\|?\s*:?-{3,}:?(\s*\|\s*:?-{3,}:?)+\s*\|?\s*$/.test(divider)
+    if (!isTableHeader || !isTableDivider) continue
+
+    for (let row = index; row < lines.length; row += 1) {
+      if (!/^\s*\|/.test(lines[row])) break
+      lines[row] = lines[row].replace(/^\s+/, '')
+    }
+  }
+  return lines.join('\n')
+}
+
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true }).use(texmath, {
     engine: katex,
     delimiters: 'dollars',
@@ -150,7 +213,8 @@ export const codeBlockStore: Record<string, string> = {}
 let codeBlockSeq = 0
 
 export function renderMarkdown(content: string): string {
-  return md.render(normalizeMathDelimiters(content || ''))
+  const normalized = normalizeTableIndentation(normalizeCompactTables(stripThinkingBlocks(content || '')))
+  return md.render(normalizeMathDelimiters(normalized))
 }
 
 export function renderMarkdownEnhanced(content: string): string {
@@ -159,16 +223,16 @@ export function renderMarkdownEnhanced(content: string): string {
 
   // 提取原始HTML块（视频卡片等），避免被 markdown-it (html:false) 转义
   const htmlBlocks: string[] = []
-  let preprocessed = content
+  let preprocessed = closeDanglingFence(stripThinkingBlocks(content || ''))
     .replace(/<div class="video-results">[\s\S]*?<\/div>\s*$/gm, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
     .replace(/<script[\s>][\s\S]*?<\/script>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
     .replace(/<style[\s>][\s\S]*?<\/style>/g, (m) => { const i = htmlBlocks.length; htmlBlocks.push(m); return `\uFFF0HT${i}\uFFF1` })
 
-  const processed = preprocessed.replace(/```\s*(\S*?)[ \t]*\r?\n([\s\S]*?)```/g, (_m, lang, code) => {
+  const processed = normalizeCompactTables(preprocessed.replace(/```\s*(\S*?)[ \t]*\r?\n([\s\S]*?)```/g, (_m, lang, code) => {
     const idx = codeBlockList.length
     codeBlockList.push({ lang: lang || '', code })
     return `\uFFF0CB${idx}\uFFF1`
-  })
+  }))
 
   let html = renderMarkdown(processed)
 
@@ -186,6 +250,9 @@ export function renderMarkdownEnhanced(content: string): string {
 
   // 还原 HTML 块
   html = html.replace(/\uFFF0HT(\d+)\uFFF1/g, (_m, i) => htmlBlocks[+i] || '')
+
+  html = html.replace(/<table>/g, '<div class="markdown-table-wrap"><table>')
+    .replace(/<\/table>/g, '</table></div>')
 
   return html
 }

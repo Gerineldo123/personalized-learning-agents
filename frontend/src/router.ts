@@ -1,4 +1,5 @@
 ﻿import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from './stores/auth'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,18 @@ const router = createRouter({
     { path: '/agent', name: 'agent', component: () => import('./views/AgentPanelView.vue'), meta: { fullscreen: true } },
     { path: '/ppt', name: 'ppt', component: () => import('./views/PptView.vue') },
   ],
+})
+
+router.beforeEach((to) => {
+  const authStore = useAuthStore()
+
+  if (!authStore.isLoggedIn && to.path !== '/auth') {
+    return '/auth'
+  }
+
+  if (authStore.isLoggedIn && to.path === '/auth') {
+    return '/'
+  }
 })
 
 export default router

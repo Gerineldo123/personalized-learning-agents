@@ -10,6 +10,7 @@ from models.conversation import Conversation, ChatMessage
 from schemas.student import ProfileCreate, ProfileResponse
 from agents.base import AgentState
 from agents.profile_agent import ProfileAgent
+from services.profile_update_service import record_history, update_profile_evidence, emit_profile_updated
 
 router = APIRouter(prefix="/api/profile", tags=["画像"])
 
@@ -405,6 +406,8 @@ async def rebuild_profile(user_id: str):
                 "ability_scores": old.ability_scores or {},
                 "weak_courses": old.weak_courses or [],
                 "ability_summary": old.ability_summary or "",
+                "mistake_tendency": old.mistake_tendency or {},
+                "resource_feedback_profile": old.resource_feedback_profile or {},
                 "focus_stamina_score": old.focus_stamina_score,
                 "focus_peak_hours": old.focus_peak_hours,
                 "focus_interrupt_rate": old.focus_interrupt_rate,
@@ -418,6 +421,20 @@ async def rebuild_profile(user_id: str):
         quiz_records = db.query(QuizRecord).filter(
             QuizRecord.user_id == user_id
         ).order_by(QuizRecord.created_at.desc()).limit(50).all()
+
+        from models.mistake_question import MistakeQuestion
+        from models.resource import LearningResource
+        from models.course_path import CoursePath
+        mistakes = db.query(MistakeQuestion).filter(
+            MistakeQuestion.user_id == user_id
+        ).order_by(MistakeQuestion.last_wrong_at.desc()).limit(50).all()
+        completed_resources = db.query(LearningResource).filter(
+            LearningResource.user_id == user_id,
+            LearningResource.learning_status == "completed",
+        ).order_by(LearningResource.completed_at.desc()).limit(50).all()
+        course_paths = db.query(CoursePath).filter(
+            CoursePath.user_id == user_id
+        ).order_by(CoursePath.updated_at.desc()).limit(20).all()
 
         chat_summary_parts = []
         for conv in convs:
@@ -434,6 +451,41 @@ async def rebuild_profile(user_id: str):
             total = len(quiz_records)
             avg = sum(r.score for r in quiz_records) / total
             quiz_text = f"共{total}次答题，平均正确率{avg:.0%}"
+
+        mistake_items = []
+        for mistake in mistakes[:20]:
+            question = mistake.question if isinstance(mistake.question, dict) else {}
+            mistake_items.append({
+                "题目": str(question.get("question") or question.get("title") or "")[:120],
+                "知识点": question.get("knowledge_points") or [],
+                "题型": question.get("type") or "",
+                "错误次数": mistake.wrong_count or 1,
+            })
+        mistake_text = json.dumps(mistake_items, ensure_ascii=False) if mistake_items else "暂无错题明细"
+
+        resource_items = [
+            {
+                "标题": r.title,
+                "类型": r.resource_type,
+                "课程": r.course_name,
+                "知识点": r.knowledge_points or [],
+            }
+            for r in completed_resources[:20]
+        ]
+        resource_text = json.dumps(resource_items, ensure_ascii=False) if resource_items else "暂无已完成资源"
+
+        path_items = [
+            {
+                "课程": p.course_name,
+                "进度": p.progress,
+                "状态": p.status,
+                "完成步骤": p.done_steps,
+                "总步骤": p.total_steps,
+            }
+            for p in course_paths[:10]
+        ]
+        path_text = json.dumps(path_items, ensure_ascii=False) if path_items else "暂无学习路径进度"
+        feedback_text = json.dumps((old.resource_feedback_profile if old else {}) or {}, ensure_ascii=False)
 
         from models.focus import FocusSession
         from collections import Counter
@@ -471,17 +523,21 @@ async def rebuild_profile(user_id: str):
 旧画像：{old_profile}
 对话记录：{chat}
 答题统计：{quiz}
+错题明细：{mistakes}
+已完成资源：{resources}
+资源反馈画像：{feedback}
+学习路径进度：{paths}
 专注学习行为：{focus}
 
 返回格式：
 {{
   "major": "专业名称",
   "grade": "年级",
-  "knowledge_base": {{"学科": 0.0-1.0评分}},
   "cognitive_style": "视觉型/听觉型/实践型",
   "weak_points": ["薄弱知识点"],
   "learning_goal": "学习目标描述",
   "preferred_format": ["偏好资源格式"],
+  "mistake_tendency": {{"错误倾向": "基于错题明细归纳"}},
   "education_level": "专科生/本科生/硕士研究生/博士研究生",
   "education_year": "大一/大二/大三/大四/大五/研一/研二/研三/博一/博二及以上",
   "discipline": "哲学/经济学/法学/教育学/文学/历史学/理学/工学/农学/医学/军事学/管理学/艺术学/交叉学科",
@@ -515,8 +571,9 @@ async def rebuild_profile(user_id: str):
 
 规则：
 - 旧画像是重要先验，除非新证据强，尽量保留稳定信息
-- knowledge_base 基于答题正确率修正
-- weak_points 根据答题错误和对话中反复问的概念抽取
+- 不要输出或修改 knowledge_base；掌握度只由题目提交正确率自动更新
+- weak_points 优先根据错题知识点、低分答题和对话中反复问的概念抽取
+- preferred_format 结合资源反馈画像，helpful 较多的类型优先，irrelevant 较多的类型降低优先级
 - **重要**：每门课的 course_ability_scores 必须根据该课的 difficulty_types 差异化打分，不同课程不能相同
 - **重要**：ability_summary 末尾用一句话简要分析专注习惯
 - 若信息不足，优先沿用旧画像字段，避免留空
@@ -527,6 +584,10 @@ async def rebuild_profile(user_id: str):
                 old_profile=json.dumps(old_profile_data or {}, ensure_ascii=False),
                 chat=chat_summary[:3000],
                 quiz=quiz_text,
+                mistakes=mistake_text[:3000],
+                resources=resource_text[:2500],
+                feedback=feedback_text[:1500],
+                paths=path_text[:1500],
                 focus=focus_text[:1500],
             )}
         ], temperature=0.3)
@@ -564,7 +625,7 @@ async def rebuild_profile(user_id: str):
         merged = {
             "major": extracted.get("major") or (old.major if old else "") or "",
             "grade": extracted.get("grade") or (old.grade if old else "") or "",
-            "knowledge_base": extracted.get("knowledge_base") or (old.knowledge_base if old else {}) or {},
+            "knowledge_base": (old.knowledge_base if old else {}) or {},
             "cognitive_style": extracted.get("cognitive_style") or (old.cognitive_style if old else "") or "",
             "weak_points": extracted.get("weak_points") or (old.weak_points if old else []) or [],
             "learning_goal": extracted.get("learning_goal") or (old.learning_goal if old else "") or "",
@@ -576,10 +637,22 @@ async def rebuild_profile(user_id: str):
             "ability_scores": extracted.get("ability_scores") or (old.ability_scores if old else {}) or {},
             "weak_courses": extracted.get("weak_courses") or (old.weak_courses if old else []) or [],
             "ability_summary": extracted.get("ability_summary") or (old.ability_summary if old else "") or "",
+            "mistake_tendency": extracted.get("mistake_tendency") or (old.mistake_tendency if old else {}) or {},
+            "resource_feedback_profile": (old.resource_feedback_profile if old else {}) or {},
             "focus_stamina_score": focus_stats_computed.get("focus_stamina_score") or (old.focus_stamina_score if old else None),
             "focus_peak_hours": focus_stats_computed.get("focus_peak_hours") or (old.focus_peak_hours if old else None),
             "focus_interrupt_rate": focus_stats_computed.get("focus_interrupt_rate") if focus_stats_computed.get("focus_interrupt_rate") is not None else (old.focus_interrupt_rate if old else None),
             "focus_weekly_avg_min": focus_stats_computed.get("focus_weekly_avg_min") or (old.focus_weekly_avg_min if old else None),
+        }
+
+        evidence = {
+            "knowledge_base": "掌握度仅由题目正确率自动更新；智能重建不改掌握度",
+            "weak_points": "智能重建：错题明细、低分答题、对话记录综合分析",
+            "learning_goal": "智能重建：历史对话综合分析",
+            "cognitive_style": "智能重建：历史对话与学习行为综合分析",
+            "preferred_format": "智能重建：资源反馈与历史对话综合分析",
+            "mistake_tendency": "智能重建：错题明细综合分析",
+            "resource_feedback_profile": "学习资源反馈",
         }
 
         if old:
@@ -594,9 +667,20 @@ async def rebuild_profile(user_id: str):
             db.commit()
             db.refresh(saved)
 
-        from services.event_service import emit
-        import asyncio as _asyncio
-        _asyncio.create_task(emit("profile.updated", {"user_id": user_id}))
+        update_profile_evidence(saved, evidence)
+        record_history(db, user_id, "rebuild", saved, {
+            "data_sources": {
+                "conversations_analyzed": len(convs),
+                "quiz_records_analyzed": len(quiz_records),
+                "mistakes_analyzed": len(mistakes),
+                "completed_resources_analyzed": len(completed_resources),
+                "course_paths_analyzed": len(course_paths),
+                "focus_sessions_analyzed": len(focus_sessions) if focus_sessions else 0,
+            }
+        })
+        db.commit()
+        db.refresh(saved)
+        emit_profile_updated(user_id)
 
         return {
             "ok": True,
@@ -604,6 +688,9 @@ async def rebuild_profile(user_id: str):
             "data_sources": {
                 "conversations_analyzed": len(convs),
                 "quiz_records_analyzed": len(quiz_records),
+                "mistakes_analyzed": len(mistakes),
+                "completed_resources_analyzed": len(completed_resources),
+                "course_paths_analyzed": len(course_paths),
                 "focus_sessions_analyzed": len(focus_sessions) if focus_sessions else 0,
                 "old_profile_loaded": old is not None,
             },

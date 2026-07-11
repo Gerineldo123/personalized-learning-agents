@@ -103,13 +103,16 @@ class MindMapAgent(BaseAgent):
             + [x for x in [graph_tags.get("course_name")] if x]
             + list(graph_tags.get("knowledge_points") or [])
         ))
+        content = {"markdown": markdown}
+        if graph_tags.get("course_bindings"):
+            content["course_bindings"] = graph_tags.get("course_bindings")
         db = SessionLocal()
         try:
             resource = LearningResource(
                 user_id=state.user_id,
                 resource_type="mindmap",
                 title=title,
-                content={"markdown": markdown},
+                content=content,
                 tags=tags,
                 course_name=graph_tags.get("course_name"),
                 knowledge_points=graph_tags.get("knowledge_points") or [],

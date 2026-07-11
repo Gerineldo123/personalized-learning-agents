@@ -18,6 +18,7 @@ from graph.subgraphs.resource_orchestration import DEFAULT_RESOURCE_TYPES, resou
 from graph.subgraphs.review import review_subgraph
 from models.course_path import CoursePath
 from models.student import StudentProfile
+from services.agent_collaboration_service import collaboration_sse_payload
 from services.kp_service import default_focus_kps, infer_course_from_text
 from services.safety_service import check_text_input
 
@@ -53,14 +54,16 @@ def _stage(stage: str, data) -> str:
     return json.dumps({"type": "stage", "stage": stage, "data": data}, ensure_ascii=False)
 
 
-def _resource(resource_id: int | None, resource_type: str, title: str) -> str | None:
-    if not resource_id:
+def _resource(resource_id: int | None, resource_type: str, title: str, ppt_session: dict | None = None) -> str | None:
+    if not resource_id and not ppt_session:
         return None
     return json.dumps({
         "type": "resource",
         "resource_id": resource_id,
         "resource_type": resource_type,
         "title": title or resource_type,
+        "ppt_session": ppt_session,
+        "status": "pending_step_by_step" if ppt_session else None,
     }, ensure_ascii=False)
 
 
@@ -215,8 +218,28 @@ async def _stream_study_workflow(req: WorkflowRequest, safe_topic: str):
     yielded_resources = set()
     yielded_events = set()
 
-    async for chunk in resource_orchestration_graph.astream(state, stream_mode="updates"):
+    yielded_agent_events = set()
+    async for raw_chunk in resource_orchestration_graph.astream(state, stream_mode=["updates", "custom"]):
+        mode = "updates"
+        chunk = raw_chunk
+        if isinstance(raw_chunk, tuple) and len(raw_chunk) == 2:
+            mode, chunk = raw_chunk
+        if mode == "custom":
+            if isinstance(chunk, dict) and chunk.get("type") == "agent_event":
+                event = chunk.get("event") or {}
+                key = json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                if key not in yielded_agent_events:
+                    yielded_agent_events.add(key)
+                    yield json.dumps(chunk, ensure_ascii=False, default=str)
+            continue
+        if mode != "updates" or not isinstance(chunk, dict):
+            continue
         for node_name, update in chunk.items():
+            for event in update.get("agent_events") or []:
+                key = event.get("event_id") or json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                if key not in yielded_agent_events:
+                    yielded_agent_events.add(key)
+                    yield collaboration_sse_payload(event)
             events = []
             if isinstance(update.get("workflow_outputs"), list):
                 events.extend(update["workflow_outputs"])
@@ -232,11 +255,20 @@ async def _stream_study_workflow(req: WorkflowRequest, safe_topic: str):
                 yield _stage(stage, data)
                 if stage == "resource_created" and isinstance(data, dict):
                     rid = data.get("resource_id")
+                    ppt_session = data.get("ppt_session")
                     if rid and rid not in yielded_resources:
                         yielded_resources.add(rid)
                         event = _resource(rid, data.get("resource_type", ""), data.get("title", ""))
                         if event:
                             yield event
+                    elif ppt_session:
+                        session_id = ppt_session.get("session_id") or json.dumps(ppt_session, ensure_ascii=False, sort_keys=True, default=str)
+                        key = f"ppt:{session_id}"
+                        if key not in yielded_resources:
+                            yielded_resources.add(key)
+                            event = _resource(None, data.get("resource_type", "ppt"), data.get("title", ""), ppt_session)
+                            if event:
+                                yield event
             if update.get("response"):
                 yield update["response"]
 

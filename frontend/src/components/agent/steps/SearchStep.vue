@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { AgentStep, SearchData } from '../../../types/agent'
 
@@ -15,7 +15,7 @@ function toggleExpand() {
 <template>
   <div class="step-card" :class="{ expanded }">
     <div class="step-header" @click="toggleExpand">
-      <span class="step-icon">🔍</span>
+      <span class="step-icon">馃攳</span>
       <span class="step-title">{{ step.title }}</span>
       <el-tag size="small" :type="step.status === 'completed' ? 'success' : step.status === 'running' ? 'warning' : 'danger'">
         {{ step.status === 'completed' ? 'done' : step.status === 'running' ? 'searching...' : 'error' }}
@@ -24,20 +24,20 @@ function toggleExpand() {
     </div>
     <div v-show="expanded" class="step-content">
       <div v-if="data.query" class="search-query">
-        <strong>搜索词：</strong>{{ data.query }}
+        <strong>鎼滅储璇嶏細</strong>{{ data.query }}
       </div>
       <div v-if="data.answer" class="search-answer">
-        <strong>AI 摘要：</strong>{{ data.answer }}
+        <strong>AI 鎽樿锛</strong>{{ data.answer }}
       </div>
       <div v-if="data.results && data.results.length > 0" class="search-results">
-        <div class="results-label">搜索结果 ({{ data.results.length }})：</div>
+        <div class="results-label">鎼滅储缁撴灉 ({{ data.results.length }})锛</div>
         <div v-for="(r, i) in data.results" :key="i" class="result-item">
-          <a :href="r.url" target="_blank" rel="noopener" class="result-title">{{ r.title || '无标题' }}</a>
+          <a :href="r.url" class="result-title">{{ r.title || '无标题' }}</a>
           <p class="result-snippet">{{ r.snippet }}</p>
         </div>
       </div>
       <div v-if="data.results && data.results.length === 0 && step.status === 'completed'" class="no-results">
-        未找到相关结果
+        鏈壘鍒扮浉鍏崇粨鏋?
       </div>
     </div>
   </div>

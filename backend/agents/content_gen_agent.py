@@ -9,6 +9,7 @@ from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
 from services.kp_service import infer_resource_tags
 from services.ppt_model_service import create_ppt_session
+from services.resource_title_service import build_resource_title
 
 
 def _safe_json_loads(raw: str) -> dict:
@@ -275,6 +276,20 @@ CODE_PROMPT = """你是一个编程教学专家。根据学生画像和知识点
 - 包含运行结果说明
 - {hallu}"""
 
+ANIME_PROMPT = """你是一个计算机与数学课程可视化动画设计专家。根据学生画像和知识点，生成一个可直接在浏览器 iframe 中运行的单文件 HTML 动画演示。
+
+学生画像：{profile}
+知识点：{topic}
+难度：{level}
+
+要求：
+- 只输出完整 HTML 文档，不要 Markdown 代码块，不要额外解释
+- HTML 内联 CSS 和 JavaScript，不依赖外部 CDN 或网络资源
+- 页面宽度自适应，适合嵌入学习资源详情页预览
+- 必须包含可视化演示区域、步骤说明、开始/暂停/重置等交互控件
+- 重点解释知识点过程，不要只做静态图
+- {hallu}"""
+
 PPT_PROMPT = """你是一个课件设计专家。根据学生画像和知识点，生成一份结构化的PPT课件内容。
 
 学生画像：{profile}
@@ -300,6 +315,7 @@ class ContentGenAgent(BaseAgent):
         "quiz": "_generate_quiz",
         "article": "_generate_article",
         "code": "_generate_code_case",
+        "anime": "_generate_anime",
     }
 
     async def process(self, state: AgentState) -> AgentState:
@@ -375,6 +391,34 @@ class ContentGenAgent(BaseAgent):
             "agent": self.name, "resource_type": "code", "content": safe_content
         }, ensure_ascii=False)
 
+    async def _generate_anime(self, state: AgentState):
+        message = state.user_message
+        profile = self._profile_text(state)
+        kb = state.profile.knowledge_base if state.profile else {}
+        level = "初级"
+        for _name, score in kb.items():
+            if score >= 0.7:
+                level = "高级"
+            elif score >= 0.4 and level == "初级":
+                level = "中级"
+        resp = await chat_completion([
+            {"role": "user", "content": ANIME_PROMPT.format(profile=profile, topic=message, level=level, hallu=hallu_rules())}
+        ], temperature=0.5)
+        content = resp.choices[0].message.content.strip()
+        if content.startswith("```"):
+            content = content.strip("`").strip()
+            if content.lower().startswith("html"):
+                content = content[4:].strip()
+        first_lt = content.find("<")
+        last_gt = content.rfind(">")
+        if first_lt >= 0 and last_gt > first_lt:
+            content = content[first_lt:last_gt + 1].strip()
+        safe_content, _ = await check_text(content)
+        self._save_or_draft_resource(state, "anime", {"code": safe_content, "language": "html"})
+        state["response"] = json.dumps({
+            "agent": self.name, "resource_type": "anime", "content": safe_content
+        }, ensure_ascii=False)
+
     async def _generate_ppt(self, state: AgentState):
         message = state.user_message
         course_name = (state.get("course_name") or "").strip()
@@ -435,7 +479,7 @@ class ContentGenAgent(BaseAgent):
 
     def _save_resource(self, state: AgentState, resource_type: str, content):
         prev_id = state.get("resource_db_id")
-        title = self._extract_title(content, resource_type)
+        title = self._extract_title(content, resource_type, state)
         text = " ".join([
             str(state.get("user_message", "")),
             title,
@@ -451,13 +495,17 @@ class ContentGenAgent(BaseAgent):
             + [x for x in [graph_tags.get("course_name")] if x]
             + list(graph_tags.get("knowledge_points") or [])
         ))
+        resource_content = content if isinstance(content, dict) else {"text": content}
+        if graph_tags.get("course_bindings"):
+            resource_content = dict(resource_content)
+            resource_content["course_bindings"] = graph_tags.get("course_bindings")
         db = SessionLocal()
         try:
             resource = LearningResource(
                 user_id=state.user_id,
                 resource_type=resource_type,
                 title=title,
-                content=content if isinstance(content, dict) else {"text": content},
+                content=resource_content,
                 tags=tags,
                 course_name=graph_tags.get("course_name"),
                 knowledge_points=graph_tags.get("knowledge_points") or [],
@@ -483,19 +531,19 @@ class ContentGenAgent(BaseAgent):
         finally:
             db.close()
 
-    def _extract_title(self, content, resource_type: str) -> str:
-        topic = ""
-        if isinstance(content, dict):
-            topic = content.get("title", "")
-        elif isinstance(content, str):
-            text = content[:100]
-            if text.startswith("# "):
-                topic = text.split("\n")[0].replace("# ", "").strip()
-        return topic or f"{resource_type}_resource"
+    def _extract_title(self, content, resource_type: str, state: AgentState | None = None) -> str:
+        state = state or AgentState()
+        return build_resource_title(
+            resource_type,
+            content,
+            fallback_text=state.get("user_message", ""),
+            course_name=state.get("course_name"),
+            knowledge_points=state.get("knowledge_points") or [],
+        )
 
     def _save_or_draft_resource(self, state: AgentState, resource_type: str, content):
         if state.get("persist", True) is False:
-            title = self._extract_title(content, resource_type)
+            title = self._extract_title(content, resource_type, state)
             state["resource_title"] = title
             state["draft_resource"] = {
                 "client_draft_id": state.get("client_draft_id") or uuid.uuid4().hex,

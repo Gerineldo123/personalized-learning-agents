@@ -231,7 +231,7 @@ function renderProcessedContent(content: string): string {
           : avid ? `//player.bilibili.com/player.html?aid=${avid}${pageParam}&autoplay=0&danmaku=0` : ''
         const embedOrLink = embedSrc
           ? `<div class="video-card-embed-wrap"><iframe src="${embedSrc}" scrolling="no" frameborder="0" allowfullscreen class="video-card-iframe"></iframe></div>`
-          : (v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}" target="_blank" rel="noopener">▶ 在 B 站打开</a>` : '')
+          : (v.url ? `<a class="video-card-link" href="${escapeHtml(v.url)}">▶ 在 B 站打开</a>` : '')
         return `
         <div class="video-card">
           <div class="video-card-title">📺 ${escapeHtml(v.title || '')}</div>
@@ -766,7 +766,7 @@ function regenerateMessage(aiIndex: number) {
             </div>
 
             <div v-if="msg.role === 'assistant' && msg.resources?.length && !msg.streaming" class="msg-resources">
-              <div v-for="r in msg.resources" :key="r.resource_id" class="resource-card-inline">
+              <div v-for="r in msg.resources" :key="r.resource_id ?? r.title ?? 'resource'" class="resource-card-inline">
                 <span class="resource-badge">{{ r.resource_type === 'mindmap' ? '🧠' : r.resource_type === 'quiz' ? '📝' : '📄' }} {{ r.title || '学习资源' }}</span>
                 <span class="resource-type-tag">{{ r.resource_type === 'mindmap' ? '思维导图' : r.resource_type === 'quiz' ? '题库' : r.resource_type === 'article' ? '文章' : r.resource_type }}</span>
                 <span class="resource-jump-btn" @click="router.push({ path: '/resources', query: { open: String(r.resource_id) } })">查看 →</span>

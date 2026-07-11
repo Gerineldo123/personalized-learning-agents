@@ -18,7 +18,6 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
 {{
   "major": "专业名称",
   "grade": "年级",
-  "knowledge_base": {{"学科": 0.0-1.0评分}},
   "cognitive_style": "视觉型/听觉型/实践型",
   "weak_points": ["薄弱知识点"],
   "learning_goal": "学习目标描述",
@@ -29,7 +28,7 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
 }}
 
 规则：
-- knowledge_base 评分基于答题正确率：全对→0.9+，全错→0.1-，无数据保持原值
+- 不要输出或修改 knowledge_base；掌握度只由题目提交正确率自动更新
 - weak_points 根据答题错误和对话中的困惑抽取
 - focus_stamina_score: 周均>300分钟且中断率<10%→8-10；周均100-300分钟→5-7；周均<100分钟或中断率>30%→1-4；无数据不填
 - focus_peak_hours: 从专注数据的高效时段直接取值，无数据不填
@@ -79,7 +78,7 @@ class ProfileAgent(BaseAgent):
                 self._merge_profile(old_profile, extracted)
             else:
                 safe = {k: v for k, v in extracted.items() if k in (
-                    "major", "grade", "knowledge_base", "cognitive_style",
+                    "major", "grade", "cognitive_style",
                     "weak_points", "learning_goal", "preferred_format",
                 )}
                 old_profile = StudentProfile(user_id=user_id, **safe)
@@ -201,30 +200,36 @@ class ProfileAgent(BaseAgent):
         }
 
     def _merge_profile(self, profile: StudentProfile, extracted: dict):
+        evidence = dict(profile.profile_evidence or {})
         if extracted.get("major"):
             profile.major = extracted["major"]
         if extracted.get("grade"):
             profile.grade = extracted["grade"]
-        if extracted.get("knowledge_base"):
-            kb = {**(profile.knowledge_base or {}), **extracted["knowledge_base"]}
-            profile.knowledge_base = kb
         if extracted.get("cognitive_style"):
             profile.cognitive_style = extracted["cognitive_style"]
+            evidence["cognitive_style"] = "对话更新"
         if extracted.get("weak_points"):
             from services.recommendation_service import upsert_weak_points_batch
             upsert_weak_points_batch(profile.user_id, extracted["weak_points"])
             profile.weak_points = list(set((profile.weak_points or []) + extracted["weak_points"]))[-15:]
+            evidence["weak_points"] = "对话更新"
         if extracted.get("learning_goal"):
             profile.learning_goal = extracted["learning_goal"]
+            evidence["learning_goal"] = "对话更新"
         if extracted.get("preferred_format"):
             pf = list(set((profile.preferred_format or []) + extracted["preferred_format"]))
             profile.preferred_format = pf
+            evidence["preferred_format"] = "对话更新"
         if extracted.get("focus_stamina_score") is not None:
             profile.focus_stamina_score = extracted["focus_stamina_score"]
+            evidence["focus_stamina_score"] = "对话更新"
         if extracted.get("focus_peak_hours"):
             profile.focus_peak_hours = extracted["focus_peak_hours"]
+            evidence["focus_peak_hours"] = "对话更新"
         if extracted.get("focus_interrupt_rate") is not None:
             profile.focus_interrupt_rate = extracted["focus_interrupt_rate"]
+            evidence["focus_interrupt_rate"] = "对话更新"
+        profile.profile_evidence = evidence
 
 
 if __name__ == "__main__":

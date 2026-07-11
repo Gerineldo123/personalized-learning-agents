@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, watch, onMounted, computed, nextTick } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import ConversationalOnboarding from '../components/profile/ConversationalOnboarding.vue'
@@ -15,7 +15,17 @@ const router = useRouter()
 const profile = ref<any>(null)
 const loading = ref(false)
 const profileHistory = ref<Array<{ trigger: string; snapshot: any; created_at: string }>>([])
-const TRIGGER_LABELS: Record<string, string> = { quiz: '答题', focus: '专注', path_step: '路径步骤', chat: '对话', onboarding: '对话建档', questionnaire: '旧问卷' }
+const TRIGGER_LABELS: Record<string, string> = {
+  quiz: '答题',
+  resource_completed: '资源完成',
+  resource_feedback: '资源反馈',
+  focus: '专注',
+  path_step: '路径步骤',
+  chat: '对话',
+  rebuild: '智能重建',
+  onboarding: '对话建档',
+  questionnaire: '旧问卷',
+}
 const quizStats = ref({
   total: 0,
   avg_score_percent: 0,
@@ -46,7 +56,7 @@ const latestEvidenceText = computed(() => {
 
 const profileEvidence = computed(() => profile.value?.profile_evidence || {})
 function evidenceFor(key: string) {
-  return profileEvidence.value?.[key] || latestEvidenceText.value
+  return profileEvidence.value?.[key] || '暂无明确来源'
 }
 
 const knowledgeGraphData = computed(() => profile.value?.knowledge_base || {})
@@ -58,14 +68,10 @@ onMounted(() => {
 
 watch(() => eventStore.lastEvent, (evt) => {
   if (evt?.event === 'profile.updated') {
-    nextTick().then(() => loadProfile(true))
+    loadProfile(true)
   }
   if (evt?.event === 'quiz.submitted') {
-    // 功能6: 答题后自动重建画像以刷新知识图谱
-    nextTick().then(() => loadProfile(true))
-    api.post('/profile/rebuild', null, { params: { user_id: userStore.userId } })
-      .then(() => loadProfile())
-      .catch(() => {})
+    loadProfile(true)
   }
 })
 
@@ -260,6 +266,12 @@ const sortedWeakCourses = computed(() => {
   if (!profile.value?.weak_courses) return []
   return [...profile.value.weak_courses].sort((a, b) => courseImpactScore(b) - courseImpactScore(a))
 })
+void loadCoursePath
+void generateCoursePath
+void generatePathResources
+void openPathResource
+void toggleStepDone
+void sortedWeakCourses
 
 const chatUpdateInput = ref('')
 const chatUpdateLoading = ref(false)
@@ -373,6 +385,7 @@ async function submitChatUpdate() {
             <span v-if="quizStats.latest_score_percent !== null">最近一次：{{ quizStats.latest_score_percent.toFixed(1) }}%</span>
           </div>
           <p class="quiz-analysis">{{ quizAnalysis }}</p>
+          <p class="mastery-rule-note">掌握度只由题目正确率自动更新；完成资源、路径进度和智能重建不会直接改分。</p>
         </div>
 
         <!-- 对话式更新画像 -->
@@ -404,22 +417,25 @@ async function submitChatUpdate() {
       @cancel="onOnboardingCancel"
     />
 
-    <el-dialog v-model="showRebuildDialog" title="重新构建画像" width="500px">
+    <el-dialog v-model="showRebuildDialog" title="智能重建画像" width="500px">
       <p class="rebuild-hint">
-        系统将从以下数据源综合分析，重新生成你的学习画像：
+        系统将基于历史数据重新分析画像，适合画像长期未整理或状态变化较大时使用：
       </p>
       <ul class="rebuild-sources">
         <li><el-icon><component :is="'ChatDotRound'" /></el-icon> 历史对话记录</li>
         <li><el-icon><component :is="'EditPen'" /></el-icon> 答题记录与正确率</li>
+        <li><el-icon><component :is="'WarningFilled'" /></el-icon> 错题明细与薄弱知识点</li>
+        <li><el-icon><component :is="'Collection'" /></el-icon> 资源完成与反馈记录</li>
+        <li><el-icon><component :is="'Clock'" /></el-icon> 学习路径与专注统计</li>
       </ul>
       <p class="rebuild-warn">
         <el-icon><component :is="'WarningFilled'" /></el-icon>
-        此操作将删除当前画像并基于历史数据重新生成，不可撤销。
+        日常学习行为会自动增量更新画像；智能重建会调用大模型做一次全面体检。
       </p>
       <template #footer>
         <el-button @click="showRebuildDialog = false">取消</el-button>
         <el-button type="warning" :loading="rebuildLoading" @click="doRebuildProfile">
-          确认重建
+          开始智能重建
         </el-button>
       </template>
     </el-dialog>
@@ -648,6 +664,12 @@ async function submitChatUpdate() {
   color: #3A332E;
   font-size: 14px;
   line-height: 1.8;
+}
+
+.mastery-rule-note {
+  margin: 8px 0 0;
+  color: #9a6b38;
+  font-size: 13px;
 }
 
 .bottom-area {

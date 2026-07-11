@@ -50,19 +50,31 @@ def _upsert_curricula(db, user_id: str, courses: list[dict], source: str):
 
 def _sync_status_from_course_paths(db, user_id: str):
     """将 CoursePath 完成情况同步到 UserCourseStatus，作为图谱状态覆盖来源之一。"""
-    paths = db.query(CoursePath).filter(CoursePath.user_id == user_id).all()
-    for path in paths:
-        status = "completed" if path.status == "completed" else "learning"
-        stmt = sqlite_insert(UserCourseStatus).values(
-            user_id=user_id,
-            course_name=path.course_name,
-            status=status,
-        ).on_conflict_do_update(
-            index_elements=["user_id", "course_name"],
-            set_=dict(status=status),
-        )
-        db.execute(stmt)
-    db.commit()
+    try:
+        paths = db.query(CoursePath).filter(CoursePath.user_id == user_id).all()
+        if not paths:
+            return
+
+        for path in paths:
+            status = "completed" if path.status == "completed" else "learning"
+            try:
+                stmt = sqlite_insert(UserCourseStatus).values(
+                    user_id=user_id,
+                    course_name=path.course_name,
+                    status=status,
+                ).on_conflict_do_update(
+                    index_elements=["user_id", "course_name"],
+                    set_=dict(status=status),
+                )
+                db.execute(stmt)
+            except Exception:
+                # 单条写入失败不影响其他记录，静默跳过
+                continue
+
+        db.commit()
+    except Exception:
+        # 整个同步失败时回滚，不影响主流程
+        db.rollback()
 
 
 @router.get("/majors")

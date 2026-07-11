@@ -1,9 +1,13 @@
+import type { AgentCollaborationEvent } from '../types/agent'
+
 export type WorkflowType = 'study' | 'review' | 'evaluation' | 'video'
 
 export interface ResourceEvent {
-  resource_id: number
+  resource_id?: number | null
   resource_type: string
   title: string
+  ppt_session?: any
+  status?: string
 }
 
 export function workflowStream(
@@ -16,6 +20,7 @@ export function workflowStream(
   onDone: () => void,
   onError: (err: Error) => void,
   onResource?: (resource: ResourceEvent) => void,
+  onAgentEvent?: (event: AgentCollaborationEvent) => void,
 ) {
   const controller = new AbortController()
 
@@ -45,8 +50,18 @@ export function workflowStream(
             try {
               const parsed = JSON.parse(raw)
               if (parsed.type === 'stage') { onStage(parsed.stage, parsed.data); continue }
+              if (parsed.type === 'agent_event' && onAgentEvent) {
+                onAgentEvent(parsed.event as AgentCollaborationEvent)
+                continue
+              }
               if (parsed.type === 'resource' && onResource) {
-                onResource({ resource_id: parsed.resource_id, resource_type: parsed.resource_type, title: parsed.title })
+                onResource({
+                  resource_id: parsed.resource_id,
+                  resource_type: parsed.resource_type,
+                  title: parsed.title,
+                  ppt_session: parsed.ppt_session,
+                  status: parsed.status,
+                })
                 continue
               }
             } catch {}

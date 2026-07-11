@@ -42,6 +42,7 @@ class AgentGraphState(TypedDict):
     mistake_analysis: NotRequired[dict]
     path_suggestion: NotRequired[str]
     workflow_outputs: NotRequired[list[dict]]
+    agent_events: NotRequired[Annotated[list[dict], append_list]]
 
     # 资源编排图
     course_name: NotRequired[str | None]

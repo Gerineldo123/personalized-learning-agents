@@ -94,11 +94,16 @@ def course_coverage(db, user_id: str, course_name: str) -> dict:
     kb = dict(profile.knowledge_base or {}) if profile else {}
     kps = get_course_kps(course_name)
     items = [{"knowledge_point": kp, "mastery": float(kb.get(kp, 0) or 0)} for kp in kps]
-    avg = round(sum(x["mastery"] for x in items) / len(items), 4) if items else 0
+    measured_items = [item for item in items if item["knowledge_point"] in kb]
+    avg = round(sum(x["mastery"] for x in measured_items) / len(measured_items), 4) if measured_items else 0
+    overall_avg = round(sum(x["mastery"] for x in items) / len(items), 4) if items else 0
     return {
         "course_name": course_name,
         "total": len(items),
+        "measured": len(measured_items),
+        "coverage_ratio": round(len(measured_items) / len(items), 4) if items else 0,
         "average_mastery": avg,
+        "overall_mastery": overall_avg,
         "items": items,
     }
 
@@ -110,6 +115,7 @@ def infer_resource_tags(
 ) -> dict:
     explicit_kps = [kp for kp in (knowledge_points or []) if kp in kp_course_map]
     matched_kps = explicit_kps or match_kp(text or "")
+    explicit_course = bool(course_name)
 
     if course_name:
         course = course_name
@@ -124,7 +130,7 @@ def infer_resource_tags(
         course_matches = [course for course in course_kp_map if course in (text or "")]
         course = course_matches[0] if course_matches else None
 
-    if course and course in course_kp_map:
+    if explicit_course and course and course in course_kp_map:
         allowed = set(course_kp_map.get(course, []))
         matched_kps = [kp for kp in matched_kps if kp in allowed]
 
@@ -142,39 +148,42 @@ def infer_resource_tags(
     elif course:
         confidence = 0.45
 
+    grouped_kps: dict[str, list[str]] = {}
+    for kp in unique_kps:
+        kp_course = kp_course_map.get(kp) or course
+        if kp_course:
+            grouped_kps.setdefault(kp_course, []).append(kp)
+    if course and course not in grouped_kps and not grouped_kps:
+        grouped_kps[course] = []
+
+    total_kps = max(len(unique_kps), 1)
+    course_bindings = []
+    for binding_course, binding_kps in grouped_kps.items():
+        binding_kps = list(dict.fromkeys(binding_kps))
+        binding_weight = round(len(binding_kps) / total_kps, 4) if unique_kps else 1.0
+        binding_kp_weights = {}
+        if binding_kps:
+            per_kp = round(1 / len(binding_kps), 4)
+            binding_kp_weights = {kp: per_kp for kp in binding_kps}
+        course_bindings.append({
+            "course_name": binding_course,
+            "knowledge_points": binding_kps,
+            "weight": binding_weight,
+            "kp_weights": binding_kp_weights,
+        })
+
     return {
         "course_name": course,
         "knowledge_points": unique_kps,
         "kp_weights": kp_weights,
         "tag_confidence": confidence,
+        "course_bindings": course_bindings,
     }
 
 
 def update_knowledge_base(db, user_id: str, kp_scores: dict[str, float], alpha: float = 0.3):
-    if not kp_scores:
-        return
-    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
-    if not profile:
-        return
-    kb = dict(profile.knowledge_base or {})
-    alpha = max(0.0, min(alpha, 1.0))
-    for kp, score in kp_scores.items():
-        old = kb.get(kp, 0.0)
-        score = max(0.0, min(float(score), 1.0))
-        kb[kp] = round(old * (1 - alpha) + score * alpha, 4)
-    profile.knowledge_base = kb
-    db.commit()
+    return
 
 
 def set_course_kp_scores(db, user_id: str, course_name: str, score: float):
-    kps = course_kp_map.get(course_name, [])
-    if not kps:
-        return
-    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user_id).first()
-    if not profile:
-        return
-    kb = dict(profile.knowledge_base or {})
-    for kp in kps:
-        kb[kp] = score
-    profile.knowledge_base = kb
-    db.commit()
+    return

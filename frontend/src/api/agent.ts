@@ -1,4 +1,4 @@
-import type { StepEvent } from '../types/agent'
+import type { AgentCollaborationEvent, StepEvent } from '../types/agent'
 
 export async function uploadFile(file: File): Promise<{ ok: boolean; file_name: string; content: string; size: number; error?: string }> {
   const formData = new FormData()
@@ -17,6 +17,7 @@ export function agentExecuteStream(
   fileName?: string,
   history?: { role: string; content: string }[],
   onToken?: (stepId: string, delta: string) => void,
+  onAgentEvent?: (event: AgentCollaborationEvent) => void,
 ): AbortController {
   const controller = new AbortController()
 
@@ -56,6 +57,8 @@ export function agentExecuteStream(
               const parsed = JSON.parse(raw)
               if (parsed.type === 'token' && onToken) {
                 onToken(parsed.step_id, parsed.delta)
+              } else if (parsed.type === 'agent_event' && onAgentEvent) {
+                onAgentEvent(parsed.event as AgentCollaborationEvent)
               } else if (parsed.type === 'step') {
                 onStep(parsed as StepEvent)
               } else if (parsed.type === 'error') {

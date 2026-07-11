@@ -128,14 +128,44 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
     live_pushed: set = set()
     token_counts: dict = {}
     step_pushed: set = set()
+    agent_event_pushed: set = set()
 
     async def run_graph():
         try:
-            async for chunk in graph.astream(state, stream_mode="updates"):
+            async for raw_chunk in graph.astream(state, stream_mode=["updates", "custom"], subgraphs=True):
+                mode = "updates"
+                chunk = raw_chunk
+                if isinstance(raw_chunk, tuple):
+                    if len(raw_chunk) == 3:
+                        _, mode, chunk = raw_chunk
+                    elif len(raw_chunk) == 2:
+                        if isinstance(raw_chunk[0], str):
+                            mode, chunk = raw_chunk
+                        else:
+                            _, chunk = raw_chunk
+                if mode == "custom":
+                    if isinstance(chunk, dict) and chunk.get("type") == "agent_event":
+                        event = chunk.get("event") or {}
+                        event_key = event.get("event_id") or json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                        if event_key not in agent_event_pushed:
+                            agent_event_pushed.add(event_key)
+                            await sse_queue.put(chunk)
+                    continue
+                if mode != "updates":
+                    continue
                 for node_name, node_update in chunk.items():
                     if not isinstance(node_update, dict):
                         continue
                     wf = node_update.get("workflow_outputs", None)
+                    agent_events = node_update.get("agent_events") or []
+                    for event in agent_events:
+                        if not isinstance(event, dict):
+                            continue
+                        event_key = event.get("event_id") or json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
+                        if event_key in agent_event_pushed:
+                            continue
+                        agent_event_pushed.add(event_key)
+                        await sse_queue.put({"type": "agent_event", "event": event})
                     if wf is None:
                         continue
                     from core.sse_registry import get_live_token_steps
@@ -151,6 +181,8 @@ async def _agent_stream(task_description: str, user_id: str, file_content: str =
                     # 非 token 事件去重
                     for event in wf:
                         if event.get("type") == "token":
+                            continue
+                        if event.get("type") != "step":
                             continue
                         if event.get("_live_pushed"):
                             continue

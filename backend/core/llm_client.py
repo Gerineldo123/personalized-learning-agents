@@ -65,7 +65,9 @@ async def ppt_completion(messages: list, stream: bool = False, **kwargs):
 
 async def _completion_with_retry(client_kwargs: dict, model: str, messages: list, stream: bool, kwargs: dict):
     last_exc: Exception | None = None
-    attempts = max(1, DEFAULT_RETRIES + 1)
+    request_kwargs = dict(kwargs)
+    retries = request_kwargs.pop("retries", DEFAULT_RETRIES)
+    attempts = max(1, int(retries) + 1)
     for attempt in range(attempts):
         try:
             client = AsyncOpenAI(**client_kwargs)
@@ -73,7 +75,7 @@ async def _completion_with_retry(client_kwargs: dict, model: str, messages: list
                 model=model,
                 messages=messages,
                 stream=stream,
-                **kwargs,
+                **request_kwargs,
             )
         except Exception as exc:
             last_exc = exc

@@ -26,6 +26,12 @@ class OneClickRequest(BaseModel):
     knowledge_points: list[str] = Field(default_factory=list)
 
 
+class ResolveBindingRequest(BaseModel):
+    user_id: str
+    topic: str
+    context: str = ""
+
+
 def _clean_items(items: list[str]) -> list[str]:
     return [item.strip() for item in items if str(item or "").strip()]
 
@@ -35,7 +41,7 @@ def _validate_generate_input(
     topic: str,
     course_name: str,
     knowledge_points: list[str],
-) -> tuple[str, str, list[str]]:
+) -> tuple[str, str, str, list[str]]:
     clean_user_id = user_id.strip()
     clean_topic = topic.strip()
     clean_course_name = course_name.strip()
@@ -45,11 +51,28 @@ def _validate_generate_input(
         raise HTTPException(status_code=400, detail="用户不能为空")
     if not clean_topic:
         raise HTTPException(status_code=400, detail="PPT 主题不能为空")
-    if not clean_course_name:
-        raise HTTPException(status_code=400, detail="生成 PPT 前必须绑定课程节点")
-    if not clean_knowledge_points:
-        raise HTTPException(status_code=400, detail="生成 PPT 前必须绑定至少一个知识点节点")
+    if bool(clean_course_name) != bool(clean_knowledge_points):
+        raise HTTPException(
+            status_code=400,
+            detail="图谱绑定课件需要同时提供课程和至少一个知识点；拓展课件请同时留空课程和知识点",
+        )
     return clean_user_id, clean_topic, clean_course_name, clean_knowledge_points
+
+
+@router.post("/resolve-binding")
+def resolve_binding(req: ResolveBindingRequest):
+    from services.ppt_model_service import resolve_ppt_binding
+
+    if not req.user_id.strip():
+        raise HTTPException(status_code=400, detail="用户不能为空")
+    try:
+        return resolve_ppt_binding(
+            user_id=req.user_id.strip(),
+            topic=req.topic,
+            context=req.context,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.post("/sessions")
@@ -106,6 +129,18 @@ def get_session_status(session_id: str, user_id: str):
     result = get_ppt_session_status(session_id, user_id)
     if not result.get("found"):
         raise HTTPException(status_code=404, detail="PPT 会话不存在")
+    return result
+
+
+@router.get("/sessions/{session_id}/launch")
+def launch_session(session_id: str, user_id: str):
+    from services.ppt_model_service import launch_ppt_session
+
+    result = launch_ppt_session(session_id, user_id)
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail="PPT 会话不存在")
+    if result.get("status") == "expired":
+        raise HTTPException(status_code=410, detail="PPT 会话已过期，请重新创建")
     return result
 
 

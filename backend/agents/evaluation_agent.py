@@ -22,10 +22,10 @@ EVALUATION_PROMPT = """你是一个学习评估专家。根据学生的学习数
   "strengths": ["已掌握的强项"],
   "weaknesses": ["薄弱环节"],
   "suggestions": ["具体改进建议"],
-  "updated_knowledge_base": {{"学科": 0.0-1.0评分}},
   "next_goal": "建议的下一步学习目标",
   "summary": "综合评价文字"
 }}
+- 不要输出 updated_knowledge_base；掌握度只由题目提交正确率自动更新。
 {hallu}
 只返回JSON，不要其他内容。"""
 
@@ -60,8 +60,6 @@ class EvaluationAgent(BaseAgent):
             if "summary" in report:
                 safe_summary, _ = await check_text(report["summary"])
                 report["summary"] = safe_summary
-            if profile and report.get("updated_knowledge_base"):
-                self._update_profile(profile, report["updated_knowledge_base"])
             self._save_evaluation(db, user_id, report)
             db.commit()
             self._try_emit_event("evaluation.completed", {"user_id": user_id, "overall_score": report.get("overall_score", 0)})
@@ -98,14 +96,6 @@ class EvaluationAgent(BaseAgent):
         done_steps = sum(sum(1 for s in (p.steps or []) if s.get("status") == "done") for p in paths)
         return f"课程路径共{total_paths}条，步骤完成 {done_steps}/{total_steps}"
 
-    def _update_profile(self, profile, kb):
-        existing = profile.knowledge_base or {}
-        merged = {}
-        for key in set(existing) | set(kb):
-            merged[key] = round((existing.get(key, 0) + kb.get(key, 0)) / 2, 2)
-        profile.knowledge_base = merged
-        profile.updated_at = datetime.now(timezone.utc)
-
     def _save_evaluation(self, db, user_id, report):
         title = f"学习评估报告 ({datetime.now(timezone.utc).strftime('%Y-%m-%d')})"
         graph_tags = infer_resource_tags(f"{title} {json.dumps(report, ensure_ascii=False)}")
@@ -114,11 +104,14 @@ class EvaluationAgent(BaseAgent):
             + [x for x in [graph_tags.get("course_name")] if x]
             + list(graph_tags.get("knowledge_points") or [])
         ))
+        content = dict(report)
+        if graph_tags.get("course_bindings"):
+            content["course_bindings"] = graph_tags.get("course_bindings")
         resource = LearningResource(
             user_id=user_id,
             resource_type="evaluation",
             title=title,
-            content=report,
+            content=content,
             tags=tags,
             course_name=graph_tags.get("course_name"),
             knowledge_points=graph_tags.get("knowledge_points") or [],

@@ -80,6 +80,36 @@ def _ensure_mistake_columns():
 
 _ensure_mistake_columns()
 
+
+def _ensure_course_path_columns():
+    with engine.connect() as conn:
+        cols = {c[1] for c in conn.exec_driver_sql("PRAGMA table_info(course_paths)").fetchall()}
+        for col, typedef in [
+            ("display_name", "VARCHAR"),
+            ("is_archived", "INTEGER DEFAULT 0"),
+            ("archived_at", "TIMESTAMP"),
+        ]:
+            if col not in cols:
+                conn.exec_driver_sql(f"ALTER TABLE course_paths ADD COLUMN {col} {typedef}")
+        conn.commit()
+
+
+_ensure_course_path_columns()
+
+
+def _repair_legacy_resource_titles():
+    try:
+        from core.database import SessionLocal
+        from services.resource_title_service import repair_legacy_code_resource_titles
+        repaired = repair_legacy_code_resource_titles(SessionLocal)
+        if repaired:
+            print(f"Repaired legacy code resource titles: {repaired}")
+    except Exception as exc:
+        print(f"[WARN] repair legacy code resource titles failed: {exc}")
+
+
+_repair_legacy_resource_titles()
+
 app = FastAPI(title="个性化学习智能体系统")
 
 app.add_middleware(

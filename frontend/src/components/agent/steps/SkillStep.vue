@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import type { AgentStep, SkillData } from '../../../types/agent'
 import MarkdownIt from 'markdown-it'
@@ -6,6 +6,7 @@ import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import api from '../../../api'
 import { useUserStore } from '../../../stores/user'
+import { skillDisplayName, skillDisplayIcon } from '../../../utils/agentLabels'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
@@ -21,6 +22,22 @@ const savedResourceId = ref<number | null>(null)
 const saveError = ref('')
 const savedDraftResourceId = computed(() => savedResourceId.value || (draftResource.value as any)?.saved_resource_id || null)
 
+function draftResourceTypeLabel(type?: string) {
+  const map: Record<string, string> = {
+    article: '文章',
+    quiz: '题库',
+    code: '代码',
+    anime: '动画',
+    mindmap: '思维导图',
+    ppt: 'PPT课件',
+    video: '视频',
+  }
+  return map[type || ''] || type || '学习资源'
+}
+
+const displaySkillName = computed(() => skillDisplayName(data.value.skill_name))
+const displaySkillIcon = computed(() => data.value.skill_icon || skillDisplayIcon(data.value.skill_name))
+
 const chartRef = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
@@ -34,6 +51,10 @@ const isVideoCards = computed(() => {
 
 const isPptViewer = computed(() => {
   return data.value.render_type === 'ppt_viewer'
+})
+
+const isPptSession = computed(() => {
+  return data.value.render_type === 'ppt_session'
 })
 
 const isStreamingCode = computed(() => props.step.status === 'running' && !!data.value.streaming_code)
@@ -54,7 +75,7 @@ const progressNote = computed(() => data.value.progress_note || '')
 const isProgressIndeterminate = computed(() => props.step.status === 'running' && !!data.value.progress_indeterminate)
 const progressLabel = computed(() => {
   if (data.value.progress_label) return data.value.progress_label
-  if (isProgressIndeterminate.value) return '生成中'
+  if (isProgressIndeterminate.value) return '生成中...'
   return `${Math.round(progressValue.value)}%`
 })
 
@@ -105,6 +126,31 @@ const pptData = computed<PptPreviewData | null>(() => {
   return null
 })
 
+const pptSessionPayload = computed<any | null>(() => {
+  if (!isPptSession.value || !data.value.content) return null
+  try {
+    const parsed = JSON.parse(data.value.content)
+    if (parsed?.ppt_session) return parsed
+  } catch {
+    // not valid JSON
+  }
+  return null
+})
+
+const pptSessionHref = computed(() => {
+  const payload = pptSessionPayload.value
+  const session = payload?.ppt_session || {}
+  const params = new URLSearchParams()
+  if (session.session_id && !session.pending_binding) params.set('session_id', session.session_id)
+  if (session.topic || payload?.title) params.set('topic', session.topic || payload.title)
+  if (session.course_name) params.set('course', session.course_name)
+  if (Array.isArray(session.knowledge_points) && session.knowledge_points.length) {
+    params.set('kp', session.knowledge_points.join(','))
+  }
+  if (session.scope === 'extension') params.set('scope', 'extension')
+  return `/ppt${params.toString() ? `?${params.toString()}` : ''}`
+})
+
 const pptCurrentSlide = ref(0)
 
 function pptPrev() {
@@ -120,7 +166,7 @@ function pptUrl(): string {
   const url = pptData.value?.pptx_url || ''
   if (!url) return ''
   if (url.startsWith('http')) return url
-  // 补全后端地址
+  // 补全后端静态文件地址
   return `${window.location.protocol}//${window.location.host}${url}`
 }
 
@@ -131,7 +177,7 @@ const treeData = computed(() => {
     const parsed = JSON.parse(d.content)
     if (parsed && parsed.name) return parsed
   } catch {
-    // 不是 JSON，可能是 markdown 格式的旧数据
+    // 涓嶆槸 JSON锛屽彲鑳芥槸 markdown 鏍煎紡鐨勬棫鏁版嵁
   }
   return null
 })
@@ -142,7 +188,7 @@ const renderedContent = computed(() => {
   if (d.language) return ''
   if (isRadialTree.value && treeData.value) return ''
   if (isVideoCards.value && videoList.value.length > 0) return ''
-  // 对于 markdown 内容进行渲染
+  // 对 Markdown 内容进行渲染
   if (d.content.startsWith('#')) {
     return md.render(d.content)
   }
@@ -314,7 +360,7 @@ async function saveDraftResource() {
 <template>
   <div class="step-card" :class="{ expanded }">
     <div class="step-header" @click="toggleExpand">
-      <span class="step-icon">{{ data.skill_icon || '🔧' }}</span>
+      <span class="step-icon">{{ displaySkillIcon }}</span>
       <span class="step-title">{{ step.title }}</span>
       <el-tag size="small" :type="step.status === 'completed' ? 'success' : step.status === 'running' ? 'warning' : 'danger'">
         {{ step.status === 'completed' ? '完成' : step.status === 'running' ? '执行中...' : '错误' }}
@@ -323,8 +369,8 @@ async function saveDraftResource() {
     </div>
     <div v-show="expanded" class="step-content">
       <div class="skill-badge">
-        <span class="badge-icon">{{ data.skill_icon || '🔧' }}</span>
-        <span class="badge-name">{{ data.skill_name }}</span>
+        <span class="badge-icon">{{ displaySkillIcon }}</span>
+        <span class="badge-name">{{ displaySkillName }}</span>
       </div>
 
       <div v-if="hasProgress" class="skill-progress">
@@ -366,8 +412,6 @@ async function saveDraftResource() {
             v-for="(video, i) in videoList"
             :key="i"
             :href="video.url"
-            target="_blank"
-            rel="noopener"
             class="video-card"
           >
             <div class="video-cover">
@@ -401,7 +445,7 @@ async function saveDraftResource() {
               class="ppt-download-btn"
               download
             >
-              ⬇ 下载 .pptx
+              下载 .pptx
             </a>
           </div>
           <div class="ppt-slide-area">
@@ -423,6 +467,28 @@ async function saveDraftResource() {
         </div>
       </div>
 
+      <!-- AiPPT 分步会话入口 -->
+      <div v-else-if="pptSessionPayload && step.status === 'completed'" class="skill-content">
+        <div class="ppt-session-card">
+          <div class="ppt-session-main">
+            <div class="ppt-session-title">{{ pptSessionPayload.title || 'PPT课件' }}</div>
+            <div class="ppt-session-desc">
+              {{ pptSessionPayload.message || '请进入 AiPPT 分步工作台确认大纲和模板。' }}
+            </div>
+            <div class="ppt-session-tags">
+              <span v-if="pptSessionPayload.ppt_session?.pending_binding">待配置绑定</span>
+              <span v-else-if="pptSessionPayload.ppt_session?.scope === 'extension'">拓展课件</span>
+              <span v-else>图谱绑定课件</span>
+              <span v-if="pptSessionPayload.ppt_session?.course_name">{{ pptSessionPayload.ppt_session.course_name }}</span>
+              <span v-for="kp in pptSessionPayload.ppt_session?.knowledge_points || []" :key="kp">{{ kp }}</span>
+            </div>
+          </div>
+          <a class="ppt-session-action" :href="pptSessionHref">
+            进入 AiPPT 分步流程
+          </a>
+        </div>
+      </div>
+
       <!-- 径向树图（思维导图可视化） -->
       <div v-else-if="treeData && step.status === 'completed'" class="skill-content">
         <div ref="chartRef" class="mindmap-chart"></div>
@@ -434,7 +500,7 @@ async function saveDraftResource() {
           <span class="code-lang-tag">{{ data.language }}</span>
           <span v-if="isStreamingCode" class="streaming-code-label">AI 正在输出代码...</span>
           <button v-else-if="isHtmlCode" class="preview-btn" @click.stop="previewVisible = !previewVisible">
-            {{ previewVisible ? '📄 显示代码' : '▶ 运行预览' }}
+            {{ previewVisible ? '显示代码' : '运行预览' }}
           </button>
         </div>
         <iframe v-if="step.status === 'completed' && isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" :style="{ height: iframeHeight + 'px' }" @load="onIframeLoad" />
@@ -447,7 +513,7 @@ async function saveDraftResource() {
       </div>
 
       <!-- JSON 内容展示 -->
-      <div v-else-if="data.content && (data.content.startsWith('{') || data.content.startsWith('[')) && !isRadialTree && !isVideoCards" class="skill-content">
+      <div v-else-if="data.content && (data.content.startsWith('{') || data.content.startsWith('[')) && !isRadialTree && !isVideoCards && !isPptSession" class="skill-content">
         <pre class="json-block"><code>{{ data.content }}</code></pre>
       </div>
 
@@ -460,7 +526,7 @@ async function saveDraftResource() {
         <div class="draft-info">
           <div class="draft-title">可保存为学习资源</div>
           <div class="draft-meta">
-            <span>{{ draftResource.resource_type }}</span>
+            <span>{{ draftResourceTypeLabel(draftResource.resource_type) }}</span>
             <span v-if="draftResource.course_name">课程：{{ draftResource.course_name }}</span>
             <span v-if="draftResource.knowledge_points?.length">知识点：{{ draftResource.knowledge_points.join('、') }}</span>
           </div>
@@ -469,8 +535,6 @@ async function saveDraftResource() {
           v-if="savedDraftResourceId"
           class="draft-link"
           :href="`/resources?open=${savedDraftResourceId}`"
-          target="_blank"
-          rel="noopener"
         >查看资源 →</a>
         <el-button
           v-else
@@ -583,6 +647,61 @@ async function saveDraftResource() {
 .ppt-slide-points { padding-left: 20px; margin: 0; }
 .ppt-slide-points li { margin-bottom: 10px; line-height: 1.7; color: #6B635C; font-size: 15px; }
 .ppt-nav { display: flex; justify-content: center; gap: 12px; padding: 12px; border-top: 1px solid #EFE6DC; background: #FFF5EB; }
+.ppt-session-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #E8C29C;
+  border-radius: 12px;
+  background: #FFF5EB;
+}
+.ppt-session-main {
+  min-width: 0;
+}
+.ppt-session-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #3A332E;
+}
+.ppt-session-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #6B635C;
+  line-height: 1.6;
+}
+.ppt-session-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ppt-session-tags span {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border: 1px solid #E8C29C;
+  border-radius: 999px;
+  color: #8A5A28;
+  background: #FFFBF5;
+  font-size: 12px;
+}
+.ppt-session-action {
+  flex-shrink: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #DBA878;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.ppt-session-action:hover {
+  background: #C98F5A;
+}
 .draft-save-panel {
   margin-top: 12px;
   padding: 10px 12px;
