@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import ConversationalOnboarding from '../components/profile/ConversationalOnboarding.vue'
 import CurriculumGraph from '../components/profile/CurriculumGraph.vue'
@@ -11,6 +11,7 @@ import { ElMessage } from 'element-plus'
 const userStore = useUserStore()
 const eventStore = useEventStore()
 const router = useRouter()
+const route = useRoute()
 
 const profile = ref<any>(null)
 const loading = ref(false)
@@ -35,6 +36,7 @@ const quizStats = ref({
 const showOnboarding = ref(false)
 const showRebuildDialog = ref(false)
 const rebuildLoading = ref(false)
+const forceOnboarding = computed(() => route.query.onboarding === '1')
 
 const preferredFormats = computed(() => {
   const value = profile.value?.preferred_format
@@ -62,8 +64,13 @@ function evidenceFor(key: string) {
 const knowledgeGraphData = computed(() => profile.value?.knowledge_base || {})
 
 onMounted(() => {
+  if (forceOnboarding.value) showOnboarding.value = true
   if (userStore.userId) loadProfile(true)
   eventStore.connect(userStore.userId || 'user_default')
+})
+
+watch(() => route.query.onboarding, (value) => {
+  if (value === '1') showOnboarding.value = true
 })
 
 watch(() => eventStore.lastEvent, (evt) => {
@@ -116,6 +123,9 @@ function onOnboardingDone(p: any) {
   profile.value = p
   showOnboarding.value = false
   ElMessage.success('学习画像构建完成')
+  if (forceOnboarding.value) {
+    router.replace({ path: '/', query: { welcome: '1' } })
+  }
   api.post('/resources/generate/starter', null, {
     params: { user_id: userStore.userId, max_courses: 3 },
     timeout: 180000,
@@ -125,6 +135,11 @@ function onOnboardingDone(p: any) {
 }
 
 function onOnboardingCancel() {
+  if (forceOnboarding.value) {
+    ElMessage.warning('首次使用需要先完成学习画像建档')
+    showOnboarding.value = true
+    return
+  }
   showOnboarding.value = false
 }
 

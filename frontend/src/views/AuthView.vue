@@ -97,7 +97,7 @@ async function submit() {
     authStore.setAuth(r.data)
     userStore.setUserId(r.data.phone)
     ElMessage.success(mode.value === 'login' ? '登录成功' : '注册成功')
-    router.push('/')
+    router.push(mode.value === 'register' ? { path: '/profile', query: { onboarding: '1' } } : '/')
   } catch (e: any) {
     const msg = e?.response?.data?.detail || e?.message || '请求失败'
     ElMessage.error(msg)

@@ -27,13 +27,13 @@ const showParsePanel = ref(false)
 const graphSource = ref<'preset' | 'parsed'>('preset')
 
 const STATUS_COLOR: Record<string, string> = {
-  completed: '#52c41a',
-  learning: '#1890ff',
-  available: '#69b1ff',
-  locked: '#d9d9d9',
-  weak: '#f56c6c',
-  recommended: '#9b59b6',
-  not_started: '#d9d9d9',
+  completed: '#52C41A',
+  learning: '#DBA878',
+  available: '#98C9B3',
+  locked: '#D9D1C8',
+  weak: '#F56C6C',
+  recommended: '#9B59B6',
+  not_started: '#D9D1C8',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -46,13 +46,27 @@ const STATUS_LABEL: Record<string, string> = {
   not_started: '未开始',
 }
 
-const RELATION_STYLE: Record<string, any> = {
-  prerequisite: { color: '#8c6d5a', width: 2, type: 'solid' },
-  support: { color: '#7aa6c2', width: 1.5, type: 'dashed' },
-  parallel: { color: '#d8c3a5', width: 1, type: 'dotted' },
-  advanced: { color: '#9b59b6', width: 2, type: 'solid' },
-  cross_domain: { color: '#d46b08', width: 2, type: 'dashed' },
+const RELATION_LABEL: Record<string, string> = {
+  prerequisite: '先修',
+  support: '支撑',
+  parallel: '同期关联',
+  advanced: '后继进阶',
+  cross_domain: '跨领域',
 }
+
+const RELATION_STYLE: Record<string, any> = {
+  prerequisite: { color: '#B87945', width: 2, type: 'solid' },
+  support: { color: '#4E8AA8', width: 1.6, type: 'dashed' },
+  parallel: { color: '#D8C3A5', width: 1.2, type: 'dotted' },
+  advanced: { color: '#9B59B6', width: 2, type: 'solid' },
+  cross_domain: { color: '#D46B08', width: 1.8, type: 'dashed' },
+}
+
+const SELECTED_COLOR = '#3A332E'
+const PREREQUISITE_COLOR = '#B87945'
+const SUCCESSOR_COLOR = '#9B59B6'
+const RELATED_COLOR = '#4E8AA8'
+const DIM_OPACITY = 0.24
 
 const selectedNode = computed(() =>
   graphData.value?.nodes.find((node: any) => node.id === selectedCourse.value) || null
@@ -66,6 +80,20 @@ const incomingLinks = computed(() =>
 
 const outgoingLinks = computed(() =>
   (graphData.value?.links || []).filter((link: any) => link.source === selectedCourse.value)
+)
+
+const prerequisiteLinks = computed(() =>
+  incomingLinks.value.filter((link: any) => link.type === 'prerequisite')
+)
+
+const successorLinks = computed(() =>
+  outgoingLinks.value.filter((link: any) => ['prerequisite', 'advanced'].includes(link.type))
+)
+
+const supportLinks = computed(() =>
+  [...incomingLinks.value, ...outgoingLinks.value].filter((link: any) =>
+    ['support', 'parallel', 'cross_domain'].includes(link.type)
+  )
 )
 
 const filteredKb = computed(() => {
@@ -84,6 +112,58 @@ function countOf(value: any) {
   return Number(value || 0)
 }
 
+function clearSelection() {
+  selectedCourse.value = null
+  courseKpData.value = null
+  renderGraph(false)
+}
+
+function selectedRelationSets() {
+  const selected = selectedCourse.value
+  const prerequisites = new Set<string>()
+  const successors = new Set<string>()
+  const related = new Set<string>()
+  const connectedEdges = new Set<string>()
+
+  if (!selected || !graphData.value) {
+    return { prerequisites, successors, related, connectedEdges }
+  }
+
+  for (const link of graphData.value.links || []) {
+    const source = String(link.source)
+    const target = String(link.target)
+    const edgeKey = `${source}->${target}:${link.type || ''}`
+    if (target === selected) {
+      connectedEdges.add(edgeKey)
+      if (link.type === 'prerequisite') prerequisites.add(source)
+      else related.add(source)
+    }
+    if (source === selected) {
+      connectedEdges.add(edgeKey)
+      if (['prerequisite', 'advanced'].includes(link.type)) successors.add(target)
+      else related.add(target)
+    }
+  }
+
+  return { prerequisites, successors, related, connectedEdges }
+}
+
+function nodeHighlightColor(nodeId: string, sets: ReturnType<typeof selectedRelationSets>) {
+  if (selectedCourse.value === nodeId) return SELECTED_COLOR
+  if (sets.prerequisites.has(nodeId)) return PREREQUISITE_COLOR
+  if (sets.successors.has(nodeId)) return SUCCESSOR_COLOR
+  if (sets.related.has(nodeId)) return RELATED_COLOR
+  return '#FFFFFF'
+}
+
+function isNodeFocused(nodeId: string, sets: ReturnType<typeof selectedRelationSets>) {
+  return !selectedCourse.value
+    || selectedCourse.value === nodeId
+    || sets.prerequisites.has(nodeId)
+    || sets.successors.has(nodeId)
+    || sets.related.has(nodeId)
+}
+
 async function loadGraph() {
   if (!props.userId) return
   const res = await api.get('/curriculum/graph', {
@@ -98,7 +178,7 @@ async function loadGraph() {
   renderGraph()
 }
 
-function renderGraph() {
+function renderGraph(resetLayout = true) {
   if (!chartRef.value || !graphData.value) return
   if (!chart) chart = echarts.init(chartRef.value)
   chart.resize()
@@ -108,24 +188,81 @@ function renderGraph() {
     return
   }
 
-  const nodes = graphData.value.nodes.map((node: any) => ({
-    ...node,
-    id: node.id,
-    name: node.name || node.id,
-    symbolSize: node.status === 'weak' ? 46 : 38,
-    itemStyle: {
-      color: STATUS_COLOR[node.status] || '#d9d9d9',
-      borderColor: selectedCourse.value === node.id ? '#3A332E' : '#fff',
-      borderWidth: selectedCourse.value === node.id ? 3 : 1,
-    },
-    label: { show: true, position: 'bottom', fontSize: 11, color: '#333' },
-  }))
+  const relationSets = selectedRelationSets()
+  const nodes = graphData.value.nodes.map((node: any) => {
+    const focused = isNodeFocused(node.id, relationSets)
+    const selected = selectedCourse.value === node.id
+    const related = relationSets.prerequisites.has(node.id)
+      || relationSets.successors.has(node.id)
+      || relationSets.related.has(node.id)
+
+    return {
+      ...node,
+      id: node.id,
+      name: node.name || node.id,
+      symbolSize: selected ? 50 : node.status === 'weak' ? 44 : 36,
+      itemStyle: {
+        color: STATUS_COLOR[node.status] || '#D9D1C8',
+        opacity: focused ? 1 : DIM_OPACITY,
+        borderColor: nodeHighlightColor(node.id, relationSets),
+        borderWidth: selected || related ? 3 : 1,
+        shadowBlur: selected ? 12 : 0,
+        shadowColor: selected ? 'rgba(58,51,46,0.22)' : 'transparent',
+      },
+      label: {
+        show: true,
+        position: 'bottom',
+        fontSize: selected ? 12 : 11,
+        fontWeight: selected ? 700 : 500,
+        color: focused ? '#333333' : 'rgba(51,51,51,0.38)',
+      },
+      emphasis: { disabled: true },
+      blur: { disabled: true },
+    }
+  })
+
+  const edges = (graphData.value.links || []).map((link: any) => {
+    const style = RELATION_STYLE[link.type] || RELATION_STYLE.support
+    const edgeKey = `${link.source}->${link.target}:${link.type || ''}`
+    const focused = !selectedCourse.value || relationSets.connectedEdges.has(edgeKey)
+    return {
+      ...link,
+      source: link.source,
+      target: link.target,
+      lineStyle: {
+        ...style,
+        opacity: focused ? 0.95 : 0.12,
+        width: focused ? (style.width || 1) + 0.8 : style.width || 1,
+      },
+      symbol: ['none', 'arrow'],
+      symbolSize: 8,
+      emphasis: { disabled: true },
+      blur: { disabled: true },
+    }
+  })
+
+  const seriesData = {
+    nodes,
+    edges,
+    data: nodes,
+    links: edges,
+  }
+
+  if (!resetLayout) {
+    chart.setOption({
+      series: [seriesData],
+    })
+    return
+  }
 
   chart.setOption({
+    animation: false,
+    animationDurationUpdate: 0,
     tooltip: {
+      trigger: 'item',
       formatter: (params: any) => {
         if (params.dataType === 'edge') {
-          return `${params.data.source} → ${params.data.target}<br/>${params.data.type || ''}<br/>${params.data.reason || ''}`
+          return `${params.data.source} → ${params.data.target}<br/>${RELATION_LABEL[params.data.type] || params.data.type || ''}<br/>${params.data.reason || ''}`
         }
         const data = params.data
         const mastery = percentOf(data.mastery)
@@ -138,27 +275,24 @@ function renderGraph() {
     series: [{
       type: 'graph',
       layout: 'force',
-      force: {
-        repulsion: 320,
-        edgeLength: [90, 170],
-        gravity: 0.08,
-        layoutAnimation: true,
-      },
       roam: true,
-      draggable: true,
-      nodes,
-      edges: graphData.value.links.map((link: any) => {
-        const style = RELATION_STYLE[link.type] || RELATION_STYLE.support
-        return {
-          ...link,
-          source: link.source,
-          target: link.target,
-          lineStyle: style,
-          symbol: ['none', 'arrow'],
-          symbolSize: 8,
-        }
-      }),
-      emphasis: { focus: 'adjacency' },
+      draggable: false,
+      ...seriesData,
+      force: {
+        repulsion: 260,
+        edgeLength: [95, 150],
+        gravity: 0.05,
+        friction: 0.75,
+        layoutAnimation: false,
+      },
+      lineStyle: {
+        curveness: 0.08,
+      },
+      labelLayout: {
+        hideOverlap: true,
+      },
+      emphasis: { disabled: true },
+      blur: { disabled: true },
     }],
   }, true)
 
@@ -171,13 +305,12 @@ function renderGraph() {
 
 async function selectCourse(courseName: string) {
   if (selectedCourse.value === courseName) {
-    selectedCourse.value = null
-    courseKpData.value = null
-    renderGraph()
+    clearSelection()
     return
   }
 
   selectedCourse.value = courseName
+  renderGraph(false)
   try {
     const res = await api.get(`/curriculum/kp/${encodeURIComponent(courseName)}`, {
       params: { major: props.major || '' },
@@ -186,7 +319,6 @@ async function selectCourse(courseName: string) {
   } catch {
     courseKpData.value = { nodes: [], links: [], categories: [] }
   }
-  renderGraph()
 }
 
 async function parseCurriculum() {
@@ -225,6 +357,9 @@ onUnmounted(() => chart?.dispose())
         <el-tag v-if="graphData?.meta?.major_name" size="small" type="success">
           {{ graphData.meta.major_name }} · 第 {{ graphData.meta.current_semester }} 学期
         </el-tag>
+        <el-button v-if="selectedCourse" size="small" text @click="clearSelection">
+          清除选择
+        </el-button>
         <el-button v-if="graphSource === 'parsed'" size="small" text @click="graphSource = 'preset'; loadGraph()">
           返回预制图谱
         </el-button>
@@ -250,9 +385,17 @@ onUnmounted(() => chart?.dispose())
       <div class="parse-actions">
         <el-button size="small" @click="showParsePanel = false">取消</el-button>
         <el-button size="small" type="primary" :loading="parsing" @click="parseCurriculum">
-          AI解析并查看备用图谱
+          AI 解析并查看备用图谱
         </el-button>
       </div>
+    </div>
+
+    <div class="relation-legend">
+      <span><i class="legend-dot selected" />当前课程</span>
+      <span><i class="legend-dot prerequisite" />前置课程</span>
+      <span><i class="legend-dot successor" />后继课程</span>
+      <span><i class="legend-dot related" />支撑/关联课程</span>
+      <span><i class="legend-dot dimmed" />无关课程淡化</span>
     </div>
 
     <div class="cg-layout">
@@ -261,13 +404,14 @@ onUnmounted(() => chart?.dispose())
         <div class="cg-empty-desc">当前专业或学期没有匹配到预制培养方案课程节点，请先确认注册专业是否在系统预制范围内。</div>
       </div>
       <div v-else ref="chartRef" class="cg-chart" />
+
       <div v-if="selectedNode" class="course-panel">
         <div class="course-panel-head">
           <div>
             <h3>{{ selectedNode.name }}</h3>
             <p>第 {{ selectedNode.semester }} 学期 · {{ selectedNode.category }} · {{ selectedNode.credits || '-' }} 学分</p>
           </div>
-          <el-tag :type="selectedNode.status === 'weak' ? 'danger' : selectedNode.status === 'learning' ? 'primary' : 'success'">
+          <el-tag :type="selectedNode.status === 'weak' ? 'danger' : selectedNode.status === 'learning' ? 'warning' : 'success'">
             {{ STATUS_LABEL[selectedNode.status] || selectedNode.status }}
           </el-tag>
         </div>
@@ -281,28 +425,38 @@ onUnmounted(() => chart?.dispose())
         <el-alert
           v-if="courseKpData && !hasCourseKpGraph"
           title="该课程暂未配置课内知识点图谱"
-          description="当前只能展示课程级关系，学习资源会先绑定课程节点；补充 kp_file 后可继续绑定具体知识点。"
+          description="当前只能展示课程级关系；补充 kp_file 后可继续绑定具体知识点。"
           type="warning"
           :closable="false"
           show-icon
         />
 
         <div class="relation-block">
-          <div class="relation-title">前置/支撑课程</div>
-          <el-empty v-if="incomingLinks.length === 0" description="暂无前置关系" :image-size="48" />
+          <div class="relation-title prerequisite-title">前置课程</div>
+          <el-empty v-if="prerequisiteLinks.length === 0" description="暂无前置课程" :image-size="42" />
           <div v-else class="relation-tags">
-            <el-tag v-for="link in incomingLinks" :key="link.source + link.type" size="small" effect="plain">
-              {{ link.source }} · {{ link.type }}
+            <el-tag v-for="link in prerequisiteLinks" :key="link.source + link.type" size="small" effect="plain">
+              {{ link.source }} · {{ RELATION_LABEL[link.type] || link.type }}
             </el-tag>
           </div>
         </div>
 
         <div class="relation-block">
-          <div class="relation-title">后继/进阶课程</div>
-          <el-empty v-if="outgoingLinks.length === 0" description="暂无后继关系" :image-size="48" />
+          <div class="relation-title successor-title">后继课程</div>
+          <el-empty v-if="successorLinks.length === 0" description="暂无后继课程" :image-size="42" />
           <div v-else class="relation-tags">
-            <el-tag v-for="link in outgoingLinks" :key="link.target + link.type" size="small" effect="plain">
-              {{ link.target }} · {{ link.type }}
+            <el-tag v-for="link in successorLinks" :key="link.target + link.type" size="small" effect="plain">
+              {{ link.target }} · {{ RELATION_LABEL[link.type] || link.type }}
+            </el-tag>
+          </div>
+        </div>
+
+        <div class="relation-block">
+          <div class="relation-title related-title">支撑/关联课程</div>
+          <el-empty v-if="supportLinks.length === 0" description="暂无支撑或关联课程" :image-size="42" />
+          <div v-else class="relation-tags">
+            <el-tag v-for="link in supportLinks" :key="link.source + link.target + link.type" size="small" effect="plain">
+              {{ link.source === selectedCourse ? link.target : link.source }} · {{ RELATION_LABEL[link.type] || link.type }}
             </el-tag>
           </div>
         </div>
@@ -311,8 +465,8 @@ onUnmounted(() => chart?.dispose())
           <el-button size="small" type="primary" @click="emit('course-click', selectedNode.name)">
             去生成课程资源包
           </el-button>
-          <el-button size="small" text @click="selectedCourse = null; courseKpData = null; renderGraph()">
-            收起
+          <el-button size="small" text @click="clearSelection">
+            清除选择
           </el-button>
         </div>
       </div>
@@ -333,7 +487,7 @@ onUnmounted(() => chart?.dispose())
         <div class="kp-empty-title">暂无课内知识点图谱</div>
         <div class="kp-empty-desc">
           该课程在培养方案中存在课程节点，但还没有关联具体 kp_file。
-          当前不会渲染空白图谱，也不会伪造知识点标签。
+          当前不渲染空白图谱，也不会伪造知识点标签。
         </div>
         <el-button size="small" type="primary" @click="emit('course-click', selectedCourse)">
           按课程生成资源包
@@ -348,27 +502,38 @@ onUnmounted(() => chart?.dispose())
 .cg-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .cg-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .cg-hint { font-size: 12px; color: #6B635C; }
-.cg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; }
-.cg-chart { width: 100%; height: 520px; border: 1px solid #f0e8e0; border-radius: 8px; background: #fff; }
-.cg-empty-state { width: 100%; height: 520px; border: 1px dashed #ead8c4; border-radius: 8px; background: #fffaf4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 24px; color: #7A6A5C; }
+.relation-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: #6B635C; padding: 8px 10px; background: #FFF9F2; border: 1px solid #F0E3D6; border-radius: 8px; }
+.legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.legend-dot.selected { background: #3A332E; }
+.legend-dot.prerequisite { background: #B87945; }
+.legend-dot.successor { background: #9B59B6; }
+.legend-dot.related { background: #4E8AA8; }
+.legend-dot.dimmed { background: rgba(58,51,46,0.24); }
+.cg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; }
+.cg-chart { width: 100%; height: 520px; border: 1px solid #F0E8E0; border-radius: 8px; background: #fff; }
+.cg-empty-state { width: 100%; height: 520px; border: 1px dashed #EAD8C4; border-radius: 8px; background: #FFFAF4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 24px; color: #7A6A5C; }
 .cg-empty-title { font-weight: 700; color: #3A332E; }
 .cg-empty-desc { max-width: 520px; font-size: 13px; line-height: 1.7; }
-.course-panel { border: 1px solid #f0e8e0; border-radius: 8px; background: #fffaf4; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.course-panel { border: 1px solid #F0E8E0; border-radius: 8px; background: #FFFAF4; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .course-panel-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .course-panel h3 { margin: 0 0 6px; color: #3A332E; font-size: 17px; }
 .course-panel p { margin: 0; color: #7A6A5C; font-size: 12px; }
-.course-mastery-meta { display: flex; justify-content: space-between; gap: 8px; color: #7A6A5C; font-size: 12px; }
+.course-mastery-meta { display: flex; justify-content: space-between; gap: 8px; color: #7A6A5C; font-size: 12px; flex-wrap: wrap; }
 .relation-block { display: flex; flex-direction: column; gap: 8px; }
-.relation-title { font-size: 13px; font-weight: 600; color: #3A332E; }
+.relation-title { font-size: 13px; font-weight: 700; color: #3A332E; }
+.relation-title::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.prerequisite-title::before { background: #B87945; }
+.successor-title::before { background: #9B59B6; }
+.related-title::before { background: #4E8AA8; }
 .relation-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-.course-actions { display: flex; justify-content: space-between; margin-top: auto; }
-.parse-panel { background: #fafafa; border: 1px solid #e8e0d8; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.course-actions { display: flex; justify-content: space-between; margin-top: auto; gap: 8px; }
+.parse-panel { background: #FAFAFA; border: 1px solid #E8E0D8; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .parse-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.kp-section { border: 1px solid #f0e8e0; border-radius: 8px; overflow: hidden; }
-.kp-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #fef9f4; border-bottom: 1px solid #f0e8e0; gap: 12px; }
-.kp-title { font-size: 13px; font-weight: 600; color: #6b5344; }
+.kp-section { border: 1px solid #F0E8E0; border-radius: 8px; overflow: hidden; }
+.kp-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #FEF9F4; border-bottom: 1px solid #F0E8E0; gap: 12px; }
+.kp-title { font-size: 13px; font-weight: 600; color: #6B5344; }
 .kp-tip { font-size: 12px; color: #9A8A7A; }
-.kp-empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #7A6A5C; background: #fffaf4; padding: 24px; text-align: center; }
+.kp-empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #7A6A5C; background: #FFFAF4; padding: 24px; text-align: center; }
 .kp-empty-title { font-weight: 700; color: #3A332E; }
 .kp-empty-desc { max-width: 560px; font-size: 13px; line-height: 1.7; }
 @media (max-width: 960px) {
