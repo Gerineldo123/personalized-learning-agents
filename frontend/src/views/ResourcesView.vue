@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { useUserStore } from '../stores/user'
@@ -55,7 +55,6 @@ const graphPackageStreamResult = ref<any>(null)
 const genLoading = ref(false)
 const starterLoading = ref(false)
 const orchestrateLoading = ref(false)
-const demoLoading = ref(false)
 const autoTagLoading = ref(false)
 const feedbackLoading = ref(false)
 const articleQuizLoading = ref(false)
@@ -182,29 +181,6 @@ const feedbackOptions = [
   { value: 'helpful', label: '有帮助' },
   { value: 'irrelevant', label: '不相关' },
 ]
-
-const demoCourse = computed(() => {
-  const courses = curriculumCourses.value || []
-  return (
-    courses.find((course: any) => course.status === 'learning' && course.kp_file) ||
-    courses.find((course: any) => course.status === 'weak' && course.kp_file) ||
-    courses.find((course: any) => course.status === 'available' && course.kp_file) ||
-    courses.find((course: any) => course.kp_file) ||
-    courses.find((course: any) => course.status === 'learning') ||
-    courses[0] ||
-    null
-  )
-})
-
-const demoCourseName = computed(() => demoCourse.value?.name || demoCourse.value?.id || '')
-const demoBannerTitle = computed(() =>
-  demoCourseName.value ? `赛题演示主线：${demoCourseName.value}学习闭环` : '赛题演示主线：个性化学习闭环'
-)
-const demoBannerDesc = computed(() =>
-  demoCourseName.value
-    ? `基于当前培养方案中的「${demoCourseName.value}」生成文章、思维导图、题库、代码案例、PPT 课件和视频推荐，并自动绑定可用图谱标签。`
-    : '请先在学习画像中完善专业、年级和当前学期，系统将根据培养方案选择课程生成资源包。'
-)
 
 function makeGenerationJobId() {
   return `resource_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -871,29 +847,6 @@ async function autoTagResources() {
   }
 }
 
-async function generateCurrentCourseDemo() {
-  const courseName = demoCourseName.value
-  if (!courseName) {
-    ElMessage.warning('请先完善学习画像中的专业和当前学期')
-    return
-  }
-
-  demoLoading.value = true
-  try {
-    const kps = await fetchCourseKps(courseName)
-    const knowledgePoints = kps.slice(0, 3).map((kp: any) => kp.id).filter(Boolean)
-    const topic = knowledgePoints.length > 0
-      ? `${courseName}：${knowledgePoints.join('、')}的个性化学习闭环`
-      : `${courseName}个性化学习闭环`
-    await generateOrchestrated(topic, {
-      courseName,
-      knowledgePoints,
-    })
-  } finally {
-    demoLoading.value = false
-  }
-}
-
 async function completeSelectedResource() {
   if (!selected.value) return
   try {
@@ -1146,21 +1099,6 @@ function biliPlayerSrc(url: string): string {
       <div v-if="generationProgress.logs.length > 0" class="generation-progress-logs">
         <span v-for="(log, idx) in generationProgress.logs" :key="idx">{{ log }}</span>
       </div>
-    </div>
-
-    <div v-if="!selected" class="demo-banner animate-up animate-delay-2">
-      <div>
-        <div class="demo-title">{{ demoBannerTitle }}</div>
-        <div class="demo-desc">{{ demoBannerDesc }}</div>
-      </div>
-      <el-button
-        type="primary"
-        :disabled="!demoCourseName"
-        :loading="demoLoading || orchestrateLoading"
-        @click="generateCurrentCourseDemo"
-      >
-        生成当前课程闭环资源
-      </el-button>
     </div>
 
     <div v-if="!selected" class="graph-gen-panel animate-up animate-delay-2">
@@ -1539,21 +1477,6 @@ function biliPlayerSrc(url: string): string {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.demo-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  background: linear-gradient(135deg, #FFFBF5 0%, #FFF0DF 100%);
-  border: 1.5px solid #E8C29C;
-  border-radius: 14px;
-  padding: 16px 18px;
-  margin-bottom: 18px;
-  box-shadow: 0 4px 16px rgba(58, 51, 46, 0.06);
-}
-.demo-title { font-weight: 600; color: #3A332E; margin-bottom: 6px; }
-.demo-desc { color: #6B635C; font-size: 13px; line-height: 1.6; }
 
 .starter-panel {
   background: #FFFBF5;
