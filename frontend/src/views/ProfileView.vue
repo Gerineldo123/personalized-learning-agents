@@ -7,6 +7,7 @@ import CurriculumGraph from '../components/profile/CurriculumGraph.vue'
 import { useUserStore } from '../stores/user'
 import { useEventStore } from '../stores/event'
 import { ElMessage } from 'element-plus'
+import { formatLocalDateTime } from '../utils/dateTime'
 
 const userStore = useUserStore()
 const eventStore = useEventStore()
@@ -53,7 +54,7 @@ const latestEvidenceText = computed(() => {
   const latest = profileHistory.value[profileHistory.value.length - 1]
   if (!latest) return '暂无更新记录'
   const trigger = TRIGGER_LABELS[latest.trigger] || latest.trigger || '系统更新'
-  return `${trigger} · ${new Date(latest.created_at).toLocaleString()}`
+  return `${trigger} · ${formatLocalDateTime(latest.created_at)}`
 })
 
 const profileEvidence = computed(() => profile.value?.profile_evidence || {})

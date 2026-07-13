@@ -14,6 +14,7 @@ import AgentTimeline from '../components/agent/AgentTimeline.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { renderMarkdownEnhanced, escapeHtml } from '../utils/markdown'
+import { formatRelativeTime } from '../utils/dateTime'
 
 const userStore = useUserStore()
 const agentStore = useAgentStore()
@@ -190,6 +191,41 @@ function currentHistory() {
   return (historyMap.value[currentConvId.value] || []).slice(-20)
 }
 
+function taskRelevantHistory() {
+  return currentHistory()
+    .filter((item) => {
+      const content = String(item.content || '').trim()
+      if (!content) return false
+      if (content.includes('这个需求需要切换到 **任务模式** 执行')) return false
+      if (content.includes('对话模式适合概念解释、公式推导和学习建议')) return false
+      return true
+    })
+    .slice(-8)
+}
+
+function buildContextualTaskDescription(taskText: string, history: { role: string; content: string }[]) {
+  if (!history.length) return taskText
+  const historyText = history
+    .map((item) => {
+      const role = item.role === 'user' ? '用户' : 'AI'
+      const content = String(item.content || '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500)
+      return `${role}：${content}`
+    })
+    .join('\n')
+  return [
+    '请结合下面的对话上下文执行当前任务。',
+    '如果当前任务中出现“这个、它、上面、刚才、助我理解”等指代，必须从对话上下文中提取最近明确的知识点或主题；如果上下文仍无法确定主题，请先说明需要用户补充主题，不要自行假设。',
+    '',
+    `对话上下文：\n${historyText}`,
+    '',
+    `当前任务：${taskText}`,
+  ].join('\n')
+}
+
 function setMode(mode: 'chat' | 'task') {
   if (!currentConvId.value) return
   convModeMap.value[currentConvId.value] = mode
@@ -355,7 +391,11 @@ async function sendChatMessage(options: ChatSendOptions = {}) {
 }
 
 // 任务模式执行
-async function executeTask(taskDescription?: string) {
+interface ExecuteTaskOptions {
+  persistUserMessage?: boolean
+}
+
+async function executeTask(taskDescription?: string, options: ExecuteTaskOptions = {}) {
   const text = (typeof taskDescription === 'string') ? taskDescription : inputText.value.trim()
   if (!text || agentStore.isExecuting) return
   if (!currentConvId.value) await newConversation()
@@ -382,11 +422,14 @@ async function executeTask(taskDescription?: string) {
   })
   scrollToBottom()
 
-  const persistUserMessage = saveMessage('user', text).catch(() => {})
-  const history = currentHistory()
+  const persistUserMessage = options.persistUserMessage === false
+    ? Promise.resolve()
+    : saveMessage('user', text).catch(() => {})
+  const history = taskRelevantHistory()
+  const backendTaskText = buildContextualTaskDescription(text, history)
 
   const ctrl = agentExecuteStream(
-    userStore.userId, text,
+    userStore.userId, backendTaskText,
     (evt) => handleStepEvent(evt, task.id),
     async () => {
       agentStore.isExecuting = false
@@ -413,7 +456,7 @@ function runHandoffTask(msg: ChatMsg) {
   const taskText = msg.handoff.taskText
   msg.handoff.dismissed = true
   setMode('task')
-  executeTask(taskText)
+  executeTask(taskText, { persistUserMessage: false })
 }
 
 function dismissHandoff(msg: ChatMsg) {
@@ -898,13 +941,7 @@ function formatSize(b: number) {
   return (b / 1048576).toFixed(1) + 'MB'
 }
 function formatConvTime(iso: string) {
-  if (!iso) return ''
-  const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin}分钟前`
-  const diffH = Math.floor(diffMin / 60)
-  if (diffH < 24) return `${diffH}小时前`
-  return `${Math.floor(diffH / 24)}天前`
+  return formatRelativeTime(iso)
 }
 
 function runDemoMode() {

@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed } from 'vue'
 import type { AgentCollaborationEvent } from '../../types/agent'
+import { formatLocalTime } from '../../utils/dateTime'
 
 const props = defineProps<{
   events: AgentCollaborationEvent[]
@@ -86,10 +87,7 @@ function tagType(status: string) {
 }
 
 function formatTime(value: string) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleTimeString('zh-CN', { hour12: false })
+  return formatLocalTime(value)
 }
 </script>
 

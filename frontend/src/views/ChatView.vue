@@ -9,6 +9,7 @@ import MarkdownIt from 'markdown-it'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatMessageTime, parseServerDate } from '../utils/dateTime'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 const userStore = useUserStore()
@@ -136,7 +137,7 @@ const sortedConversations = computed(() => {
     const ap = pinned.has(a.id) ? 1 : 0
     const bp = pinned.has(b.id) ? 1 : 0
     if (ap !== bp) return bp - ap
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    return (parseServerDate(b.updated_at)?.getTime() || 0) - (parseServerDate(a.updated_at)?.getTime() || 0)
   })
 })
 
@@ -318,20 +319,7 @@ function escapeHtml(str: string): string {
 }
 
 function formatMsgTime(iso: string): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  const diffDays = Math.floor((today.getTime() - msgDay.getTime()) / 86400000)
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  const time = `${hh}:${mm}`
-  if (diffDays === 0) return `今天 ${time}`
-  if (diffDays === 1) return `昨天 ${time}`
-  const m = d.getMonth() + 1
-  const day = d.getDate()
-  return `${m}/${day} ${time}`
+  return formatMessageTime(iso)
 }
 
 const codeBlocks = ref<Record<string, string>>({})

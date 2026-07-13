@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { useUserStore } from '../stores/user'
+import { formatLocalDateTime } from '../utils/dateTime'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -261,10 +262,7 @@ function resourceTypeTag(type: string) {
 }
 
 function formatTime(value?: string | null) {
-  if (!value) return ''
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleString()
+  return formatLocalDateTime(value)
 }
 
 function formatPercent(value?: number) {
