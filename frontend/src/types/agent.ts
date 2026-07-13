@@ -55,6 +55,12 @@ export interface SkillData {
     course_name?: string | null
     knowledge_points?: string[]
     kp_weights?: Record<string, number>
+    course_bindings?: Array<{
+      course_name: string
+      knowledge_points: string[]
+      weight?: number
+      kp_weights?: Record<string, number>
+    }>
     save_required?: boolean
   } | null
 }

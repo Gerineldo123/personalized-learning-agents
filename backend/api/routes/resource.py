@@ -612,8 +612,9 @@ async def save_draft_resource(req: ResourceDraftRequest, db: Session = Depends(g
         course_name=req.course_name,
         knowledge_points=req.knowledge_points,
     )
+    content_course_bindings = content.get("course_bindings") if isinstance(content, dict) else []
     course_bindings = _normalize_course_bindings(
-        req.course_bindings or graph_tags.get("course_bindings"),
+        req.course_bindings or content_course_bindings or graph_tags.get("course_bindings"),
         fallback_course=graph_tags.get("course_name") or req.course_name,
         fallback_kps=graph_tags.get("knowledge_points") or req.knowledge_points or [],
         fallback_weights=req.kp_weights or graph_tags.get("kp_weights") or {},

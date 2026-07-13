@@ -10,6 +10,43 @@ course_kp_map: dict[str, list[str]] = {}
 kp_course_map: dict[str, str] = {}
 course_graph_map: dict[str, dict] = {}
 
+_KP_ALIASES: dict[str, tuple[str, str]] = {
+    "k-means": ("机器学习", "无监督学习"),
+    "kmeans": ("机器学习", "无监督学习"),
+    "k均值": ("机器学习", "无监督学习"),
+    "k 均值": ("机器学习", "无监督学习"),
+    "聚类算法": ("机器学习", "无监督学习"),
+    "聚类": ("机器学习", "无监督学习"),
+    "无监督": ("机器学习", "无监督学习"),
+    "决策树": ("机器学习", "决策树与集成方法"),
+    "随机森林": ("机器学习", "决策树与集成方法"),
+    "集成学习": ("机器学习", "决策树与集成方法"),
+    "svm": ("机器学习", "支持向量机"),
+    "支持向量": ("机器学习", "支持向量机"),
+    "特征选择": ("机器学习", "特征工程"),
+    "特征处理": ("机器学习", "特征工程"),
+    "过拟合": ("机器学习", "模型评估与调优"),
+    "欠拟合": ("机器学习", "模型评估与调优"),
+    "条件概率": ("概率论与数理统计", "条件概率与独立性"),
+    "贝叶斯": ("概率论与数理统计", "条件概率与独立性"),
+    "贝叶斯更新": ("概率论与数理统计", "条件概率与独立性"),
+    "独立性": ("概率论与数理统计", "条件概率与独立性"),
+    "样本空间": ("概率论与数理统计", "随机事件与概率"),
+    "随机事件": ("概率论与数理统计", "随机事件与概率"),
+    "概率公式": ("概率论与数理统计", "随机事件与概率"),
+    "全概率": ("概率论与数理统计", "条件概率与独立性"),
+    "中心极限定理": ("概率论与数理统计", "大数定律与中心极限定理"),
+    "大数定律": ("概率论与数理统计", "大数定律与中心极限定理"),
+    "假设检验": ("概率论与数理统计", "假设检验"),
+    "参数估计": ("概率论与数理统计", "参数估计"),
+    "方差分析": ("概率论与数理统计", "方差分析与回归"),
+    "回归": ("概率论与数理统计", "方差分析与回归"),
+    "随机变量": ("概率论与数理统计", "随机变量与分布"),
+    "概率分布": ("概率论与数理统计", "随机变量与分布"),
+    "期望": ("概率论与数理统计", "数字特征"),
+    "方差": ("概率论与数理统计", "数字特征"),
+}
+
 
 def _build_index():
     if not os.path.exists(_KP_DIR):
@@ -64,6 +101,41 @@ def match_kp(text: str) -> list[str]:
     return [kp for kp in kp_course_map if kp in (text or "")]
 
 
+def _course_matches(text: str) -> list[str]:
+    content = text or ""
+    return sorted(
+        [course for course in course_kp_map if course and course in content],
+        key=len,
+        reverse=True,
+    )
+
+
+def _match_kps_for_inference(text: str, course_context: str | None = None) -> list[str]:
+    content = text or ""
+    content_lower = content.lower()
+    allowed = set(course_kp_map.get(course_context, [])) if course_context else None
+    matches: list[str] = []
+    for kp in kp_course_map:
+        if kp not in content:
+            continue
+        if allowed is not None and kp not in allowed:
+            continue
+        if allowed is None and len(kp.strip()) < 2:
+            continue
+        matches.append(kp)
+    for alias, (alias_course, alias_kp) in _KP_ALIASES.items():
+        if alias.lower() not in content_lower:
+            continue
+        if alias_kp not in kp_course_map:
+            continue
+        if course_context and alias_course != course_context and alias_kp not in (allowed or set()):
+            continue
+        if allowed is not None and alias_kp not in allowed:
+            continue
+        matches.append(alias_kp)
+    return matches
+
+
 def get_course_kps(course_name: str | None) -> list[str]:
     if not course_name:
         return []
@@ -72,10 +144,10 @@ def get_course_kps(course_name: str | None) -> list[str]:
 
 def infer_course_from_text(text: str, default: str | None = None) -> str | None:
     content = text or ""
-    for course in course_kp_map:
-        if course in content:
-            return course
-    matched = match_kp(content)
+    course_matches = _course_matches(content)
+    if course_matches:
+        return course_matches[0]
+    matched = _match_kps_for_inference(content)
     if matched:
         return kp_course_map.get(matched[0])
     return default
@@ -114,11 +186,22 @@ def infer_resource_tags(
     knowledge_points: list[str] | None = None,
 ) -> dict:
     explicit_kps = [kp for kp in (knowledge_points or []) if kp in kp_course_map]
-    matched_kps = explicit_kps or match_kp(text or "")
     explicit_course = bool(course_name)
+    course_matches = _course_matches(text or "")
 
     if course_name:
         course = course_name
+    elif course_matches:
+        course = course_matches[0]
+    else:
+        course = None
+
+    matched_kps = explicit_kps or _match_kps_for_inference(text or "", course)
+
+    if course:
+        allowed = set(course_kp_map.get(course, []))
+        if allowed:
+            matched_kps = [kp for kp in matched_kps if kp in allowed]
     elif matched_kps:
         counts: dict[str, int] = {}
         for kp in matched_kps:
@@ -126,9 +209,6 @@ def infer_resource_tags(
             if course:
                 counts[course] = counts.get(course, 0) + 1
         course = max(counts, key=counts.get) if counts else None
-    else:
-        course_matches = [course for course in course_kp_map if course in (text or "")]
-        course = course_matches[0] if course_matches else None
 
     if explicit_course and course and course in course_kp_map:
         allowed = set(course_kp_map.get(course, []))

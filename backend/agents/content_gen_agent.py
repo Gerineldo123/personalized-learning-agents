@@ -553,6 +553,7 @@ class ContentGenAgent(BaseAgent):
                 "course_name": state.get("course_name"),
                 "knowledge_points": state.get("knowledge_points") or [],
                 "kp_weights": state.get("kp_weights") or {},
+                "course_bindings": state.get("course_bindings") or [],
                 "save_required": True,
             }
             return

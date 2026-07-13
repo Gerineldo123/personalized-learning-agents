@@ -129,6 +129,7 @@ def make_draft_resource(
     course_name: str | None = None,
     knowledge_points: list[str] | None = None,
     kp_weights: dict | None = None,
+    course_bindings: list[dict] | None = None,
 ) -> dict:
     final_title = title
     if not final_title or final_title in {f"{resource_type}_resource", "code_resource"}:
@@ -147,7 +148,28 @@ def make_draft_resource(
         "course_name": course_name,
         "knowledge_points": knowledge_points or [],
         "kp_weights": kp_weights or {},
+        "course_bindings": course_bindings or [],
         "save_required": True,
+    }
+
+
+def infer_draft_resource_binding(
+    text: str,
+    course_name: str | None = None,
+    knowledge_points: list[str] | None = None,
+) -> dict:
+    from services.kp_service import infer_resource_tags
+
+    graph_tags = infer_resource_tags(
+        text or "",
+        course_name=course_name,
+        knowledge_points=knowledge_points or [],
+    )
+    return {
+        "course_name": graph_tags.get("course_name"),
+        "knowledge_points": graph_tags.get("knowledge_points") or [],
+        "kp_weights": graph_tags.get("kp_weights") or {},
+        "course_bindings": graph_tags.get("course_bindings") or [],
     }
 
 
@@ -438,6 +460,16 @@ class CodeGenSkill(BaseSkill):
         code_lang = ad.get("code_lang", "python")
         code_desc = (ad.get("code_desc") or user_message or "").strip()
         generation_task = code_desc or user_message
+        binding_text = "\n".join([
+            str(user_message or ""),
+            str(generation_task or ""),
+            str(ad.get("search_keywords") or ""),
+        ])
+        graph_binding = infer_draft_resource_binding(
+            binding_text,
+            course_name=context.get("course_name") or ad.get("course_name"),
+            knowledge_points=context.get("knowledge_points") or ad.get("knowledge_points") or [],
+        )
 
         # 检测可视化意图
         VIZ_KEYWORDS = ["可视化", "动画", "演示", "visuali", "animation", "animate", "步骤展示", "动态展示"]
@@ -549,6 +581,7 @@ class CodeGenSkill(BaseSkill):
                     "anime",
                     f"可视化动画：{generation_task[:40]}",
                     {"code": content, "language": "html"},
+                    **graph_binding,
                 )
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
                     "content": content,
@@ -628,6 +661,9 @@ class CodeGenSkill(BaseSkill):
                 code_language=code_lang,
                 profile=profile,
                 profile_context=context.get("profile_text"),
+                course_name=graph_binding.get("course_name"),
+                knowledge_points=graph_binding.get("knowledge_points") or [],
+                kp_weights=graph_binding.get("kp_weights") or {},
                 persist=False,
             )
             agent = ContentGenAgent()

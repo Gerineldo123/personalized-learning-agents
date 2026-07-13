@@ -108,7 +108,7 @@ def _apply_skill_routing_guards(message: str, selected_skills: list, code_needed
 def _requires_resource_orchestration(message: str) -> bool:
     text = (message or "").lower()
     create_terms = ["生成", "制作", "创建", "规划", "设计", "给我"]
-    resource_terms = ["资源包", "多模态", "完整资源", "学习方案", "学习资料", "学习路径", "闭环资源"]
+    resource_terms = ["资源包", "多模态", "完整资源", "学习方案", "学习资料", "学习路径"]
     return any(term in text for term in create_terms) and any(term in text for term in resource_terms)
 
 
@@ -326,6 +326,9 @@ async def skill_execute_node(state: AgentGraphState) -> AgentGraphState:
         "all_modules_data": ad,
         "profile": state.get("profile"),
         "profile_text": state.get("profile_text", ""),
+        "course_name": state.get("course_name") or ad.get("course_name"),
+        "knowledge_points": state.get("knowledge_points") or ad.get("knowledge_points") or [],
+        "kp_weights": state.get("kp_weights") or ad.get("kp_weights") or {},
         "persist": False,
     }
 
