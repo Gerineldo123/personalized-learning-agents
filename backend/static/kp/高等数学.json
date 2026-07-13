@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {"id": "极限与连续", "category": 0},
+    {"id": "导数与微分", "category": 0},
+    {"id": "中值定理", "category": 0},
+    {"id": "不定积分", "category": 1},
+    {"id": "定积分", "category": 1},
+    {"id": "微分方程", "category": 1},
+    {"id": "多元函数微分", "category": 2},
+    {"id": "重积分", "category": 2},
+    {"id": "曲线曲面积分", "category": 2},
+    {"id": "无穷级数", "category": 2}
+  ],
+  "links": [
+    {"source": "极限与连续", "target": "导数与微分"},
+    {"source": "导数与微分", "target": "中值定理"},
+    {"source": "导数与微分", "target": "不定积分"},
+    {"source": "不定积分", "target": "定积分"},
+    {"source": "定积分", "target": "微分方程"},
+    {"source": "导数与微分", "target": "多元函数微分"},
+    {"source": "定积分", "target": "重积分"},
+    {"source": "重积分", "target": "曲线曲面积分"},
+    {"source": "极限与连续", "target": "无穷级数"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "核心"},
+    {"name": "进阶"}
+  ]
+}

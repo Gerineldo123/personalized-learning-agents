@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "哈希与签名",
+      "category": 0
+    },
+    {
+      "id": "区块结构",
+      "category": 0
+    },
+    {
+      "id": "共识机制",
+      "category": 0
+    },
+    {
+      "id": "智能合约",
+      "category": 1
+    },
+    {
+      "id": "联盟链",
+      "category": 1
+    },
+    {
+      "id": "链上数据治理",
+      "category": 2
+    },
+    {
+      "id": "区块链应用",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "哈希与签名",
+      "target": "区块结构"
+    },
+    {
+      "source": "区块结构",
+      "target": "共识机制"
+    },
+    {
+      "source": "共识机制",
+      "target": "智能合约"
+    },
+    {
+      "source": "智能合约",
+      "target": "联盟链"
+    },
+    {
+      "source": "联盟链",
+      "target": "链上数据治理"
+    },
+    {
+      "source": "链上数据治理",
+      "target": "区块链应用"
+    },
+    {
+      "source": "哈希与签名",
+      "target": "智能合约"
+    },
+    {
+      "source": "区块结构",
+      "target": "区块链应用"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

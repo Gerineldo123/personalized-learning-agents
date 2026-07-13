@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "领域分析",
+      "category": 0
+    },
+    {
+      "id": "领域模型",
+      "category": 0
+    },
+    {
+      "id": "领域专用语言",
+      "category": 0
+    },
+    {
+      "id": "业务规则建模",
+      "category": 1
+    },
+    {
+      "id": "领域服务",
+      "category": 1
+    },
+    {
+      "id": "领域驱动设计",
+      "category": 2
+    },
+    {
+      "id": "行业适配",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "领域分析",
+      "target": "领域模型"
+    },
+    {
+      "source": "领域模型",
+      "target": "领域专用语言"
+    },
+    {
+      "source": "领域专用语言",
+      "target": "业务规则建模"
+    },
+    {
+      "source": "业务规则建模",
+      "target": "领域服务"
+    },
+    {
+      "source": "领域服务",
+      "target": "领域驱动设计"
+    },
+    {
+      "source": "领域驱动设计",
+      "target": "行业适配"
+    },
+    {
+      "source": "领域分析",
+      "target": "业务规则建模"
+    },
+    {
+      "source": "领域模型",
+      "target": "行业适配"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "数制与编码",
+      "category": 0
+    },
+    {
+      "id": "布尔代数",
+      "category": 0
+    },
+    {
+      "id": "组合逻辑电路",
+      "category": 0
+    },
+    {
+      "id": "时序逻辑电路",
+      "category": 1
+    },
+    {
+      "id": "触发器与寄存器",
+      "category": 1
+    },
+    {
+      "id": "有限状态机",
+      "category": 1
+    },
+    {
+      "id": "Verilog基础",
+      "category": 2
+    },
+    {
+      "id": "EDA仿真",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "数制与编码",
+      "target": "布尔代数"
+    },
+    {
+      "source": "布尔代数",
+      "target": "组合逻辑电路"
+    },
+    {
+      "source": "组合逻辑电路",
+      "target": "时序逻辑电路"
+    },
+    {
+      "source": "时序逻辑电路",
+      "target": "触发器与寄存器"
+    },
+    {
+      "source": "触发器与寄存器",
+      "target": "有限状态机"
+    },
+    {
+      "source": "有限状态机",
+      "target": "Verilog基础"
+    },
+    {
+      "source": "Verilog基础",
+      "target": "EDA仿真"
+    },
+    {
+      "source": "数制与编码",
+      "target": "时序逻辑电路"
+    },
+    {
+      "source": "布尔代数",
+      "target": "EDA仿真"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

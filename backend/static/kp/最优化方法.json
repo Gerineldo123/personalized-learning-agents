@@ -1,0 +1,93 @@
+{
+  "nodes": [
+    {
+      "id": "优化模型",
+      "category": 0
+    },
+    {
+      "id": "凸集与凸函数",
+      "category": 0
+    },
+    {
+      "id": "一阶最优性条件",
+      "category": 0
+    },
+    {
+      "id": "梯度下降法",
+      "category": 1
+    },
+    {
+      "id": "牛顿法",
+      "category": 1
+    },
+    {
+      "id": "约束优化",
+      "category": 1
+    },
+    {
+      "id": "拉格朗日乘子",
+      "category": 2
+    },
+    {
+      "id": "KKT条件",
+      "category": 2
+    },
+    {
+      "id": "线性规划基础",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "优化模型",
+      "target": "凸集与凸函数"
+    },
+    {
+      "source": "凸集与凸函数",
+      "target": "一阶最优性条件"
+    },
+    {
+      "source": "一阶最优性条件",
+      "target": "梯度下降法"
+    },
+    {
+      "source": "梯度下降法",
+      "target": "牛顿法"
+    },
+    {
+      "source": "牛顿法",
+      "target": "约束优化"
+    },
+    {
+      "source": "约束优化",
+      "target": "拉格朗日乘子"
+    },
+    {
+      "source": "拉格朗日乘子",
+      "target": "KKT条件"
+    },
+    {
+      "source": "KKT条件",
+      "target": "线性规划基础"
+    },
+    {
+      "source": "优化模型",
+      "target": "梯度下降法"
+    },
+    {
+      "source": "凸集与凸函数",
+      "target": "线性规划基础"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "图形渲染管线",
+      "category": 0
+    },
+    {
+      "id": "几何变换",
+      "category": 0
+    },
+    {
+      "id": "投影与裁剪",
+      "category": 0
+    },
+    {
+      "id": "光照模型",
+      "category": 1
+    },
+    {
+      "id": "纹理映射",
+      "category": 1
+    },
+    {
+      "id": "曲线曲面",
+      "category": 1
+    },
+    {
+      "id": "光栅化",
+      "category": 2
+    },
+    {
+      "id": "三维建模",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "图形渲染管线",
+      "target": "几何变换"
+    },
+    {
+      "source": "几何变换",
+      "target": "投影与裁剪"
+    },
+    {
+      "source": "投影与裁剪",
+      "target": "光照模型"
+    },
+    {
+      "source": "光照模型",
+      "target": "纹理映射"
+    },
+    {
+      "source": "纹理映射",
+      "target": "曲线曲面"
+    },
+    {
+      "source": "曲线曲面",
+      "target": "光栅化"
+    },
+    {
+      "source": "光栅化",
+      "target": "三维建模"
+    },
+    {
+      "source": "图形渲染管线",
+      "target": "光照模型"
+    },
+    {
+      "source": "几何变换",
+      "target": "三维建模"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "关系模型", "category": 0},
+    {"id": "SQL查询语言", "category": 0},
+    {"id": "数据库设计", "category": 1},
+    {"id": "索引与查询优化", "category": 1},
+    {"id": "事务与并发控制", "category": 2},
+    {"id": "存储引擎", "category": 2},
+    {"id": "NoSQL入门", "category": 2}
+  ],
+  "links": [
+    {"source": "关系模型", "target": "SQL查询语言"},
+    {"source": "SQL查询语言", "target": "数据库设计"},
+    {"source": "数据库设计", "target": "索引与查询优化"},
+    {"source": "索引与查询优化", "target": "事务与并发控制"},
+    {"source": "事务与并发控制", "target": "存储引擎"},
+    {"source": "存储引擎", "target": "NoSQL入门"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "设计"},
+    {"name": "进阶"}
+  ]
+}

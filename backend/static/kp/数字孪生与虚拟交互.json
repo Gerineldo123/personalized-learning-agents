@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "数字孪生模型",
+      "category": 0
+    },
+    {
+      "id": "三维场景构建",
+      "category": 0
+    },
+    {
+      "id": "实时数据驱动",
+      "category": 0
+    },
+    {
+      "id": "虚拟交互",
+      "category": 1
+    },
+    {
+      "id": "仿真验证",
+      "category": 1
+    },
+    {
+      "id": "可视化监控",
+      "category": 2
+    },
+    {
+      "id": "应用集成",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "数字孪生模型",
+      "target": "三维场景构建"
+    },
+    {
+      "source": "三维场景构建",
+      "target": "实时数据驱动"
+    },
+    {
+      "source": "实时数据驱动",
+      "target": "虚拟交互"
+    },
+    {
+      "source": "虚拟交互",
+      "target": "仿真验证"
+    },
+    {
+      "source": "仿真验证",
+      "target": "可视化监控"
+    },
+    {
+      "source": "可视化监控",
+      "target": "应用集成"
+    },
+    {
+      "source": "数字孪生模型",
+      "target": "虚拟交互"
+    },
+    {
+      "source": "三维场景构建",
+      "target": "应用集成"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

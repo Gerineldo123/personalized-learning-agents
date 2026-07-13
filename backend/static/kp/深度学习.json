@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "神经网络基础", "category": 0},
+    {"id": "反向传播与优化", "category": 0},
+    {"id": "卷积神经网络CNN", "category": 1},
+    {"id": "循环神经网络RNN", "category": 1},
+    {"id": "注意力机制", "category": 1},
+    {"id": "Transformer架构", "category": 2},
+    {"id": "生成对抗网络GAN", "category": 2},
+    {"id": "训练技巧与调参", "category": 2}
+  ],
+  "links": [
+    {"source": "神经网络基础", "target": "反向传播与优化"},
+    {"source": "反向传播与优化", "target": "卷积神经网络CNN"},
+    {"source": "反向传播与优化", "target": "循环神经网络RNN"},
+    {"source": "循环神经网络RNN", "target": "注意力机制"},
+    {"source": "注意力机制", "target": "Transformer架构"},
+    {"source": "卷积神经网络CNN", "target": "生成对抗网络GAN"},
+    {"source": "反向传播与优化", "target": "训练技巧与调参"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "经典架构"},
+    {"name": "前沿"}
+  ]
+}

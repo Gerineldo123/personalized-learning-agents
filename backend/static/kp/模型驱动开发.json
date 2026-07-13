@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "元模型",
+      "category": 0
+    },
+    {
+      "id": "模型转换",
+      "category": 0
+    },
+    {
+      "id": "代码生成",
+      "category": 0
+    },
+    {
+      "id": "模型验证",
+      "category": 1
+    },
+    {
+      "id": "低代码平台",
+      "category": 1
+    },
+    {
+      "id": "模型演化",
+      "category": 2
+    },
+    {
+      "id": "工具链集成",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "元模型",
+      "target": "模型转换"
+    },
+    {
+      "source": "模型转换",
+      "target": "代码生成"
+    },
+    {
+      "source": "代码生成",
+      "target": "模型验证"
+    },
+    {
+      "source": "模型验证",
+      "target": "低代码平台"
+    },
+    {
+      "source": "低代码平台",
+      "target": "模型演化"
+    },
+    {
+      "source": "模型演化",
+      "target": "工具链集成"
+    },
+    {
+      "source": "元模型",
+      "target": "模型验证"
+    },
+    {
+      "source": "模型转换",
+      "target": "工具链集成"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

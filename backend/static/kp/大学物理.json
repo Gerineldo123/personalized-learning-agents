@@ -1,0 +1,101 @@
+{
+  "nodes": [
+    {
+      "id": "质点运动学",
+      "category": 0
+    },
+    {
+      "id": "牛顿运动定律",
+      "category": 0
+    },
+    {
+      "id": "功与能",
+      "category": 0
+    },
+    {
+      "id": "动量与角动量",
+      "category": 0
+    },
+    {
+      "id": "刚体力学",
+      "category": 1
+    },
+    {
+      "id": "振动与波动",
+      "category": 1
+    },
+    {
+      "id": "静电场",
+      "category": 1
+    },
+    {
+      "id": "稳恒磁场",
+      "category": 2
+    },
+    {
+      "id": "电磁感应",
+      "category": 2
+    },
+    {
+      "id": "光学基础",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "质点运动学",
+      "target": "牛顿运动定律"
+    },
+    {
+      "source": "牛顿运动定律",
+      "target": "功与能"
+    },
+    {
+      "source": "功与能",
+      "target": "动量与角动量"
+    },
+    {
+      "source": "动量与角动量",
+      "target": "刚体力学"
+    },
+    {
+      "source": "刚体力学",
+      "target": "振动与波动"
+    },
+    {
+      "source": "振动与波动",
+      "target": "静电场"
+    },
+    {
+      "source": "静电场",
+      "target": "稳恒磁场"
+    },
+    {
+      "source": "稳恒磁场",
+      "target": "电磁感应"
+    },
+    {
+      "source": "电磁感应",
+      "target": "光学基础"
+    },
+    {
+      "source": "质点运动学",
+      "target": "动量与角动量"
+    },
+    {
+      "source": "牛顿运动定律",
+      "target": "光学基础"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

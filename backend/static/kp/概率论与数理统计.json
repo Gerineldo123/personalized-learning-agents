@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "随机事件与概率", "category": 0},
+    {"id": "条件概率与独立性", "category": 0},
+    {"id": "随机变量与分布", "category": 1},
+    {"id": "数字特征", "category": 1},
+    {"id": "大数定律与中心极限定理", "category": 1},
+    {"id": "参数估计", "category": 2},
+    {"id": "假设检验", "category": 2},
+    {"id": "方差分析与回归", "category": 2}
+  ],
+  "links": [
+    {"source": "随机事件与概率", "target": "条件概率与独立性"},
+    {"source": "条件概率与独立性", "target": "随机变量与分布"},
+    {"source": "随机变量与分布", "target": "数字特征"},
+    {"source": "数字特征", "target": "大数定律与中心极限定理"},
+    {"source": "大数定律与中心极限定理", "target": "参数估计"},
+    {"source": "参数估计", "target": "假设检验"},
+    {"source": "假设检验", "target": "方差分析与回归"}
+  ],
+  "categories": [
+    {"name": "概率基础"},
+    {"name": "分布与特征"},
+    {"name": "统计推断"}
+  ]
+}

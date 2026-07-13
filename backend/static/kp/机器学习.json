@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "监督学习基础", "category": 0},
+    {"id": "线性模型", "category": 0},
+    {"id": "决策树与集成方法", "category": 1},
+    {"id": "支持向量机", "category": 1},
+    {"id": "无监督学习", "category": 1},
+    {"id": "特征工程", "category": 2},
+    {"id": "模型评估与调优", "category": 2},
+    {"id": "概率图模型", "category": 2}
+  ],
+  "links": [
+    {"source": "监督学习基础", "target": "线性模型"},
+    {"source": "线性模型", "target": "决策树与集成方法"},
+    {"source": "决策树与集成方法", "target": "支持向量机"},
+    {"source": "监督学习基础", "target": "无监督学习"},
+    {"source": "无监督学习", "target": "特征工程"},
+    {"source": "特征工程", "target": "模型评估与调优"},
+    {"source": "模型评估与调优", "target": "概率图模型"}
+  ],
+  "categories": [
+    {"name": "基础方法"},
+    {"name": "经典算法"},
+    {"name": "工程实践"}
+  ]
+}

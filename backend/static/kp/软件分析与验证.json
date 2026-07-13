@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "静态分析",
+      "category": 0
+    },
+    {
+      "id": "动态分析",
+      "category": 0
+    },
+    {
+      "id": "符号执行",
+      "category": 0
+    },
+    {
+      "id": "模型检查",
+      "category": 1
+    },
+    {
+      "id": "程序切片",
+      "category": 1
+    },
+    {
+      "id": "缺陷定位",
+      "category": 2
+    },
+    {
+      "id": "验证报告",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "静态分析",
+      "target": "动态分析"
+    },
+    {
+      "source": "动态分析",
+      "target": "符号执行"
+    },
+    {
+      "source": "符号执行",
+      "target": "模型检查"
+    },
+    {
+      "source": "模型检查",
+      "target": "程序切片"
+    },
+    {
+      "source": "程序切片",
+      "target": "缺陷定位"
+    },
+    {
+      "source": "缺陷定位",
+      "target": "验证报告"
+    },
+    {
+      "source": "静态分析",
+      "target": "模型检查"
+    },
+    {
+      "source": "动态分析",
+      "target": "验证报告"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

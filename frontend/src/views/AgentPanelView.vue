@@ -203,29 +203,6 @@ function taskRelevantHistory() {
     .slice(-8)
 }
 
-function buildContextualTaskDescription(taskText: string, history: { role: string; content: string }[]) {
-  if (!history.length) return taskText
-  const historyText = history
-    .map((item) => {
-      const role = item.role === 'user' ? '用户' : 'AI'
-      const content = String(item.content || '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 500)
-      return `${role}：${content}`
-    })
-    .join('\n')
-  return [
-    '请结合下面的对话上下文执行当前任务。',
-    '如果当前任务中出现“这个、它、上面、刚才、助我理解”等指代，必须从对话上下文中提取最近明确的知识点或主题；如果上下文仍无法确定主题，请先说明需要用户补充主题，不要自行假设。',
-    '',
-    `对话上下文：\n${historyText}`,
-    '',
-    `当前任务：${taskText}`,
-  ].join('\n')
-}
-
 function setMode(mode: 'chat' | 'task') {
   if (!currentConvId.value) return
   convModeMap.value[currentConvId.value] = mode
@@ -426,10 +403,9 @@ async function executeTask(taskDescription?: string, options: ExecuteTaskOptions
     ? Promise.resolve()
     : saveMessage('user', text).catch(() => {})
   const history = taskRelevantHistory()
-  const backendTaskText = buildContextualTaskDescription(text, history)
 
   const ctrl = agentExecuteStream(
-    userStore.userId, backendTaskText,
+    userStore.userId, text,
     (evt) => handleStepEvent(evt, task.id),
     async () => {
       agentStore.isExecuting = false

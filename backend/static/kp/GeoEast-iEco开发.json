@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "GeoEast平台基础",
+      "category": 0
+    },
+    {
+      "id": "iEco开发流程",
+      "category": 0
+    },
+    {
+      "id": "地震数据管理",
+      "category": 0
+    },
+    {
+      "id": "插件开发",
+      "category": 1
+    },
+    {
+      "id": "解释流程集成",
+      "category": 1
+    },
+    {
+      "id": "性能优化",
+      "category": 2
+    },
+    {
+      "id": "行业应用",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "GeoEast平台基础",
+      "target": "iEco开发流程"
+    },
+    {
+      "source": "iEco开发流程",
+      "target": "地震数据管理"
+    },
+    {
+      "source": "地震数据管理",
+      "target": "插件开发"
+    },
+    {
+      "source": "插件开发",
+      "target": "解释流程集成"
+    },
+    {
+      "source": "解释流程集成",
+      "target": "性能优化"
+    },
+    {
+      "source": "性能优化",
+      "target": "行业应用"
+    },
+    {
+      "source": "GeoEast平台基础",
+      "target": "插件开发"
+    },
+    {
+      "source": "iEco开发流程",
+      "target": "行业应用"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

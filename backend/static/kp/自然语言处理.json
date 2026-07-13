@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "文本预处理", "category": 0},
+    {"id": "语言模型", "category": 0},
+    {"id": "词向量与嵌入", "category": 1},
+    {"id": "序列标注", "category": 1},
+    {"id": "文本分类与情感分析", "category": 1},
+    {"id": "机器翻译", "category": 2},
+    {"id": "预训练语言模型", "category": 2},
+    {"id": "文本生成", "category": 2}
+  ],
+  "links": [
+    {"source": "文本预处理", "target": "语言模型"},
+    {"source": "语言模型", "target": "词向量与嵌入"},
+    {"source": "词向量与嵌入", "target": "序列标注"},
+    {"source": "词向量与嵌入", "target": "文本分类与情感分析"},
+    {"source": "序列标注", "target": "机器翻译"},
+    {"source": "语言模型", "target": "预训练语言模型"},
+    {"source": "预训练语言模型", "target": "文本生成"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "经典任务"},
+    {"name": "前沿技术"}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "行列式", "category": 0},
+    {"id": "矩阵运算", "category": 0},
+    {"id": "向量与线性方程组", "category": 1},
+    {"id": "向量空间与线性变换", "category": 1},
+    {"id": "特征值与特征向量", "category": 1},
+    {"id": "二次型", "category": 2},
+    {"id": "矩阵分解", "category": 2}
+  ],
+  "links": [
+    {"source": "行列式", "target": "矩阵运算"},
+    {"source": "矩阵运算", "target": "向量与线性方程组"},
+    {"source": "向量与线性方程组", "target": "向量空间与线性变换"},
+    {"source": "向量空间与线性变换", "target": "特征值与特征向量"},
+    {"source": "特征值与特征向量", "target": "二次型"},
+    {"source": "特征值与特征向量", "target": "矩阵分解"}
+  ],
+  "categories": [
+    {"name": "基础工具"},
+    {"name": "核心理论"},
+    {"name": "应用深化"}
+  ]
+}

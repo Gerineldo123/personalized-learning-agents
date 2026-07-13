@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "选题与需求分析",
+      "category": 0
+    },
+    {
+      "id": "文献综述",
+      "category": 0
+    },
+    {
+      "id": "技术方案设计",
+      "category": 0
+    },
+    {
+      "id": "系统实现",
+      "category": 1
+    },
+    {
+      "id": "实验评估",
+      "category": 1
+    },
+    {
+      "id": "论文写作",
+      "category": 2
+    },
+    {
+      "id": "答辩展示",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "选题与需求分析",
+      "target": "文献综述"
+    },
+    {
+      "source": "文献综述",
+      "target": "技术方案设计"
+    },
+    {
+      "source": "技术方案设计",
+      "target": "系统实现"
+    },
+    {
+      "source": "系统实现",
+      "target": "实验评估"
+    },
+    {
+      "source": "实验评估",
+      "target": "论文写作"
+    },
+    {
+      "source": "论文写作",
+      "target": "答辩展示"
+    },
+    {
+      "source": "选题与需求分析",
+      "target": "系统实现"
+    },
+    {
+      "source": "文献综述",
+      "target": "答辩展示"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

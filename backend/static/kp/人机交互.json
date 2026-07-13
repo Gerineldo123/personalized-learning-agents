@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "用户研究",
+      "category": 0
+    },
+    {
+      "id": "交互设计原则",
+      "category": 0
+    },
+    {
+      "id": "原型设计",
+      "category": 0
+    },
+    {
+      "id": "可用性测试",
+      "category": 1
+    },
+    {
+      "id": "信息架构",
+      "category": 1
+    },
+    {
+      "id": "视觉一致性",
+      "category": 2
+    },
+    {
+      "id": "无障碍设计",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "用户研究",
+      "target": "交互设计原则"
+    },
+    {
+      "source": "交互设计原则",
+      "target": "原型设计"
+    },
+    {
+      "source": "原型设计",
+      "target": "可用性测试"
+    },
+    {
+      "source": "可用性测试",
+      "target": "信息架构"
+    },
+    {
+      "source": "信息架构",
+      "target": "视觉一致性"
+    },
+    {
+      "source": "视觉一致性",
+      "target": "无障碍设计"
+    },
+    {
+      "source": "用户研究",
+      "target": "可用性测试"
+    },
+    {
+      "source": "交互设计原则",
+      "target": "无障碍设计"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

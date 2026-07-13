@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "形式化规格说明",
+      "category": 0
+    },
+    {
+      "id": "命题逻辑",
+      "category": 0
+    },
+    {
+      "id": "时序逻辑",
+      "category": 0
+    },
+    {
+      "id": "模型检测",
+      "category": 1
+    },
+    {
+      "id": "定理证明",
+      "category": 1
+    },
+    {
+      "id": "程序验证",
+      "category": 2
+    },
+    {
+      "id": "不变式",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "形式化规格说明",
+      "target": "命题逻辑"
+    },
+    {
+      "source": "命题逻辑",
+      "target": "时序逻辑"
+    },
+    {
+      "source": "时序逻辑",
+      "target": "模型检测"
+    },
+    {
+      "source": "模型检测",
+      "target": "定理证明"
+    },
+    {
+      "source": "定理证明",
+      "target": "程序验证"
+    },
+    {
+      "source": "程序验证",
+      "target": "不变式"
+    },
+    {
+      "source": "形式化规格说明",
+      "target": "模型检测"
+    },
+    {
+      "source": "命题逻辑",
+      "target": "不变式"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

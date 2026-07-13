@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "进程管理", "category": 0},
+    {"id": "内存管理", "category": 0},
+    {"id": "文件系统", "category": 1},
+    {"id": "设备管理", "category": 1},
+    {"id": "并发与同步", "category": 1},
+    {"id": "死锁处理", "category": 2},
+    {"id": "虚拟化技术", "category": 2}
+  ],
+  "links": [
+    {"source": "进程管理", "target": "内存管理"},
+    {"source": "内存管理", "target": "文件系统"},
+    {"source": "文件系统", "target": "设备管理"},
+    {"source": "进程管理", "target": "并发与同步"},
+    {"source": "并发与同步", "target": "死锁处理"},
+    {"source": "死锁处理", "target": "虚拟化技术"}
+  ],
+  "categories": [
+    {"name": "核心机制"},
+    {"name": "I/O系统"},
+    {"name": "高级主题"}
+  ]
+}

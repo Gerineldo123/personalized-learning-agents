@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "Python数据处理基础",
+      "category": 0
+    },
+    {
+      "id": "NumPy数组计算",
+      "category": 0
+    },
+    {
+      "id": "Pandas数据清洗",
+      "category": 0
+    },
+    {
+      "id": "数据可视化",
+      "category": 1
+    },
+    {
+      "id": "描述统计分析",
+      "category": 1
+    },
+    {
+      "id": "探索性数据分析",
+      "category": 1
+    },
+    {
+      "id": "特征工程基础",
+      "category": 2
+    },
+    {
+      "id": "分析报告表达",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "Python数据处理基础",
+      "target": "NumPy数组计算"
+    },
+    {
+      "source": "NumPy数组计算",
+      "target": "Pandas数据清洗"
+    },
+    {
+      "source": "Pandas数据清洗",
+      "target": "数据可视化"
+    },
+    {
+      "source": "数据可视化",
+      "target": "描述统计分析"
+    },
+    {
+      "source": "描述统计分析",
+      "target": "探索性数据分析"
+    },
+    {
+      "source": "探索性数据分析",
+      "target": "特征工程基础"
+    },
+    {
+      "source": "特征工程基础",
+      "target": "分析报告表达"
+    },
+    {
+      "source": "Python数据处理基础",
+      "target": "数据可视化"
+    },
+    {
+      "source": "NumPy数组计算",
+      "target": "分析报告表达"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

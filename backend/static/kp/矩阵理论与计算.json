@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "矩阵分解",
+      "category": 0
+    },
+    {
+      "id": "特征值与特征向量",
+      "category": 0
+    },
+    {
+      "id": "奇异值分解",
+      "category": 0
+    },
+    {
+      "id": "正定矩阵",
+      "category": 1
+    },
+    {
+      "id": "矩阵范数",
+      "category": 1
+    },
+    {
+      "id": "稀疏矩阵计算",
+      "category": 2
+    },
+    {
+      "id": "迭代法",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "矩阵分解",
+      "target": "特征值与特征向量"
+    },
+    {
+      "source": "特征值与特征向量",
+      "target": "奇异值分解"
+    },
+    {
+      "source": "奇异值分解",
+      "target": "正定矩阵"
+    },
+    {
+      "source": "正定矩阵",
+      "target": "矩阵范数"
+    },
+    {
+      "source": "矩阵范数",
+      "target": "稀疏矩阵计算"
+    },
+    {
+      "source": "稀疏矩阵计算",
+      "target": "迭代法"
+    },
+    {
+      "source": "矩阵分解",
+      "target": "正定矩阵"
+    },
+    {
+      "source": "特征值与特征向量",
+      "target": "迭代法"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

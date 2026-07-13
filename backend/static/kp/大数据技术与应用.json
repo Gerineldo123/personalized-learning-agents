@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "分布式文件系统",
+      "category": 0
+    },
+    {
+      "id": "MapReduce模型",
+      "category": 0
+    },
+    {
+      "id": "Spark计算模型",
+      "category": 0
+    },
+    {
+      "id": "数据仓库",
+      "category": 1
+    },
+    {
+      "id": "流式计算",
+      "category": 1
+    },
+    {
+      "id": "数据湖",
+      "category": 1
+    },
+    {
+      "id": "大数据治理",
+      "category": 2
+    },
+    {
+      "id": "大数据应用案例",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "分布式文件系统",
+      "target": "MapReduce模型"
+    },
+    {
+      "source": "MapReduce模型",
+      "target": "Spark计算模型"
+    },
+    {
+      "source": "Spark计算模型",
+      "target": "数据仓库"
+    },
+    {
+      "source": "数据仓库",
+      "target": "流式计算"
+    },
+    {
+      "source": "流式计算",
+      "target": "数据湖"
+    },
+    {
+      "source": "数据湖",
+      "target": "大数据治理"
+    },
+    {
+      "source": "大数据治理",
+      "target": "大数据应用案例"
+    },
+    {
+      "source": "分布式文件系统",
+      "target": "数据仓库"
+    },
+    {
+      "source": "MapReduce模型",
+      "target": "大数据应用案例"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

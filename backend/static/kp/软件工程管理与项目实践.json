@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "项目计划",
+      "category": 0
+    },
+    {
+      "id": "需求管理",
+      "category": 0
+    },
+    {
+      "id": "进度管理",
+      "category": 0
+    },
+    {
+      "id": "风险管理",
+      "category": 1
+    },
+    {
+      "id": "团队协作",
+      "category": 1
+    },
+    {
+      "id": "持续集成",
+      "category": 2
+    },
+    {
+      "id": "项目复盘",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "项目计划",
+      "target": "需求管理"
+    },
+    {
+      "source": "需求管理",
+      "target": "进度管理"
+    },
+    {
+      "source": "进度管理",
+      "target": "风险管理"
+    },
+    {
+      "source": "风险管理",
+      "target": "团队协作"
+    },
+    {
+      "source": "团队协作",
+      "target": "持续集成"
+    },
+    {
+      "source": "持续集成",
+      "target": "项目复盘"
+    },
+    {
+      "source": "项目计划",
+      "target": "风险管理"
+    },
+    {
+      "source": "需求管理",
+      "target": "项目复盘"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

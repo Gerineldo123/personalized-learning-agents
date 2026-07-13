@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "项目选题",
+      "category": 0
+    },
+    {
+      "id": "需求分析",
+      "category": 0
+    },
+    {
+      "id": "方案设计",
+      "category": 0
+    },
+    {
+      "id": "编码实现",
+      "category": 1
+    },
+    {
+      "id": "测试验证",
+      "category": 1
+    },
+    {
+      "id": "团队协作",
+      "category": 2
+    },
+    {
+      "id": "成果汇报",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "项目选题",
+      "target": "需求分析"
+    },
+    {
+      "source": "需求分析",
+      "target": "方案设计"
+    },
+    {
+      "source": "方案设计",
+      "target": "编码实现"
+    },
+    {
+      "source": "编码实现",
+      "target": "测试验证"
+    },
+    {
+      "source": "测试验证",
+      "target": "团队协作"
+    },
+    {
+      "source": "团队协作",
+      "target": "成果汇报"
+    },
+    {
+      "source": "项目选题",
+      "target": "编码实现"
+    },
+    {
+      "source": "需求分析",
+      "target": "成果汇报"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "智能需求识别",
+      "category": 0
+    },
+    {
+      "id": "模型服务集成",
+      "category": 0
+    },
+    {
+      "id": "知识检索",
+      "category": 0
+    },
+    {
+      "id": "智能推荐",
+      "category": 1
+    },
+    {
+      "id": "人机协同",
+      "category": 1
+    },
+    {
+      "id": "效果评估",
+      "category": 2
+    },
+    {
+      "id": "应用迭代",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "智能需求识别",
+      "target": "模型服务集成"
+    },
+    {
+      "source": "模型服务集成",
+      "target": "知识检索"
+    },
+    {
+      "source": "知识检索",
+      "target": "智能推荐"
+    },
+    {
+      "source": "智能推荐",
+      "target": "人机协同"
+    },
+    {
+      "source": "人机协同",
+      "target": "效果评估"
+    },
+    {
+      "source": "效果评估",
+      "target": "应用迭代"
+    },
+    {
+      "source": "智能需求识别",
+      "target": "智能推荐"
+    },
+    {
+      "source": "模型服务集成",
+      "target": "应用迭代"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

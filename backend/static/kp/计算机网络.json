@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "网络体系结构", "category": 0},
+    {"id": "物理层与数据链路层", "category": 0},
+    {"id": "网络层与IP协议", "category": 1},
+    {"id": "传输层与TCP/UDP", "category": 1},
+    {"id": "应用层协议", "category": 1},
+    {"id": "网络安全基础", "category": 2},
+    {"id": "网络编程", "category": 2}
+  ],
+  "links": [
+    {"source": "网络体系结构", "target": "物理层与数据链路层"},
+    {"source": "物理层与数据链路层", "target": "网络层与IP协议"},
+    {"source": "网络层与IP协议", "target": "传输层与TCP/UDP"},
+    {"source": "传输层与TCP/UDP", "target": "应用层协议"},
+    {"source": "应用层协议", "target": "网络安全基础"},
+    {"source": "传输层与TCP/UDP", "target": "网络编程"}
+  ],
+  "categories": [
+    {"name": "底层"},
+    {"name": "核心协议"},
+    {"name": "应用"}
+  ]
+}

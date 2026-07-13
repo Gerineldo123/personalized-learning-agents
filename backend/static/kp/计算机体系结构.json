@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "指令级并行",
+      "category": 0
+    },
+    {
+      "id": "流水线优化",
+      "category": 0
+    },
+    {
+      "id": "Cache一致性",
+      "category": 0
+    },
+    {
+      "id": "多核处理器",
+      "category": 1
+    },
+    {
+      "id": "存储层次优化",
+      "category": 1
+    },
+    {
+      "id": "并行体系结构",
+      "category": 2
+    },
+    {
+      "id": "性能评估",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "指令级并行",
+      "target": "流水线优化"
+    },
+    {
+      "source": "流水线优化",
+      "target": "Cache一致性"
+    },
+    {
+      "source": "Cache一致性",
+      "target": "多核处理器"
+    },
+    {
+      "source": "多核处理器",
+      "target": "存储层次优化"
+    },
+    {
+      "source": "存储层次优化",
+      "target": "并行体系结构"
+    },
+    {
+      "source": "并行体系结构",
+      "target": "性能评估"
+    },
+    {
+      "source": "指令级并行",
+      "target": "多核处理器"
+    },
+    {
+      "source": "流水线优化",
+      "target": "性能评估"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

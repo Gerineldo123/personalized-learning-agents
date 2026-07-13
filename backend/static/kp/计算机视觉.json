@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "图像处理基础", "category": 0},
+    {"id": "图像特征提取", "category": 0},
+    {"id": "图像分类", "category": 1},
+    {"id": "目标检测", "category": 1},
+    {"id": "语义分割", "category": 1},
+    {"id": "图像生成", "category": 2},
+    {"id": "三维视觉", "category": 2}
+  ],
+  "links": [
+    {"source": "图像处理基础", "target": "图像特征提取"},
+    {"source": "图像特征提取", "target": "图像分类"},
+    {"source": "图像分类", "target": "目标检测"},
+    {"source": "目标检测", "target": "语义分割"},
+    {"source": "图像分类", "target": "图像生成"},
+    {"source": "语义分割", "target": "三维视觉"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "核心任务"},
+    {"name": "前沿"}
+  ]
+}

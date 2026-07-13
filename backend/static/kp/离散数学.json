@@ -1,0 +1,26 @@
+{
+  "nodes": [
+    {"id": "命题逻辑", "category": 0},
+    {"id": "谓词逻辑", "category": 0},
+    {"id": "集合与关系", "category": 0},
+    {"id": "图论基础", "category": 1},
+    {"id": "树", "category": 1},
+    {"id": "组合数学", "category": 2},
+    {"id": "初等数论", "category": 2},
+    {"id": "代数系统", "category": 2}
+  ],
+  "links": [
+    {"source": "命题逻辑", "target": "谓词逻辑"},
+    {"source": "谓词逻辑", "target": "集合与关系"},
+    {"source": "集合与关系", "target": "图论基础"},
+    {"source": "图论基础", "target": "树"},
+    {"source": "集合与关系", "target": "组合数学"},
+    {"source": "集合与关系", "target": "代数系统"},
+    {"source": "谓词逻辑", "target": "初等数论"}
+  ],
+  "categories": [
+    {"name": "逻辑基础"},
+    {"name": "图论"},
+    {"name": "拓展"}
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "计算模型",
+      "category": 0
+    },
+    {
+      "id": "算法思维",
+      "category": 0
+    },
+    {
+      "id": "数据抽象",
+      "category": 0
+    },
+    {
+      "id": "系统思维",
+      "category": 1
+    },
+    {
+      "id": "计算复杂性",
+      "category": 1
+    },
+    {
+      "id": "软件工程基础",
+      "category": 2
+    },
+    {
+      "id": "人工智能概览",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "计算模型",
+      "target": "算法思维"
+    },
+    {
+      "source": "算法思维",
+      "target": "数据抽象"
+    },
+    {
+      "source": "数据抽象",
+      "target": "系统思维"
+    },
+    {
+      "source": "系统思维",
+      "target": "计算复杂性"
+    },
+    {
+      "source": "计算复杂性",
+      "target": "软件工程基础"
+    },
+    {
+      "source": "软件工程基础",
+      "target": "人工智能概览"
+    },
+    {
+      "source": "计算模型",
+      "target": "系统思维"
+    },
+    {
+      "source": "算法思维",
+      "target": "人工智能概览"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

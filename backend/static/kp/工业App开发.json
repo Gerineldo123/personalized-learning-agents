@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "工业场景需求",
+      "category": 0
+    },
+    {
+      "id": "移动端架构",
+      "category": 0
+    },
+    {
+      "id": "设备数据接口",
+      "category": 0
+    },
+    {
+      "id": "可视化看板",
+      "category": 1
+    },
+    {
+      "id": "离线同步",
+      "category": 1
+    },
+    {
+      "id": "权限管理",
+      "category": 2
+    },
+    {
+      "id": "发布运维",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "工业场景需求",
+      "target": "移动端架构"
+    },
+    {
+      "source": "移动端架构",
+      "target": "设备数据接口"
+    },
+    {
+      "source": "设备数据接口",
+      "target": "可视化看板"
+    },
+    {
+      "source": "可视化看板",
+      "target": "离线同步"
+    },
+    {
+      "source": "离线同步",
+      "target": "权限管理"
+    },
+    {
+      "source": "权限管理",
+      "target": "发布运维"
+    },
+    {
+      "source": "工业场景需求",
+      "target": "可视化看板"
+    },
+    {
+      "source": "移动端架构",
+      "target": "发布运维"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

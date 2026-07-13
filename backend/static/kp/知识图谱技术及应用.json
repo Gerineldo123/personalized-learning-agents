@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "实体关系抽取",
+      "category": 0
+    },
+    {
+      "id": "本体建模",
+      "category": 0
+    },
+    {
+      "id": "知识融合",
+      "category": 0
+    },
+    {
+      "id": "图数据库",
+      "category": 1
+    },
+    {
+      "id": "图查询语言",
+      "category": 1
+    },
+    {
+      "id": "知识推理",
+      "category": 1
+    },
+    {
+      "id": "知识图谱问答",
+      "category": 2
+    },
+    {
+      "id": "行业应用",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "实体关系抽取",
+      "target": "本体建模"
+    },
+    {
+      "source": "本体建模",
+      "target": "知识融合"
+    },
+    {
+      "source": "知识融合",
+      "target": "图数据库"
+    },
+    {
+      "source": "图数据库",
+      "target": "图查询语言"
+    },
+    {
+      "source": "图查询语言",
+      "target": "知识推理"
+    },
+    {
+      "source": "知识推理",
+      "target": "知识图谱问答"
+    },
+    {
+      "source": "知识图谱问答",
+      "target": "行业应用"
+    },
+    {
+      "source": "实体关系抽取",
+      "target": "图数据库"
+    },
+    {
+      "source": "本体建模",
+      "target": "行业应用"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

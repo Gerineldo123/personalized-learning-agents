@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "并行计算模型",
+      "category": 0
+    },
+    {
+      "id": "多线程编程",
+      "category": 0
+    },
+    {
+      "id": "GPU计算",
+      "category": 0
+    },
+    {
+      "id": "MPI并行",
+      "category": 1
+    },
+    {
+      "id": "性能剖析",
+      "category": 1
+    },
+    {
+      "id": "负载均衡",
+      "category": 2
+    },
+    {
+      "id": "集群作业调度",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "并行计算模型",
+      "target": "多线程编程"
+    },
+    {
+      "source": "多线程编程",
+      "target": "GPU计算"
+    },
+    {
+      "source": "GPU计算",
+      "target": "MPI并行"
+    },
+    {
+      "source": "MPI并行",
+      "target": "性能剖析"
+    },
+    {
+      "source": "性能剖析",
+      "target": "负载均衡"
+    },
+    {
+      "source": "负载均衡",
+      "target": "集群作业调度"
+    },
+    {
+      "source": "并行计算模型",
+      "target": "MPI并行"
+    },
+    {
+      "source": "多线程编程",
+      "target": "集群作业调度"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

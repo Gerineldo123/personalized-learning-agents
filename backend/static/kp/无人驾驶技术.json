@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "自动驾驶架构",
+      "category": 0
+    },
+    {
+      "id": "传感器融合",
+      "category": 0
+    },
+    {
+      "id": "车道线检测",
+      "category": 0
+    },
+    {
+      "id": "目标检测与跟踪",
+      "category": 1
+    },
+    {
+      "id": "定位与建图",
+      "category": 1
+    },
+    {
+      "id": "路径规划",
+      "category": 1
+    },
+    {
+      "id": "运动控制",
+      "category": 2
+    },
+    {
+      "id": "安全验证",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "自动驾驶架构",
+      "target": "传感器融合"
+    },
+    {
+      "source": "传感器融合",
+      "target": "车道线检测"
+    },
+    {
+      "source": "车道线检测",
+      "target": "目标检测与跟踪"
+    },
+    {
+      "source": "目标检测与跟踪",
+      "target": "定位与建图"
+    },
+    {
+      "source": "定位与建图",
+      "target": "路径规划"
+    },
+    {
+      "source": "路径规划",
+      "target": "运动控制"
+    },
+    {
+      "source": "运动控制",
+      "target": "安全验证"
+    },
+    {
+      "source": "自动驾驶架构",
+      "target": "目标检测与跟踪"
+    },
+    {
+      "source": "传感器融合",
+      "target": "安全验证"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

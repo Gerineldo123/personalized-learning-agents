@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "油气业务场景",
+      "category": 0
+    },
+    {
+      "id": "工业数据治理",
+      "category": 0
+    },
+    {
+      "id": "智能勘探",
+      "category": 0
+    },
+    {
+      "id": "智能钻井",
+      "category": 1
+    },
+    {
+      "id": "生产优化",
+      "category": 1
+    },
+    {
+      "id": "设备预测维护",
+      "category": 1
+    },
+    {
+      "id": "智能油田应用",
+      "category": 2
+    },
+    {
+      "id": "工业AI安全",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "油气业务场景",
+      "target": "工业数据治理"
+    },
+    {
+      "source": "工业数据治理",
+      "target": "智能勘探"
+    },
+    {
+      "source": "智能勘探",
+      "target": "智能钻井"
+    },
+    {
+      "source": "智能钻井",
+      "target": "生产优化"
+    },
+    {
+      "source": "生产优化",
+      "target": "设备预测维护"
+    },
+    {
+      "source": "设备预测维护",
+      "target": "智能油田应用"
+    },
+    {
+      "source": "智能油田应用",
+      "target": "工业AI安全"
+    },
+    {
+      "source": "油气业务场景",
+      "target": "智能钻井"
+    },
+    {
+      "source": "工业数据治理",
+      "target": "工业AI安全"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

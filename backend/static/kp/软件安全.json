@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "安全需求",
+      "category": 0
+    },
+    {
+      "id": "威胁建模",
+      "category": 0
+    },
+    {
+      "id": "安全编码",
+      "category": 0
+    },
+    {
+      "id": "漏洞检测",
+      "category": 1
+    },
+    {
+      "id": "身份与权限",
+      "category": 1
+    },
+    {
+      "id": "安全测试",
+      "category": 2
+    },
+    {
+      "id": "安全运维",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "安全需求",
+      "target": "威胁建模"
+    },
+    {
+      "source": "威胁建模",
+      "target": "安全编码"
+    },
+    {
+      "source": "安全编码",
+      "target": "漏洞检测"
+    },
+    {
+      "source": "漏洞检测",
+      "target": "身份与权限"
+    },
+    {
+      "source": "身份与权限",
+      "target": "安全测试"
+    },
+    {
+      "source": "安全测试",
+      "target": "安全运维"
+    },
+    {
+      "source": "安全需求",
+      "target": "漏洞检测"
+    },
+    {
+      "source": "威胁建模",
+      "target": "安全运维"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

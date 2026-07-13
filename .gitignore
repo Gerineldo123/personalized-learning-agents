@@ -19,6 +19,8 @@ node_modules/
 
 # === 数据库 / 向量存储 ===
 learning.db
+*.db-shm
+*.db-wal
 chroma_data/
 *.sqlite3
 
@@ -35,7 +37,9 @@ api_config.json
 *.swp
 *.swo
 *~
-backend/static/
+backend/static/*
+!backend/static/kp/
+!backend/static/kp/*.json
 
 # === IDE（如需共享 .vscode 配置请删下面这行） ===
 .vscode/

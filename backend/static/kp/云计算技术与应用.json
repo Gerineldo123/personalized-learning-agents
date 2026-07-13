@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "虚拟化技术",
+      "category": 0
+    },
+    {
+      "id": "容器技术",
+      "category": 0
+    },
+    {
+      "id": "云服务模型",
+      "category": 0
+    },
+    {
+      "id": "分布式存储",
+      "category": 1
+    },
+    {
+      "id": "弹性伸缩",
+      "category": 1
+    },
+    {
+      "id": "云原生应用",
+      "category": 2
+    },
+    {
+      "id": "云安全",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "虚拟化技术",
+      "target": "容器技术"
+    },
+    {
+      "source": "容器技术",
+      "target": "云服务模型"
+    },
+    {
+      "source": "云服务模型",
+      "target": "分布式存储"
+    },
+    {
+      "source": "分布式存储",
+      "target": "弹性伸缩"
+    },
+    {
+      "source": "弹性伸缩",
+      "target": "云原生应用"
+    },
+    {
+      "source": "云原生应用",
+      "target": "云安全"
+    },
+    {
+      "source": "虚拟化技术",
+      "target": "分布式存储"
+    },
+    {
+      "source": "容器技术",
+      "target": "云安全"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

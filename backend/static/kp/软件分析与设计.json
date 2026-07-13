@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "需求建模",
+      "category": 0
+    },
+    {
+      "id": "用例分析",
+      "category": 0
+    },
+    {
+      "id": "领域模型",
+      "category": 0
+    },
+    {
+      "id": "架构设计",
+      "category": 1
+    },
+    {
+      "id": "设计模式",
+      "category": 1
+    },
+    {
+      "id": "接口设计",
+      "category": 1
+    },
+    {
+      "id": "UML建模",
+      "category": 2
+    },
+    {
+      "id": "设计评审",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "需求建模",
+      "target": "用例分析"
+    },
+    {
+      "source": "用例分析",
+      "target": "领域模型"
+    },
+    {
+      "source": "领域模型",
+      "target": "架构设计"
+    },
+    {
+      "source": "架构设计",
+      "target": "设计模式"
+    },
+    {
+      "source": "设计模式",
+      "target": "接口设计"
+    },
+    {
+      "source": "接口设计",
+      "target": "UML建模"
+    },
+    {
+      "source": "UML建模",
+      "target": "设计评审"
+    },
+    {
+      "source": "需求建模",
+      "target": "架构设计"
+    },
+    {
+      "source": "用例分析",
+      "target": "设计评审"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

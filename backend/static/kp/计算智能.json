@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "进化计算",
+      "category": 0
+    },
+    {
+      "id": "遗传算法",
+      "category": 0
+    },
+    {
+      "id": "粒子群优化",
+      "category": 0
+    },
+    {
+      "id": "蚁群算法",
+      "category": 1
+    },
+    {
+      "id": "模糊逻辑",
+      "category": 1
+    },
+    {
+      "id": "神经计算",
+      "category": 2
+    },
+    {
+      "id": "群智能优化",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "进化计算",
+      "target": "遗传算法"
+    },
+    {
+      "source": "遗传算法",
+      "target": "粒子群优化"
+    },
+    {
+      "source": "粒子群优化",
+      "target": "蚁群算法"
+    },
+    {
+      "source": "蚁群算法",
+      "target": "模糊逻辑"
+    },
+    {
+      "source": "模糊逻辑",
+      "target": "神经计算"
+    },
+    {
+      "source": "神经计算",
+      "target": "群智能优化"
+    },
+    {
+      "source": "进化计算",
+      "target": "蚁群算法"
+    },
+    {
+      "source": "遗传算法",
+      "target": "群智能优化"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

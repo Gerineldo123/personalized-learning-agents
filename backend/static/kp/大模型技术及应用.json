@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "Transformer结构",
+      "category": 0
+    },
+    {
+      "id": "预训练与微调",
+      "category": 0
+    },
+    {
+      "id": "提示工程",
+      "category": 0
+    },
+    {
+      "id": "RAG检索增强",
+      "category": 1
+    },
+    {
+      "id": "Agent工具调用",
+      "category": 1
+    },
+    {
+      "id": "模型评估",
+      "category": 1
+    },
+    {
+      "id": "安全与对齐",
+      "category": 2
+    },
+    {
+      "id": "应用开发流程",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "Transformer结构",
+      "target": "预训练与微调"
+    },
+    {
+      "source": "预训练与微调",
+      "target": "提示工程"
+    },
+    {
+      "source": "提示工程",
+      "target": "RAG检索增强"
+    },
+    {
+      "source": "RAG检索增强",
+      "target": "Agent工具调用"
+    },
+    {
+      "source": "Agent工具调用",
+      "target": "模型评估"
+    },
+    {
+      "source": "模型评估",
+      "target": "安全与对齐"
+    },
+    {
+      "source": "安全与对齐",
+      "target": "应用开发流程"
+    },
+    {
+      "source": "Transformer结构",
+      "target": "RAG检索增强"
+    },
+    {
+      "source": "预训练与微调",
+      "target": "应用开发流程"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

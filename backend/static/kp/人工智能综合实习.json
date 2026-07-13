@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "需求分析",
+      "category": 0
+    },
+    {
+      "id": "数据准备",
+      "category": 0
+    },
+    {
+      "id": "模型选择",
+      "category": 0
+    },
+    {
+      "id": "训练与评估",
+      "category": 1
+    },
+    {
+      "id": "系统集成",
+      "category": 1
+    },
+    {
+      "id": "实验报告",
+      "category": 2
+    },
+    {
+      "id": "项目展示",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "需求分析",
+      "target": "数据准备"
+    },
+    {
+      "source": "数据准备",
+      "target": "模型选择"
+    },
+    {
+      "source": "模型选择",
+      "target": "训练与评估"
+    },
+    {
+      "source": "训练与评估",
+      "target": "系统集成"
+    },
+    {
+      "source": "系统集成",
+      "target": "实验报告"
+    },
+    {
+      "source": "实验报告",
+      "target": "项目展示"
+    },
+    {
+      "source": "需求分析",
+      "target": "训练与评估"
+    },
+    {
+      "source": "数据准备",
+      "target": "项目展示"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

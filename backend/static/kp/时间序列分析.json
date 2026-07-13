@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "平稳性",
+      "category": 0
+    },
+    {
+      "id": "自相关与偏自相关",
+      "category": 0
+    },
+    {
+      "id": "ARMA模型",
+      "category": 0
+    },
+    {
+      "id": "ARIMA模型",
+      "category": 1
+    },
+    {
+      "id": "季节性模型",
+      "category": 1
+    },
+    {
+      "id": "预测评估",
+      "category": 1
+    },
+    {
+      "id": "异常检测",
+      "category": 2
+    },
+    {
+      "id": "深度时间序列",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "平稳性",
+      "target": "自相关与偏自相关"
+    },
+    {
+      "source": "自相关与偏自相关",
+      "target": "ARMA模型"
+    },
+    {
+      "source": "ARMA模型",
+      "target": "ARIMA模型"
+    },
+    {
+      "source": "ARIMA模型",
+      "target": "季节性模型"
+    },
+    {
+      "source": "季节性模型",
+      "target": "预测评估"
+    },
+    {
+      "source": "预测评估",
+      "target": "异常检测"
+    },
+    {
+      "source": "异常检测",
+      "target": "深度时间序列"
+    },
+    {
+      "source": "平稳性",
+      "target": "ARIMA模型"
+    },
+    {
+      "source": "自相关与偏自相关",
+      "target": "深度时间序列"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

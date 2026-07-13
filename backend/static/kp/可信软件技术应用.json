@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "可信需求",
+      "category": 0
+    },
+    {
+      "id": "可信度量",
+      "category": 0
+    },
+    {
+      "id": "形式化验证",
+      "category": 0
+    },
+    {
+      "id": "安全可靠设计",
+      "category": 1
+    },
+    {
+      "id": "故障注入",
+      "category": 1
+    },
+    {
+      "id": "可信评估",
+      "category": 2
+    },
+    {
+      "id": "可信运维",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "可信需求",
+      "target": "可信度量"
+    },
+    {
+      "source": "可信度量",
+      "target": "形式化验证"
+    },
+    {
+      "source": "形式化验证",
+      "target": "安全可靠设计"
+    },
+    {
+      "source": "安全可靠设计",
+      "target": "故障注入"
+    },
+    {
+      "source": "故障注入",
+      "target": "可信评估"
+    },
+    {
+      "source": "可信评估",
+      "target": "可信运维"
+    },
+    {
+      "source": "可信需求",
+      "target": "安全可靠设计"
+    },
+    {
+      "source": "可信度量",
+      "target": "可信运维"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

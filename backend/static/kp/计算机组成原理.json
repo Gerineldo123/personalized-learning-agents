@@ -1,0 +1,93 @@
+{
+  "nodes": [
+    {
+      "id": "数据表示",
+      "category": 0
+    },
+    {
+      "id": "指令系统",
+      "category": 0
+    },
+    {
+      "id": "运算器",
+      "category": 0
+    },
+    {
+      "id": "控制器",
+      "category": 1
+    },
+    {
+      "id": "CPU流水线",
+      "category": 1
+    },
+    {
+      "id": "存储层次结构",
+      "category": 1
+    },
+    {
+      "id": "Cache机制",
+      "category": 2
+    },
+    {
+      "id": "输入输出系统",
+      "category": 2
+    },
+    {
+      "id": "总线结构",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "数据表示",
+      "target": "指令系统"
+    },
+    {
+      "source": "指令系统",
+      "target": "运算器"
+    },
+    {
+      "source": "运算器",
+      "target": "控制器"
+    },
+    {
+      "source": "控制器",
+      "target": "CPU流水线"
+    },
+    {
+      "source": "CPU流水线",
+      "target": "存储层次结构"
+    },
+    {
+      "source": "存储层次结构",
+      "target": "Cache机制"
+    },
+    {
+      "source": "Cache机制",
+      "target": "输入输出系统"
+    },
+    {
+      "source": "输入输出系统",
+      "target": "总线结构"
+    },
+    {
+      "source": "数据表示",
+      "target": "控制器"
+    },
+    {
+      "source": "指令系统",
+      "target": "总线结构"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

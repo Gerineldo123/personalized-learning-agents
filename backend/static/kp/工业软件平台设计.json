@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "平台架构",
+      "category": 0
+    },
+    {
+      "id": "插件机制",
+      "category": 0
+    },
+    {
+      "id": "数据总线",
+      "category": 0
+    },
+    {
+      "id": "工作流引擎",
+      "category": 1
+    },
+    {
+      "id": "可视化建模",
+      "category": 1
+    },
+    {
+      "id": "权限体系",
+      "category": 2
+    },
+    {
+      "id": "平台运维",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "平台架构",
+      "target": "插件机制"
+    },
+    {
+      "source": "插件机制",
+      "target": "数据总线"
+    },
+    {
+      "source": "数据总线",
+      "target": "工作流引擎"
+    },
+    {
+      "source": "工作流引擎",
+      "target": "可视化建模"
+    },
+    {
+      "source": "可视化建模",
+      "target": "权限体系"
+    },
+    {
+      "source": "权限体系",
+      "target": "平台运维"
+    },
+    {
+      "source": "平台架构",
+      "target": "工作流引擎"
+    },
+    {
+      "source": "插件机制",
+      "target": "平台运维"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

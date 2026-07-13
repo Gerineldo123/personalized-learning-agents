@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "云计算",
+      "category": 0
+    },
+    {
+      "id": "边缘计算",
+      "category": 0
+    },
+    {
+      "id": "物联网",
+      "category": 0
+    },
+    {
+      "id": "区块链",
+      "category": 1
+    },
+    {
+      "id": "大模型应用",
+      "category": 1
+    },
+    {
+      "id": "隐私计算",
+      "category": 2
+    },
+    {
+      "id": "信息安全前沿",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "云计算",
+      "target": "边缘计算"
+    },
+    {
+      "source": "边缘计算",
+      "target": "物联网"
+    },
+    {
+      "source": "物联网",
+      "target": "区块链"
+    },
+    {
+      "source": "区块链",
+      "target": "大模型应用"
+    },
+    {
+      "source": "大模型应用",
+      "target": "隐私计算"
+    },
+    {
+      "source": "隐私计算",
+      "target": "信息安全前沿"
+    },
+    {
+      "source": "云计算",
+      "target": "区块链"
+    },
+    {
+      "source": "边缘计算",
+      "target": "信息安全前沿"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "油气地质基础",
+      "category": 0
+    },
+    {
+      "id": "地震勘探",
+      "category": 0
+    },
+    {
+      "id": "测井解释",
+      "category": 0
+    },
+    {
+      "id": "储层建模",
+      "category": 1
+    },
+    {
+      "id": "钻井工程",
+      "category": 1
+    },
+    {
+      "id": "采油工程",
+      "category": 1
+    },
+    {
+      "id": "油藏数值模拟",
+      "category": 2
+    },
+    {
+      "id": "智能油田",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "油气地质基础",
+      "target": "地震勘探"
+    },
+    {
+      "source": "地震勘探",
+      "target": "测井解释"
+    },
+    {
+      "source": "测井解释",
+      "target": "储层建模"
+    },
+    {
+      "source": "储层建模",
+      "target": "钻井工程"
+    },
+    {
+      "source": "钻井工程",
+      "target": "采油工程"
+    },
+    {
+      "source": "采油工程",
+      "target": "油藏数值模拟"
+    },
+    {
+      "source": "油藏数值模拟",
+      "target": "智能油田"
+    },
+    {
+      "source": "油气地质基础",
+      "target": "储层建模"
+    },
+    {
+      "source": "地震勘探",
+      "target": "智能油田"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

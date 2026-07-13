@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "复杂度分析", "category": 0},
+    {"id": "分治策略", "category": 1},
+    {"id": "动态规划", "category": 1},
+    {"id": "贪心算法", "category": 1},
+    {"id": "回溯与分支限界", "category": 2},
+    {"id": "图算法", "category": 2},
+    {"id": "NP完全性", "category": 2}
+  ],
+  "links": [
+    {"source": "复杂度分析", "target": "分治策略"},
+    {"source": "分治策略", "target": "动态规划"},
+    {"source": "分治策略", "target": "贪心算法"},
+    {"source": "动态规划", "target": "回溯与分支限界"},
+    {"source": "贪心算法", "target": "图算法"},
+    {"source": "回溯与分支限界", "target": "NP完全性"}
+  ],
+  "categories": [
+    {"name": "基础"},
+    {"name": "经典算法"},
+    {"name": "高级主题"}
+  ]
+}

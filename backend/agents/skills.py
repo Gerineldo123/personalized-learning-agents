@@ -6,7 +6,9 @@ Skill 执行结果通过 SSE 事件流实时推送至前端。
 """
 
 import asyncio
+import copy
 import json
+import re
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -46,6 +48,8 @@ class BaseSkill(ABC):
     _SKILL_AGENT_NAMES: dict = {
         "deep_search": "搜索智能体", "code_analysis": "代码智能体",
         "mindmap_gen": "导图智能体", "quiz_gen": "出题智能体", "video_search": "视频智能体",
+        "ppt_gen": "课件智能体", "article_gen": "文章智能体",
+        "code_gen": "代码/动画智能体", "practice_case": "实践案例智能体",
     }
 
     def emit_step(self, workflow_outputs: list, status: str, title: str, data: dict, step_id: str | None = None) -> str:
@@ -106,16 +110,23 @@ def register_skill(skill: BaseSkill):
 
 def get_skill(name: str) -> BaseSkill | None:
     """按名称获取 skill"""
-    return _SKILL_REGISTRY.get(name)
+    if not _SKILL_REGISTRY:
+        init_skills()
+    skill = _SKILL_REGISTRY.get(name)
+    return copy.copy(skill) if skill else None
 
 
 def get_all_skills() -> dict[str, BaseSkill]:
     """获取所有已注册 skills"""
+    if not _SKILL_REGISTRY:
+        init_skills()
     return _SKILL_REGISTRY.copy()
 
 
 def get_skills_description() -> str:
     """生成 skills 列表描述，供 LLM plan 节点使用"""
+    if not _SKILL_REGISTRY:
+        init_skills()
     lines = []
     for name, skill in _SKILL_REGISTRY.items():
         lines.append(f"- {name}: {skill.description}")
@@ -151,6 +162,57 @@ def make_draft_resource(
         "course_bindings": course_bindings or [],
         "save_required": True,
     }
+
+
+_TOPIC_STOP_PHRASES = (
+    "请帮我", "帮我", "请给我", "给我", "请", "生成一个", "生成", "制作一个", "制作",
+    "创建一个", "创建", "设计一个", "设计", "实现一个", "实现", "写一个", "写个", "开发一个",
+    "开发", "可视化动画", "可视化演示", "交互式动画", "交互动画", "动画演示", "动态演示",
+    "可视化", "动画", "演示", "页面", "代码案例", "代码", "助我理解", "帮助我理解", "用于讲解",
+    "讲解", "关于", "这个", "那个",
+)
+
+
+def _extract_topic_terms(task: str) -> list[str]:
+    text = (task or "").lower()
+    for phrase in _TOPIC_STOP_PHRASES:
+        text = text.replace(phrase.lower(), " ")
+    parts = re.split(r"[\s，。；：、,.!?！？:;（）()\[\]{}<>《》\"'“”‘’/\\|]+|(?:以及|或者|并且|与|和|及)", text)
+    generic = {"主题", "内容", "知识点", "课程", "学习", "理解", "一个", "一种", "相关", "完整", "自包含"}
+    terms = []
+    for part in parts:
+        term = part.strip("-_+")
+        if len(term) < 2 or term in generic or term.isdigit():
+            continue
+        if term not in terms:
+            terms.append(term)
+    return sorted(terms, key=len, reverse=True)[:8]
+
+
+def _validate_topic_alignment(task: str, content: str) -> tuple[bool, str]:
+    terms = _extract_topic_terms(task)
+    if not terms:
+        return True, ""
+    output = (content or "").lower()
+    if any(term in output for term in terms):
+        return True, ""
+    return False, f"生成内容未体现规划主题关键词：{', '.join(terms[:4])}"
+
+
+def _clean_html_output(content: str) -> str:
+    cleaned = re.sub(r'^```html?\s*\n?', '', (content or "").strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+    start = re.search(r'<(!DOCTYPE\s+html|html[\s>])', cleaned, re.IGNORECASE)
+    end = re.search(r'</html\s*>', cleaned, re.IGNORECASE)
+    if start and end:
+        return cleaned[start.start():end.end()].strip()
+    if end:
+        return cleaned[:end.end()].strip()
+    first_lt = cleaned.find('<')
+    last_gt = cleaned.rfind('>')
+    if first_lt >= 0 and last_gt > first_lt:
+        return cleaned[first_lt:last_gt + 1].strip()
+    return cleaned
 
 
 def infer_draft_resource_binding(
@@ -523,18 +585,49 @@ class CodeGenSkill(BaseSkill):
 - 样式现代、宽屏友好，主容器 max-width 不小于 900px；移动端保持可读。
 - 代码尽量简洁，优先保证首屏可运行、动画稳定、交互清楚。"""
 
-                content_parts: list[str] = []
-                stream = await chat_completion([{"role": "user", "content": prompt}], temperature=0.3, stream=True)
-                async for chunk in stream:
-                    delta = chunk.choices[0].delta.content if chunk.choices else ""
-                    if delta:
+                async def generate_visual_html(current_prompt: str, emit_tokens: bool) -> str:
+                    content_parts: list[str] = []
+                    stream = await chat_completion(
+                        [{"role": "user", "content": current_prompt}],
+                        temperature=0.3,
+                        stream=True,
+                    )
+                    async for chunk in stream:
+                        delta = chunk.choices[0].delta.content if chunk.choices else ""
+                        if not delta:
+                            continue
                         content_parts.append(delta)
-                        self.emit_token(step_id, delta)
-                content = "".join(content_parts).strip()
+                        if emit_tokens:
+                            self.emit_token(step_id, delta)
+                    return _clean_html_output("".join(content_parts))
+
+                content = await generate_visual_html(prompt, emit_tokens=True)
                 if not content:
                     raise RuntimeError("模型未返回可视化动画代码")
-                sub_steps[-1] = "✅ 动画代码生成完成"
-                sub_steps.append("⏳ 正在清理输出并校验 HTML 结构...")
+                aligned, alignment_error = _validate_topic_alignment(generation_task, content)
+                if not aligned:
+                    sub_steps[-1] = f"⚠️ {alignment_error}，正在按原主题重试"
+                    self.emit_step(workflow_outputs, "running", "生成代码案例", {
+                        "sub_steps": sub_steps,
+                        "progress": 65,
+                        "current_phase": "主题纠偏",
+                        "progress_note": "检测到生成内容可能偏题，正在严格按规划主题重新生成",
+                        "progress_indeterminate": True,
+                        "progress_label": "3/6 阶段",
+                        "language": "html",
+                        "streaming_code": False,
+                    }, step_id)
+                    retry_prompt = prompt + f"""
+
+上一版生成内容未通过主题一致性检查：{alignment_error}
+本次必须在页面标题、概念说明和动画步骤中明确出现并讲解“{generation_task}”，不得改成其他示例主题。"""
+                    content = await generate_visual_html(retry_prompt, emit_tokens=False)
+                    aligned, alignment_error = _validate_topic_alignment(generation_task, content)
+                    if not aligned:
+                        raise RuntimeError(f"可视化动画主题校验失败：{alignment_error}")
+
+                sub_steps[-1] = "✅ 动画代码生成完成并通过主题校验"
+                sub_steps.append("⏳ 正在校验 HTML 结构并准备预览...")
                 self.emit_step(workflow_outputs, "running", "生成代码案例", {
                     "sub_steps": sub_steps,
                     "progress": 75,
@@ -545,24 +638,8 @@ class CodeGenSkill(BaseSkill):
                     "streaming_code": False,
                     "language": "html",
                 }, step_id)
-                # 提取 HTML：找到第一个 <!DOCTYPE html> 或 <html> 到最后 </html> 之间的内容
-                import re as _re
-                # 清理可能的 Markdown 代码块包裹
-                content = _re.sub(r'^```html?\s*\n?', '', content, flags=_re.IGNORECASE)
-                content = _re.sub(r'\n?```\s*$', '', content)
-                # 提取有效 HTML 区间
-                _m_start = _re.search(r'<(!DOCTYPE\s+html|html[\s>])', content, _re.IGNORECASE)
-                _m_end = _re.search(r'</html\s*>', content, _re.IGNORECASE)
-                if _m_start and _m_end:
-                    content = content[_m_start.start():_m_end.end()].strip()
-                elif _m_end:
-                    content = content[:_m_end.end()].strip()
-                else:
-                    # 最终兜底：直接从第一个 < 截取到最后一个 >，去除非 HTML 的文本
-                    _first_lt = content.find('<')
-                    _last_gt = content.rfind('>')
-                    if _first_lt >= 0 and _last_gt > _first_lt:
-                        content = content[_first_lt:_last_gt + 1].strip()
+                if not re.search(r'<html[\s>]', content, re.IGNORECASE) or not re.search(r'</html\s*>', content, re.IGNORECASE):
+                    raise RuntimeError("模型返回的可视化动画不是完整 HTML 页面")
 
                 sub_steps[-1] = "✅ HTML 结构校验完成"
                 sub_steps.append("⏳ 正在生成预览卡片...")
@@ -1416,12 +1493,17 @@ class PptGenSkill(BaseSkill):
 
 def init_skills():
     """注册所有内置 skills，在应用启动时调用"""
-    register_skill(DeepSearchSkill())
-    register_skill(CodeAnalysisSkill())
-    register_skill(MindmapSkill())
-    register_skill(QuizGenSkill())
-    register_skill(VideoSearchSkill())
-    register_skill(PptGenSkill())
-    register_skill(ArticleGenSkill())
-    register_skill(CodeGenSkill())
-    register_skill(PracticeCaseSkill())
+    builtin_skills = [
+        DeepSearchSkill(),
+        CodeAnalysisSkill(),
+        MindmapSkill(),
+        QuizGenSkill(),
+        VideoSearchSkill(),
+        PptGenSkill(),
+        ArticleGenSkill(),
+        CodeGenSkill(),
+        PracticeCaseSkill(),
+    ]
+    for skill in builtin_skills:
+        if skill.name not in _SKILL_REGISTRY:
+            register_skill(skill)

@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "测试用例设计",
+      "category": 0
+    },
+    {
+      "id": "单元测试",
+      "category": 0
+    },
+    {
+      "id": "集成测试",
+      "category": 0
+    },
+    {
+      "id": "系统测试",
+      "category": 1
+    },
+    {
+      "id": "自动化测试",
+      "category": 1
+    },
+    {
+      "id": "缺陷管理",
+      "category": 2
+    },
+    {
+      "id": "质量度量",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "测试用例设计",
+      "target": "单元测试"
+    },
+    {
+      "source": "单元测试",
+      "target": "集成测试"
+    },
+    {
+      "source": "集成测试",
+      "target": "系统测试"
+    },
+    {
+      "source": "系统测试",
+      "target": "自动化测试"
+    },
+    {
+      "source": "自动化测试",
+      "target": "缺陷管理"
+    },
+    {
+      "source": "缺陷管理",
+      "target": "质量度量"
+    },
+    {
+      "source": "测试用例设计",
+      "target": "系统测试"
+    },
+    {
+      "source": "单元测试",
+      "target": "质量度量"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

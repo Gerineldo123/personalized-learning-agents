@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "连续与离散信号",
+      "category": 0
+    },
+    {
+      "id": "傅里叶变换",
+      "category": 0
+    },
+    {
+      "id": "采样定理",
+      "category": 0
+    },
+    {
+      "id": "卷积与相关",
+      "category": 1
+    },
+    {
+      "id": "数字滤波器",
+      "category": 1
+    },
+    {
+      "id": "频谱分析",
+      "category": 2
+    },
+    {
+      "id": "小波变换",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "连续与离散信号",
+      "target": "傅里叶变换"
+    },
+    {
+      "source": "傅里叶变换",
+      "target": "采样定理"
+    },
+    {
+      "source": "采样定理",
+      "target": "卷积与相关"
+    },
+    {
+      "source": "卷积与相关",
+      "target": "数字滤波器"
+    },
+    {
+      "source": "数字滤波器",
+      "target": "频谱分析"
+    },
+    {
+      "source": "频谱分析",
+      "target": "小波变换"
+    },
+    {
+      "source": "连续与离散信号",
+      "target": "卷积与相关"
+    },
+    {
+      "source": "傅里叶变换",
+      "target": "小波变换"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "id": "架构需求",
+      "category": 0
+    },
+    {
+      "id": "架构决策",
+      "category": 0
+    },
+    {
+      "id": "组件划分",
+      "category": 0
+    },
+    {
+      "id": "接口契约",
+      "category": 1
+    },
+    {
+      "id": "架构约束",
+      "category": 1
+    },
+    {
+      "id": "架构实现映射",
+      "category": 2
+    },
+    {
+      "id": "架构治理",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "架构需求",
+      "target": "架构决策"
+    },
+    {
+      "source": "架构决策",
+      "target": "组件划分"
+    },
+    {
+      "source": "组件划分",
+      "target": "接口契约"
+    },
+    {
+      "source": "接口契约",
+      "target": "架构约束"
+    },
+    {
+      "source": "架构约束",
+      "target": "架构实现映射"
+    },
+    {
+      "source": "架构实现映射",
+      "target": "架构治理"
+    },
+    {
+      "source": "架构需求",
+      "target": "接口契约"
+    },
+    {
+      "source": "架构决策",
+      "target": "架构治理"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "nodes": [
+    {
+      "id": "安全威胁模型",
+      "category": 0
+    },
+    {
+      "id": "密码学基础",
+      "category": 0
+    },
+    {
+      "id": "身份认证",
+      "category": 0
+    },
+    {
+      "id": "访问控制",
+      "category": 1
+    },
+    {
+      "id": "网络安全",
+      "category": 1
+    },
+    {
+      "id": "系统安全",
+      "category": 1
+    },
+    {
+      "id": "应用安全",
+      "category": 2
+    },
+    {
+      "id": "安全审计",
+      "category": 2
+    }
+  ],
+  "links": [
+    {
+      "source": "安全威胁模型",
+      "target": "密码学基础"
+    },
+    {
+      "source": "密码学基础",
+      "target": "身份认证"
+    },
+    {
+      "source": "身份认证",
+      "target": "访问控制"
+    },
+    {
+      "source": "访问控制",
+      "target": "网络安全"
+    },
+    {
+      "source": "网络安全",
+      "target": "系统安全"
+    },
+    {
+      "source": "系统安全",
+      "target": "应用安全"
+    },
+    {
+      "source": "应用安全",
+      "target": "安全审计"
+    },
+    {
+      "source": "安全威胁模型",
+      "target": "访问控制"
+    },
+    {
+      "source": "密码学基础",
+      "target": "安全审计"
+    }
+  ],
+  "categories": [
+    {
+      "name": "基础概念"
+    },
+    {
+      "name": "核心方法"
+    },
+    {
+      "name": "应用实践"
+    }
+  ]
+}

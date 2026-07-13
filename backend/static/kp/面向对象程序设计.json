@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    {"id": "类与对象", "category": 0},
+    {"id": "继承与多态", "category": 0},
+    {"id": "封装与访问控制", "category": 0},
+    {"id": "运算符重载", "category": 1},
+    {"id": "模板与泛型", "category": 1},
+    {"id": "异常处理", "category": 1},
+    {"id": "设计模式入门", "category": 2}
+  ],
+  "links": [
+    {"source": "类与对象", "target": "继承与多态"},
+    {"source": "类与对象", "target": "封装与访问控制"},
+    {"source": "继承与多态", "target": "运算符重载"},
+    {"source": "继承与多态", "target": "模板与泛型"},
+    {"source": "封装与访问控制", "target": "异常处理"},
+    {"source": "异常处理", "target": "设计模式入门"},
+    {"source": "模板与泛型", "target": "设计模式入门"}
+  ],
+  "categories": [
+    {"name": "核心概念"},
+    {"name": "进阶机制"},
+    {"name": "工程应用"}
+  ]
+}

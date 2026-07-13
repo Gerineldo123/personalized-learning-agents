@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "软件生命周期", "category": 0},
+    {"id": "需求分析", "category": 0},
+    {"id": "系统设计", "category": 1},
+    {"id": "编码规范与重构", "category": 1},
+    {"id": "软件测试", "category": 2},
+    {"id": "项目管理", "category": 2},
+    {"id": "敏捷开发", "category": 2}
+  ],
+  "links": [
+    {"source": "软件生命周期", "target": "需求分析"},
+    {"source": "需求分析", "target": "系统设计"},
+    {"source": "系统设计", "target": "编码规范与重构"},
+    {"source": "编码规范与重构", "target": "软件测试"},
+    {"source": "软件测试", "target": "项目管理"},
+    {"source": "项目管理", "target": "敏捷开发"}
+  ],
+  "categories": [
+    {"name": "过程"},
+    {"name": "设计实现"},
+    {"name": "质量与管理"}
+  ]
+}

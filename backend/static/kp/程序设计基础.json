@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {"id": "变量与数据类型", "category": 0},
+    {"id": "控制流程", "category": 0},
+    {"id": "函数与模块化", "category": 0},
+    {"id": "数组与字符串", "category": 1},
+    {"id": "指针与内存", "category": 1},
+    {"id": "结构体与文件操作", "category": 1},
+    {"id": "递归思想", "category": 2}
+  ],
+  "links": [
+    {"source": "变量与数据类型", "target": "控制流程"},
+    {"source": "控制流程", "target": "函数与模块化"},
+    {"source": "函数与模块化", "target": "数组与字符串"},
+    {"source": "数组与字符串", "target": "指针与内存"},
+    {"source": "指针与内存", "target": "结构体与文件操作"},
+    {"source": "函数与模块化", "target": "递归思想"}
+  ],
+  "categories": [
+    {"name": "入门"},
+    {"name": "核心"},
+    {"name": "进阶"}
+  ]
+}

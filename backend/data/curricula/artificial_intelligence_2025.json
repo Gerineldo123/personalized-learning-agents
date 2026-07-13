@@ -22,80 +22,583 @@
     "weak": "已学过但测验、错题或资源反馈显示掌握度不足"
   },
   "courses": [
-    {"id": "freshman_seminar", "name": "新生研讨课", "semester": 1, "category": "大类基础", "module": "新生研讨课程", "credits": 1, "kp_file": null},
-    {"id": "programming_cpp", "name": "程序设计（C/C++）", "semester": 1, "category": "大类基础", "module": "大类基础课程", "credits": 3.5, "kp_file": "程序设计基础.json"},
-    {"id": "advanced_math_1", "name": "高等数学（2-1）", "semester": 1, "category": "大类基础", "module": "大类基础课程", "credits": 5.5, "kp_file": "高等数学.json"},
-    {"id": "linear_algebra", "name": "线性代数", "semester": 1, "category": "大类基础", "module": "大类基础课程", "credits": 2, "kp_file": "线性代数.json"},
-    {"id": "discrete_math_1", "name": "离散数学（2-1）", "semester": 1, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "离散数学.json"},
-    {"id": "ai_intro", "name": "人工智能导论", "semester": 1, "category": "专业必修", "module": "专业必修课程", "credits": 2, "kp_file": null},
-    {"id": "discrete_math_2", "name": "离散数学（2-2）", "semester": 2, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "离散数学.json"},
-    {"id": "advanced_math_2", "name": "高等数学（2-2）", "semester": 2, "category": "大类基础", "module": "大类基础课程", "credits": 5, "kp_file": "高等数学.json"},
-    {"id": "college_physics", "name": "大学物理", "semester": 2, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": null},
-    {"id": "college_physics_lab", "name": "大学物理实验", "semester": 2, "category": "大类基础", "module": "大类基础课程", "credits": 1, "kp_file": null},
-    {"id": "data_analysis_python", "name": "数据分析（Python）", "semester": 2, "category": "专业必修", "module": "专业必修课程", "credits": 3, "kp_file": null},
-    {"id": "programming_practice", "name": "程序设计实习", "semester": "S1", "category": "专业必修", "module": "实践教学", "credits": 4, "kp_file": null},
-    {"id": "data_structure", "name": "数据结构", "semester": 3, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "数据结构.json"},
-    {"id": "probability_statistics", "name": "概率论与数理统计", "semester": 3, "category": "大类基础", "module": "大类基础课程", "credits": 2, "kp_file": "概率论与数理统计.json"},
-    {"id": "machine_learning", "name": "机器学习", "semester": 3, "category": "专业必修", "module": "专业必修课程", "credits": 3.5, "kp_file": "机器学习.json"},
-    {"id": "optimization_method", "name": "最优化方法", "semester": 3, "category": "专业必修", "module": "专业必修课程", "credits": 2, "kp_file": null},
-    {"id": "database_principle", "name": "数据库原理", "semester": 4, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "数据库系统.json"},
-    {"id": "computer_composition", "name": "计算机组成原理", "semester": 4, "category": "大类基础", "module": "大类基础课程", "credits": 4, "kp_file": null},
-    {"id": "deep_learning", "name": "深度学习基础", "semester": 4, "category": "专业必修", "module": "专业必修课程", "credits": 2, "kp_file": "深度学习.json"},
-    {"id": "oil_ai", "name": "石油与人工智能", "semester": 4, "category": "专业必修", "module": "专业必修课程", "credits": 1, "kp_file": null},
-    {"id": "oop_java", "name": "面向对象程序设计（Java）", "semester": 4, "category": "专业必修", "module": "专业必修课程", "credits": 2, "kp_file": "面向对象程序设计.json"},
-    {"id": "digital_image_processing", "name": "数字图像处理", "semester": 4, "category": "专业选修", "module": "算法类", "credits": 2, "kp_file": null},
-    {"id": "algorithm_design", "name": "算法分析与设计", "semester": 4, "category": "专业选修", "module": "算法类", "credits": 2, "kp_file": "算法设计与分析.json"},
-    {"id": "computer_network", "name": "计算机网络原理", "semester": 5, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "计算机网络.json"},
-    {"id": "operating_system", "name": "操作系统", "semester": 5, "category": "大类基础", "module": "大类基础课程", "credits": 3, "kp_file": "操作系统.json"},
-    {"id": "computational_intelligence", "name": "计算智能", "semester": 5, "category": "专业选修", "module": "算法类", "credits": 2, "kp_file": null},
-    {"id": "computer_vision", "name": "计算机视觉", "semester": 5, "category": "专业选修", "module": "算法类", "credits": 3.5, "kp_file": "计算机视觉.json"},
-    {"id": "nlp", "name": "自然语言处理", "semester": 5, "category": "专业选修", "module": "算法类", "credits": 2.5, "kp_file": "自然语言处理.json"},
-    {"id": "visualization_intro", "name": "可视化导论", "semester": 5, "category": "专业选修", "module": "双语课程", "credits": 2, "kp_file": null},
-    {"id": "matrix_theory_computation", "name": "矩阵理论与计算", "semester": 5, "category": "专业选修", "module": "基础类", "credits": 3, "kp_file": null},
-    {"id": "machine_learning_practice", "name": "机器学习实践", "semester": "S2", "category": "专业必修", "module": "实践教学", "credits": 4, "kp_file": null},
-    {"id": "frontier_it", "name": "前沿信息技术", "semester": "S2", "category": "专业必修", "module": "国际教育课程", "credits": 2, "kp_file": null},
-    {"id": "llm_application", "name": "大模型技术及应用", "semester": 6, "category": "专业必修", "module": "专业必修课程", "credits": 2, "kp_file": null},
-    {"id": "computer_graphics", "name": "计算机图形学", "semester": 6, "category": "专业选修", "module": "基础类", "credits": 2.5, "kp_file": null},
-    {"id": "big_data", "name": "大数据技术与应用", "semester": 6, "category": "专业选修", "module": "应用类", "credits": 2, "kp_file": null},
-    {"id": "embodied_ai", "name": "具身智能技术", "semester": 6, "category": "专业选修", "module": "应用类", "credits": 2, "kp_file": null},
-    {"id": "autonomous_driving", "name": "无人驾驶技术", "semester": 6, "category": "专业选修", "module": "应用类", "credits": 1.5, "kp_file": null},
-    {"id": "oil_gas_technology", "name": "油气勘探开发技术", "semester": 6, "category": "专业选修", "module": "应用类", "credits": 2, "kp_file": null},
-    {"id": "ai_comprehensive_practice", "name": "人工智能综合实习", "semester": "S3", "category": "专业必修", "module": "实践教学", "credits": 4, "kp_file": null},
-    {"id": "software_engineering", "name": "软件工程", "semester": 7, "category": "大类基础", "module": "大类基础课程", "credits": 2, "kp_file": "软件工程.json"},
-    {"id": "calculation_method", "name": "计算方法", "semester": 7, "category": "专业选修", "module": "基础类", "credits": 2, "kp_file": null},
-    {"id": "knowledge_graph", "name": "知识图谱技术及应用", "semester": 7, "category": "专业选修", "module": "应用类", "credits": 1.5, "kp_file": null},
-    {"id": "crowd_sensing_social_computing", "name": "群智感知与社会计算", "semester": 7, "category": "专业选修", "module": "应用类", "credits": 1.5, "kp_file": null},
-    {"id": "signal_processing", "name": "信号分析与处理", "semester": 7, "category": "专业选修", "module": "应用类", "credits": 2, "kp_file": null},
-    {"id": "time_series_analysis", "name": "时间序列分析", "semester": 7, "category": "专业选修", "module": "基础类", "credits": 3, "kp_file": null},
-    {"id": "graduation_design", "name": "毕业设计", "semester": 8, "category": "专业必修", "module": "实践教学", "credits": 8, "kp_file": null}
+    {
+      "id": "freshman_seminar",
+      "name": "新生研讨课",
+      "semester": 1,
+      "category": "大类基础",
+      "module": "新生研讨课程",
+      "credits": 1,
+      "kp_file": "新生研讨课.json"
+    },
+    {
+      "id": "programming_cpp",
+      "name": "程序设计（C/C++）",
+      "semester": 1,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3.5,
+      "kp_file": "程序设计基础.json"
+    },
+    {
+      "id": "advanced_math_1",
+      "name": "高等数学（2-1）",
+      "semester": 1,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 5.5,
+      "kp_file": "高等数学.json"
+    },
+    {
+      "id": "linear_algebra",
+      "name": "线性代数",
+      "semester": 1,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 2,
+      "kp_file": "线性代数.json"
+    },
+    {
+      "id": "discrete_math_1",
+      "name": "离散数学（2-1）",
+      "semester": 1,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "离散数学.json"
+    },
+    {
+      "id": "ai_intro",
+      "name": "人工智能导论",
+      "semester": 1,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 2,
+      "kp_file": "人工智能导论.json"
+    },
+    {
+      "id": "discrete_math_2",
+      "name": "离散数学（2-2）",
+      "semester": 2,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "离散数学.json"
+    },
+    {
+      "id": "advanced_math_2",
+      "name": "高等数学（2-2）",
+      "semester": 2,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 5,
+      "kp_file": "高等数学.json"
+    },
+    {
+      "id": "college_physics",
+      "name": "大学物理",
+      "semester": 2,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "大学物理.json"
+    },
+    {
+      "id": "college_physics_lab",
+      "name": "大学物理实验",
+      "semester": 2,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 1,
+      "kp_file": "大学物理.json"
+    },
+    {
+      "id": "data_analysis_python",
+      "name": "数据分析（Python）",
+      "semester": 2,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 3,
+      "kp_file": "数据分析Python.json"
+    },
+    {
+      "id": "programming_practice",
+      "name": "程序设计实习",
+      "semester": "S1",
+      "category": "专业必修",
+      "module": "实践教学",
+      "credits": 4,
+      "kp_file": "程序设计基础.json"
+    },
+    {
+      "id": "data_structure",
+      "name": "数据结构",
+      "semester": 3,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "数据结构.json"
+    },
+    {
+      "id": "probability_statistics",
+      "name": "概率论与数理统计",
+      "semester": 3,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 2,
+      "kp_file": "概率论与数理统计.json"
+    },
+    {
+      "id": "machine_learning",
+      "name": "机器学习",
+      "semester": 3,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 3.5,
+      "kp_file": "机器学习.json"
+    },
+    {
+      "id": "optimization_method",
+      "name": "最优化方法",
+      "semester": 3,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 2,
+      "kp_file": "最优化方法.json"
+    },
+    {
+      "id": "database_principle",
+      "name": "数据库原理",
+      "semester": 4,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "数据库系统.json"
+    },
+    {
+      "id": "computer_composition",
+      "name": "计算机组成原理",
+      "semester": 4,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 4,
+      "kp_file": "计算机组成原理.json"
+    },
+    {
+      "id": "deep_learning",
+      "name": "深度学习基础",
+      "semester": 4,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 2,
+      "kp_file": "深度学习.json"
+    },
+    {
+      "id": "oil_ai",
+      "name": "石油与人工智能",
+      "semester": 4,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 1,
+      "kp_file": "石油与人工智能.json"
+    },
+    {
+      "id": "oop_java",
+      "name": "面向对象程序设计（Java）",
+      "semester": 4,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 2,
+      "kp_file": "面向对象程序设计.json"
+    },
+    {
+      "id": "digital_image_processing",
+      "name": "数字图像处理",
+      "semester": 4,
+      "category": "专业选修",
+      "module": "算法类",
+      "credits": 2,
+      "kp_file": "数字图像处理.json"
+    },
+    {
+      "id": "algorithm_design",
+      "name": "算法分析与设计",
+      "semester": 4,
+      "category": "专业选修",
+      "module": "算法类",
+      "credits": 2,
+      "kp_file": "算法设计与分析.json"
+    },
+    {
+      "id": "computer_network",
+      "name": "计算机网络原理",
+      "semester": 5,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "计算机网络.json"
+    },
+    {
+      "id": "operating_system",
+      "name": "操作系统",
+      "semester": 5,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 3,
+      "kp_file": "操作系统.json"
+    },
+    {
+      "id": "computational_intelligence",
+      "name": "计算智能",
+      "semester": 5,
+      "category": "专业选修",
+      "module": "算法类",
+      "credits": 2,
+      "kp_file": "计算智能.json"
+    },
+    {
+      "id": "computer_vision",
+      "name": "计算机视觉",
+      "semester": 5,
+      "category": "专业选修",
+      "module": "算法类",
+      "credits": 3.5,
+      "kp_file": "计算机视觉.json"
+    },
+    {
+      "id": "nlp",
+      "name": "自然语言处理",
+      "semester": 5,
+      "category": "专业选修",
+      "module": "算法类",
+      "credits": 2.5,
+      "kp_file": "自然语言处理.json"
+    },
+    {
+      "id": "visualization_intro",
+      "name": "可视化导论",
+      "semester": 5,
+      "category": "专业选修",
+      "module": "双语课程",
+      "credits": 2,
+      "kp_file": "可视化导论.json"
+    },
+    {
+      "id": "matrix_theory_computation",
+      "name": "矩阵理论与计算",
+      "semester": 5,
+      "category": "专业选修",
+      "module": "基础类",
+      "credits": 3,
+      "kp_file": "矩阵理论与计算.json"
+    },
+    {
+      "id": "machine_learning_practice",
+      "name": "机器学习实践",
+      "semester": "S2",
+      "category": "专业必修",
+      "module": "实践教学",
+      "credits": 4,
+      "kp_file": "机器学习实践.json"
+    },
+    {
+      "id": "frontier_it",
+      "name": "前沿信息技术",
+      "semester": "S2",
+      "category": "专业必修",
+      "module": "国际教育课程",
+      "credits": 2,
+      "kp_file": "前沿信息技术.json"
+    },
+    {
+      "id": "llm_application",
+      "name": "大模型技术及应用",
+      "semester": 6,
+      "category": "专业必修",
+      "module": "专业必修课程",
+      "credits": 2,
+      "kp_file": "大模型技术及应用.json"
+    },
+    {
+      "id": "computer_graphics",
+      "name": "计算机图形学",
+      "semester": 6,
+      "category": "专业选修",
+      "module": "基础类",
+      "credits": 2.5,
+      "kp_file": "计算机图形学.json"
+    },
+    {
+      "id": "big_data",
+      "name": "大数据技术与应用",
+      "semester": 6,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 2,
+      "kp_file": "大数据技术与应用.json"
+    },
+    {
+      "id": "embodied_ai",
+      "name": "具身智能技术",
+      "semester": 6,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 2,
+      "kp_file": "具身智能技术.json"
+    },
+    {
+      "id": "autonomous_driving",
+      "name": "无人驾驶技术",
+      "semester": 6,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 1.5,
+      "kp_file": "无人驾驶技术.json"
+    },
+    {
+      "id": "oil_gas_technology",
+      "name": "油气勘探开发技术",
+      "semester": 6,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 2,
+      "kp_file": "油气勘探开发技术.json"
+    },
+    {
+      "id": "ai_comprehensive_practice",
+      "name": "人工智能综合实习",
+      "semester": "S3",
+      "category": "专业必修",
+      "module": "实践教学",
+      "credits": 4,
+      "kp_file": "人工智能综合实习.json"
+    },
+    {
+      "id": "software_engineering",
+      "name": "软件工程",
+      "semester": 7,
+      "category": "大类基础",
+      "module": "大类基础课程",
+      "credits": 2,
+      "kp_file": "软件工程.json"
+    },
+    {
+      "id": "calculation_method",
+      "name": "计算方法",
+      "semester": 7,
+      "category": "专业选修",
+      "module": "基础类",
+      "credits": 2,
+      "kp_file": "计算方法.json"
+    },
+    {
+      "id": "knowledge_graph",
+      "name": "知识图谱技术及应用",
+      "semester": 7,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 1.5,
+      "kp_file": "知识图谱技术及应用.json"
+    },
+    {
+      "id": "crowd_sensing_social_computing",
+      "name": "群智感知与社会计算",
+      "semester": 7,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 1.5,
+      "kp_file": "群智感知与社会计算.json"
+    },
+    {
+      "id": "signal_processing",
+      "name": "信号分析与处理",
+      "semester": 7,
+      "category": "专业选修",
+      "module": "应用类",
+      "credits": 2,
+      "kp_file": "信号分析与处理.json"
+    },
+    {
+      "id": "time_series_analysis",
+      "name": "时间序列分析",
+      "semester": 7,
+      "category": "专业选修",
+      "module": "基础类",
+      "credits": 3,
+      "kp_file": "时间序列分析.json"
+    },
+    {
+      "id": "graduation_design",
+      "name": "毕业设计",
+      "semester": 8,
+      "category": "专业必修",
+      "module": "实践教学",
+      "credits": 8,
+      "kp_file": "毕业设计.json"
+    }
   ],
   "relations": [
-    {"source": "advanced_math_1", "target": "advanced_math_2", "type": "prerequisite", "reason": "高等数学（2-2）延续高等数学（2-1）的微积分基础。"},
-    {"source": "discrete_math_1", "target": "discrete_math_2", "type": "prerequisite", "reason": "离散数学（2-2）建立在集合、逻辑与关系等前序内容上。"},
-    {"source": "programming_cpp", "target": "programming_practice", "type": "prerequisite", "reason": "程序设计实习需要 C/C++ 编程基础。"},
-    {"source": "programming_cpp", "target": "data_structure", "type": "prerequisite", "reason": "数据结构需要程序设计、数组、指针和抽象数据类型基础。"},
-    {"source": "discrete_math_2", "target": "data_structure", "type": "support", "reason": "离散结构支撑树、图、集合与关系等数据结构内容。"},
-    {"source": "data_structure", "target": "algorithm_design", "type": "prerequisite", "reason": "算法分析与设计依赖线性表、树、图、排序和查找等结构。"},
-    {"source": "linear_algebra", "target": "machine_learning", "type": "prerequisite", "reason": "机器学习模型训练依赖向量、矩阵和线性变换基础。"},
-    {"source": "probability_statistics", "target": "machine_learning", "type": "prerequisite", "reason": "机器学习依赖概率分布、统计估计和模型评价基础。"},
-    {"source": "optimization_method", "target": "machine_learning", "type": "support", "reason": "最优化方法支撑损失函数最小化和参数学习。"},
-    {"source": "data_analysis_python", "target": "machine_learning", "type": "support", "reason": "Python 数据分析能力支撑机器学习数据处理和实验。"},
-    {"source": "ai_intro", "target": "machine_learning", "type": "support", "reason": "人工智能导论提供机器学习所在的知识体系背景。"},
-    {"source": "machine_learning", "target": "deep_learning", "type": "prerequisite", "reason": "深度学习基础建立在监督学习、模型训练和泛化理解之上。"},
-    {"source": "machine_learning", "target": "machine_learning_practice", "type": "prerequisite", "reason": "机器学习实践需要算法原理、实验流程和模型评价基础。"},
-    {"source": "deep_learning", "target": "computer_vision", "type": "advanced", "reason": "计算机视觉大量使用卷积网络、视觉特征学习和深度模型。"},
-    {"source": "deep_learning", "target": "nlp", "type": "advanced", "reason": "自然语言处理需要序列建模、表示学习和深度学习基础。"},
-    {"source": "deep_learning", "target": "llm_application", "type": "advanced", "reason": "大模型技术及应用建立在深度学习和神经网络训练机制之上。"},
-    {"source": "knowledge_graph", "target": "llm_application", "type": "support", "reason": "知识图谱可用于增强大模型的知识组织、检索和推理能力。"},
-    {"source": "computer_vision", "target": "autonomous_driving", "type": "advanced", "reason": "无人驾驶技术依赖视觉感知、目标检测和场景理解。"},
-    {"source": "deep_learning", "target": "embodied_ai", "type": "support", "reason": "具身智能需要感知、决策和学习模型支撑。"},
-    {"source": "machine_learning", "target": "time_series_analysis", "type": "support", "reason": "时间序列分析与预测任务可复用机器学习建模方法。"},
-    {"source": "computer_composition", "target": "operating_system", "type": "prerequisite", "reason": "操作系统需要计算机组成、存储和中断机制基础。"},
-    {"source": "data_structure", "target": "database_principle", "type": "support", "reason": "数据库索引、查询处理和存储结构依赖数据结构知识。"},
-    {"source": "data_structure", "target": "operating_system", "type": "support", "reason": "操作系统中的进程队列、内存管理和文件系统依赖数据结构思想。"},
-    {"source": "database_principle", "target": "big_data", "type": "support", "reason": "大数据技术需要数据组织、存储和查询基础。"},
-    {"source": "oil_ai", "target": "ai_comprehensive_practice", "type": "cross_domain", "reason": "人工智能综合实习可结合石油行业智能化场景。"},
-    {"source": "llm_application", "target": "ai_comprehensive_practice", "type": "advanced", "reason": "综合实习可整合大模型、机器学习和深度学习应用能力。"},
-    {"source": "ai_comprehensive_practice", "target": "graduation_design", "type": "prerequisite", "reason": "毕业设计综合前序人工智能理论、工程实践和行业应用能力。"}
+    {
+      "source": "advanced_math_1",
+      "target": "advanced_math_2",
+      "type": "prerequisite",
+      "reason": "高等数学（2-2）延续高等数学（2-1）的微积分基础。"
+    },
+    {
+      "source": "discrete_math_1",
+      "target": "discrete_math_2",
+      "type": "prerequisite",
+      "reason": "离散数学（2-2）建立在集合、逻辑与关系等前序内容上。"
+    },
+    {
+      "source": "programming_cpp",
+      "target": "programming_practice",
+      "type": "prerequisite",
+      "reason": "程序设计实习需要 C/C++ 编程基础。"
+    },
+    {
+      "source": "programming_cpp",
+      "target": "data_structure",
+      "type": "prerequisite",
+      "reason": "数据结构需要程序设计、数组、指针和抽象数据类型基础。"
+    },
+    {
+      "source": "discrete_math_2",
+      "target": "data_structure",
+      "type": "support",
+      "reason": "离散结构支撑树、图、集合与关系等数据结构内容。"
+    },
+    {
+      "source": "data_structure",
+      "target": "algorithm_design",
+      "type": "prerequisite",
+      "reason": "算法分析与设计依赖线性表、树、图、排序和查找等结构。"
+    },
+    {
+      "source": "linear_algebra",
+      "target": "machine_learning",
+      "type": "prerequisite",
+      "reason": "机器学习模型训练依赖向量、矩阵和线性变换基础。"
+    },
+    {
+      "source": "probability_statistics",
+      "target": "machine_learning",
+      "type": "prerequisite",
+      "reason": "机器学习依赖概率分布、统计估计和模型评价基础。"
+    },
+    {
+      "source": "optimization_method",
+      "target": "machine_learning",
+      "type": "support",
+      "reason": "最优化方法支撑损失函数最小化和参数学习。"
+    },
+    {
+      "source": "data_analysis_python",
+      "target": "machine_learning",
+      "type": "support",
+      "reason": "Python 数据分析能力支撑机器学习数据处理和实验。"
+    },
+    {
+      "source": "ai_intro",
+      "target": "machine_learning",
+      "type": "support",
+      "reason": "人工智能导论提供机器学习所在的知识体系背景。"
+    },
+    {
+      "source": "machine_learning",
+      "target": "deep_learning",
+      "type": "prerequisite",
+      "reason": "深度学习基础建立在监督学习、模型训练和泛化理解之上。"
+    },
+    {
+      "source": "machine_learning",
+      "target": "machine_learning_practice",
+      "type": "prerequisite",
+      "reason": "机器学习实践需要算法原理、实验流程和模型评价基础。"
+    },
+    {
+      "source": "deep_learning",
+      "target": "computer_vision",
+      "type": "advanced",
+      "reason": "计算机视觉大量使用卷积网络、视觉特征学习和深度模型。"
+    },
+    {
+      "source": "deep_learning",
+      "target": "nlp",
+      "type": "advanced",
+      "reason": "自然语言处理需要序列建模、表示学习和深度学习基础。"
+    },
+    {
+      "source": "deep_learning",
+      "target": "llm_application",
+      "type": "advanced",
+      "reason": "大模型技术及应用建立在深度学习和神经网络训练机制之上。"
+    },
+    {
+      "source": "knowledge_graph",
+      "target": "llm_application",
+      "type": "support",
+      "reason": "知识图谱可用于增强大模型的知识组织、检索和推理能力。"
+    },
+    {
+      "source": "computer_vision",
+      "target": "autonomous_driving",
+      "type": "advanced",
+      "reason": "无人驾驶技术依赖视觉感知、目标检测和场景理解。"
+    },
+    {
+      "source": "deep_learning",
+      "target": "embodied_ai",
+      "type": "support",
+      "reason": "具身智能需要感知、决策和学习模型支撑。"
+    },
+    {
+      "source": "machine_learning",
+      "target": "time_series_analysis",
+      "type": "support",
+      "reason": "时间序列分析与预测任务可复用机器学习建模方法。"
+    },
+    {
+      "source": "computer_composition",
+      "target": "operating_system",
+      "type": "prerequisite",
+      "reason": "操作系统需要计算机组成、存储和中断机制基础。"
+    },
+    {
+      "source": "data_structure",
+      "target": "database_principle",
+      "type": "support",
+      "reason": "数据库索引、查询处理和存储结构依赖数据结构知识。"
+    },
+    {
+      "source": "data_structure",
+      "target": "operating_system",
+      "type": "support",
+      "reason": "操作系统中的进程队列、内存管理和文件系统依赖数据结构思想。"
+    },
+    {
+      "source": "database_principle",
+      "target": "big_data",
+      "type": "support",
+      "reason": "大数据技术需要数据组织、存储和查询基础。"
+    },
+    {
+      "source": "oil_ai",
+      "target": "ai_comprehensive_practice",
+      "type": "cross_domain",
+      "reason": "人工智能综合实习可结合石油行业智能化场景。"
+    },
+    {
+      "source": "llm_application",
+      "target": "ai_comprehensive_practice",
+      "type": "advanced",
+      "reason": "综合实习可整合大模型、机器学习和深度学习应用能力。"
+    },
+    {
+      "source": "ai_comprehensive_practice",
+      "target": "graduation_design",
+      "type": "prerequisite",
+      "reason": "毕业设计综合前序人工智能理论、工程实践和行业应用能力。"
+    }
   ]
 }
