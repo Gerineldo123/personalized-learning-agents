@@ -49,13 +49,35 @@ class MindMapAgent(BaseAgent):
     name = "mindmap"
     description = "将知识体系整理为思维导图结构"
 
-    async def process(self, state: AgentState) -> AgentState:
+    async def process(self, state: AgentState, on_token=None) -> AgentState:
         topic = state.user_message
         profile_text, weak_points_text = self._profile_text(state)
-        resp = await chat_completion([
-            {"role": "user", "content": MINDMAP_PROMPT.format(topic=topic, profile=profile_text, weak_points=weak_points_text, hallu=hallu_rules())}
-        ], temperature=0.55)
-        markdown = resp.choices[0].message.content.strip()
+        messages = [{
+            "role": "user",
+            "content": MINDMAP_PROMPT.format(
+                topic=topic,
+                profile=profile_text,
+                weak_points=weak_points_text,
+                hallu=hallu_rules(),
+            ),
+        }]
+        if on_token is None:
+            resp = await chat_completion(messages, temperature=0.55)
+            markdown = (resp.choices[0].message.content or "").strip()
+        else:
+            parts: list[str] = []
+            stream = await chat_completion(messages, temperature=0.55, stream=True)
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else ""
+                if not delta:
+                    continue
+                parts.append(delta)
+                callback_result = on_token(delta)
+                if hasattr(callback_result, "__await__"):
+                    await callback_result
+            markdown = "".join(parts).strip()
+        if not markdown:
+            raise RuntimeError("模型未返回思维导图内容")
         if markdown.startswith("```"):
             markdown = markdown.strip("`").strip()
             if markdown.startswith("markdown"):
@@ -66,7 +88,8 @@ class MindMapAgent(BaseAgent):
             if line.startswith("# ") and not line.startswith("## "):
                 title = line.replace("# ", "").strip()
                 break
-        self._save_to_db(state, title, safe_markdown)
+        if state.get("persist", True) is not False:
+            self._save_to_db(state, title, safe_markdown)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "mindmap", "title": title, "content": safe_markdown,
             "resource_db_id": state.get("resource_db_id"),

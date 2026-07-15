@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import uuid
 from langgraph.constants import Send
@@ -7,6 +8,9 @@ from graph.state import AgentGraphState
 from agents.tools import tavily_search
 from agents.skills import get_skill, get_all_skills, get_skills_description, SkillResult
 from graph.subgraphs.resource_orchestration import resource_orchestration_graph
+
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_suggestion_lines(text: str) -> str:
@@ -37,7 +41,8 @@ async def _llm_stream(system_prompt: str, user_prompt: str):
             delta = chunk.choices[0].delta.content if chunk.choices else ""
             if delta:
                 yield delta
-    except Exception:
+    except Exception as exc:
+        logger.warning("LLM stream failed: %s", exc)
         yield ""
 
 
@@ -69,6 +74,60 @@ SKILL_ALIASES = {
     "article_generation": "article_gen",
     "实践案例智能体": "practice_case",
 }
+
+
+SKILL_TASK_INSTRUCTIONS = {
+    "article_gen": "只生成一篇结构完整的讲解文章，不要生成题库、思维导图或代码案例",
+    "mindmap_gen": "只生成用于思维导图展示的知识结构，不要生成讲解文章、题库或代码案例",
+    "quiz_gen": "只生成可作答的练习题库及答案解析，不要生成讲解文章、思维导图或代码案例",
+    "code_gen": "只生成独立、可运行的代码教学案例，不要生成讲解文章、思维导图或题库",
+    "code_analysis": "只分析或修正代码，不要追加无关学习资源",
+    "practice_case": "只生成实践案例，不要追加其他类型的学习资源",
+}
+
+SKILL_PLAN_DESCRIPTIONS = {
+    "article_gen": "文章智能体：生成结构化讲解文章",
+    "mindmap_gen": "导图智能体：生成知识结构并渲染思维导图",
+    "quiz_gen": "出题智能体：生成可作答题库与答案解析",
+    "code_gen": "代码/动画智能体：生成独立可运行的代码案例",
+    "code_analysis": "代码智能体：分析、解释或修正代码",
+    "deep_search": "搜索智能体：检索并整理外部资料",
+    "video_search": "视频智能体：检索相关教学视频",
+    "ppt_gen": "课件智能体：生成 PPT 课件",
+    "practice_case": "实践案例智能体：生成实践任务与实施说明",
+}
+
+
+def _build_skill_task(message: str, skill_name: str, code_lang: str = "python") -> str:
+    instruction = SKILL_TASK_INSTRUCTIONS.get(skill_name)
+    if not instruction:
+        return message
+    language_note = f"；代码语言使用 {code_lang}" if skill_name == "code_gen" else ""
+    return (
+        f"【当前智能体子任务】{instruction}{language_note}。\n"
+        f"【用户原始需求】{message}"
+    )
+
+
+def _format_task_plan(selected_skills: list[str], planning_error: str = "") -> str:
+    if selected_skills == ["resource_orchestration"]:
+        return (
+            "已识别为多资源学习方案任务。\n"
+            "执行策略：先完成学情诊断与资源规划，再并行生成资源，最后进行安全检查和学习路径更新。"
+        )
+    if selected_skills:
+        strategy = (
+            f"并行执行 {len(selected_skills)} 个智能体，生成结果分别回传到对应卡片。"
+            if len(selected_skills) > 1
+            else "由匹配的智能体独立执行该任务。"
+        )
+        steps = [SKILL_PLAN_DESCRIPTIONS.get(name, name) for name in selected_skills]
+        return "已识别任务中的明确产物要求。\n执行策略：" + strategy + "\n执行步骤：\n" + "\n".join(
+            f"{index}. {description}" for index, description in enumerate(steps, start=1)
+        )
+    if planning_error:
+        return "暂未能可靠识别需要调用的智能体，请补充明确的任务类型和学习主题。"
+    return "该任务无需调用资源生成智能体，将直接结合学习画像进行回答。"
 
 
 def _contains_any(text: str, terms: list[str]) -> bool:
@@ -339,20 +398,63 @@ def _json_preview(value, limit: int = 3000) -> str:
 
 
 def _skill_results_for_summary(skill_results: dict) -> dict:
-    """压缩技能结果给汇总智能体，避免大段代码/HTML 覆盖任务主题。"""
+    """为每个技能生成定长事实摘要，避免先完成的大结果挤掉其他技能。"""
     compact = {}
     for skill_name, value in (skill_results or {}).items():
         if not isinstance(value, dict):
             compact[skill_name] = value
             continue
+        error = str(value.get("error") or "")
+        item = {
+            "generated": not bool(error),
+            "error": error[:300],
+            "type": value.get("type") or skill_name,
+        }
         if skill_name in {"code_gen", "code_analysis"}:
-            item = {k: v for k, v in value.items() if k not in {"code"}}
-            code = value.get("code") or ""
-            if code:
-                item["code_preview"] = str(code)[:800]
-            compact[skill_name] = item
+            code = str(value.get("code") or "")
+            item.update({
+                "task_desc": str(value.get("task_desc") or "")[:300],
+                "language": value.get("language") or value.get("code_lang") or "",
+                "content_length": len(code),
+                "content_preview": code[:500],
+            })
+        elif skill_name == "article_gen":
+            article = str(value.get("article") or "")
+            item.update({"content_length": len(article), "content_preview": article[:500]})
+        elif skill_name == "mindmap_gen":
+            markdown = str(value.get("markdown") or "")
+            tree = value.get("tree") or {}
+            root = ""
+            if markdown:
+                root = next(
+                    (line[2:].strip() for line in markdown.splitlines() if line.startswith("# ")),
+                    "",
+                )
+            elif isinstance(tree, dict):
+                root = tree.get("name", "")
+            item.update({
+                "root": root,
+                "content_length": len(markdown),
+                "branch_count": len(tree.get("children") or []) if isinstance(tree, dict) else 0,
+            })
+        elif skill_name == "quiz_gen":
+            quiz = value.get("quiz") or {}
+            questions = (quiz.get("questions") or []) if isinstance(quiz, dict) else []
+            item.update({
+                "title": quiz.get("title", "") if isinstance(quiz, dict) else "",
+                "question_count": len(questions),
+                "question_preview": [str(q.get("question") or "")[:120] for q in questions[:3] if isinstance(q, dict)],
+            })
+        elif skill_name == "resource_orchestration":
+            resources = value.get("resources") or []
+            item.update({
+                "resource_count": len(resources),
+                "resource_types": [r.get("resource_type") for r in resources if isinstance(r, dict)],
+                "failure_count": len(value.get("failures") or []),
+            })
         else:
-            compact[skill_name] = value
+            item["summary"] = _json_preview(value, limit=600)
+        compact[skill_name] = item
     return compact
 
 
@@ -379,6 +481,9 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
     planning_error = ""
     history = state.get("history", [])[-6:]
     routing_message = _normalize_task_message(user_message, history)
+    explicit_intent = _infer_explicit_skill_intent(user_message)
+    if explicit_intent.get("selected_skills") or explicit_intent.get("execution_route") == "resource_orchestration":
+        use_llm = False
     use_resource_orchestration = False
     session_id = state.get("_session_id", "")
     sse_queue = _get_sse_queue(session_id)
@@ -450,7 +555,7 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
             "title": "分析任务需求",
             "agent_name": "规划智能体",
             "_live_pushed": sse_queue is not None,
-            "data": {"content": ""},
+            "data": {"content": "正在解析任务并识别需要并行执行的智能体..."},
         }
         wf.append(running_event)
         if sse_queue:
@@ -488,11 +593,16 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
             code_desc = str(plan_json.get("code_desc", "") or "")
             raw_planner_skills = plan_json.get("selected_skills", [])
 
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
     else:
-        thinking_content = f"分析任务：{user_message}"
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "running", "title": "分析任务需求", "data": {"content": thinking_content}})
-        wf.append({"type": "step", "step_type": "thinking", "step_id": step_id, "status": "completed", "title": "分析任务需求", "agent_name": "规划智能体", "data": {"content": thinking_content}})
+        wf.append({
+            "type": "step",
+            "step_type": "thinking",
+            "step_id": step_id,
+            "status": "running",
+            "title": "分析任务需求",
+            "agent_name": "规划智能体",
+            "data": {"content": "正在解析任务中的明确产物要求..."},
+        })
 
     routing = _resolve_skill_routing(
         routing_message,
@@ -520,6 +630,15 @@ async def plan_node(state: AgentGraphState) -> AgentGraphState:
         "corrections": routing["corrections"],
         "planning_error": planning_error,
     }
+    wf.append({
+        "type": "step",
+        "step_type": "thinking",
+        "step_id": step_id,
+        "status": "completed",
+        "title": "分析任务需求",
+        "agent_name": "规划智能体",
+        "data": {"content": _format_task_plan(selected_skills, planning_error)},
+    })
     return {
         "workflow_outputs": wf,
         "all_modules_data": {
@@ -557,9 +676,11 @@ async def skill_execute_node(state: AgentGraphState) -> AgentGraphState:
     wf = []
     ad = state.get("all_modules_data") or {}
     skill_name = state.get("current_skill_name", "")
+    skill_instruction = _build_skill_task(user_message, skill_name, str(ad.get("code_lang") or "python"))
 
     context = {
         "user_message": user_message,
+        "skill_instruction": skill_instruction,
         "user_id": user_id,
         "all_modules_data": ad,
         "profile": state.get("profile"),
@@ -745,6 +866,18 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
 
     # ── 有 skill 模式：整合各 skill 结果 ──
     has_search = "deep_search" in selected_skills and results
+    skill_names_display = {
+        "deep_search": "深度搜索",
+        "code_analysis": "代码分析",
+        "code_gen": "代码案例",
+        "mindmap_gen": "思维导图",
+        "quiz_gen": "题库",
+        "video_search": "视频检索",
+        "ppt_gen": "PPT 课件",
+        "article_gen": "讲解文章",
+        "practice_case": "实践案例",
+        "resource_orchestration": "多智能体资源编排",
+    }
 
     result_header = f"## {user_message}\n\n"
     if has_search:
@@ -757,6 +890,14 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
             result_header += f"### 错题本依据\n{mistake_prompt_context}\n\n"
         else:
             result_header += "### 错题本状态\n当前没有读取到错题本记录，无法基于历史错题做个性化归因。\n\n"
+
+    result_header += "### 任务完成情况\n"
+    for skill_name in selected_skills:
+        sdata = skill_results.get(skill_name)
+        succeeded = isinstance(sdata, dict) and bool(sdata) and not sdata.get("error")
+        status_text = "已生成" if succeeded else "生成失败"
+        result_header += f"- {skill_names_display.get(skill_name, skill_name)}：{status_text}\n"
+    result_header += "\n"
 
     skill_summary_parts = []
     for skill_name, sdata in skill_results.items():
@@ -815,7 +956,8 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
                     skill_summary_parts.append(f"\n### 代码案例\n已生成代码案例草稿。\n\n**生成主题**：{task_desc}")
 
     llm_summary = ""
-    if use_llm and (has_search or selected_skills):
+    needs_llm_summary = has_search or _has_mistake_intent(user_message) or "code_analysis" in selected_skills
+    if use_llm and needs_llm_summary:
         rag_context = ""
         try:
             from services.rag_service import search_rag
@@ -881,13 +1023,13 @@ async def result_node(state: AgentGraphState) -> AgentGraphState:
     for part in skill_summary_parts:
         final_md += part
 
-    skill_names_display = {"deep_search": "深度搜索", "code_analysis": "代码分析", "code_gen": "代码/动画生成", "mindmap_gen": "思维导图", "quiz_gen": "习题生成", "video_search": "视频检索", "resource_orchestration": "多智能体资源编排"}
     stats_rows = "| 需求分析 | ✅ | 完成 |\n"
     for sname in selected_skills:
-        sdata = skill_results.get(sname, {})
-        status = "❌" if isinstance(sdata, dict) and sdata.get("error") else "✅"
+        sdata = skill_results.get(sname)
+        status = "✅" if isinstance(sdata, dict) and bool(sdata) and not sdata.get("error") else "❌"
         err = sdata.get("error", "")[:30] if isinstance(sdata, dict) else ""
-        stats_rows += f"| {skill_names_display.get(sname, sname)} | {status} | {err or '完成'} |\n"
+        detail = err or ("完成" if status == "✅" else "未返回有效结果")
+        stats_rows += f"| {skill_names_display.get(sname, sname)} | {status} | {detail} |\n"
 
     final_md += f"\n### 执行统计\n| 步骤 | 状态 | 说明 |\n|------|------|------|\n{stats_rows}"
 

@@ -328,7 +328,7 @@ class CodeAnalysisSkill(BaseSkill):
     async def execute(self, context: dict, workflow_outputs: list) -> SkillResult:
         from core.llm_client import chat_completion
 
-        user_message = context.get("user_message", "")
+        user_message = context.get("skill_instruction") or context.get("user_message", "")
         ad = context.get("all_modules_data", {})
         code_lang = ad.get("code_lang", "python")
         code_desc = ad.get("code_desc", user_message)
@@ -383,75 +383,71 @@ class MindmapSkill(BaseSkill):
     icon = "🧠"
 
     async def execute(self, context: dict, workflow_outputs: list) -> SkillResult:
-        from core.llm_client import chat_completion
+        from agents.base import AgentState
+        from agents.mindmap_agent import MindMapAgent
 
-        user_message = context.get("user_message", "")
+        original_message = context.get("user_message", "")
+        user_message = context.get("skill_instruction") or original_message
+        user_id = context.get("user_id", "")
 
         step_id = self.emit_step(workflow_outputs, "running", "生成思维导图", {
+            "content": "",
             "sub_steps": ["⏳ 正在调用模型生成知识结构..."],
+            "render_type": "markmap",
         })
 
-        prompt = f"""你是大学学科知识体系专家。请根据主题生成一份用于径向树图(Radial Tree)可视化的JSON知识结构。
-
-主题：{user_message}
-
-【核心原则】
-- 每个节点必须有教育深度：name 是短标签(4-12字)，detail 是解释/定义/公式(10-40字)
-- 树图只显示 name，detail 用于鼠标悬停弹窗展示
-- 禁止只写空洞词典条目（如 "定义：..."），要包含原理、关系、应用等实际知识
-
-【结构要求】
-- 根节点 name 为主题精简名(5-10字)，不设 detail
-- 一级分支 4-7 个，覆盖不同的知识维度（如概念、原理、方法、应用、工具、关联学科等）
-- 每个分支下 2-4 个子节点，最多 3 层
-- 叶节点 detail 要特别充实
-
-JSON格式：
-{{
-  "name": "根节点短名",
-  "children": [
-    {{
-      "name": "分支短标签",
-      "detail": "该分支的核心知识说明",
-      "children": [
-        {{
-          "name": "知识点短标签",
-          "detail": "具体知识：包含定义、公式、关键参数或一句话示例"
-        }}
-      ]
-    }}
-  ]
-}}
-
-只返回JSON，不要其他内容。"""
-
         try:
-            resp = await chat_completion([
-                {"role": "user", "content": prompt},
-            ], temperature=0.55)
-            raw = resp.choices[0].message.content.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`").strip()
-                if raw.startswith("json"):
-                    raw = raw[4:].strip()
+            state = AgentState(
+                user_id=user_id,
+                user_message=user_message,
+                profile=context.get("profile"),
+                course_name=context.get("course_name"),
+                knowledge_points=context.get("knowledge_points") or [],
+                persist=False,
+            )
+            await MindMapAgent().process(
+                state,
+                on_token=lambda delta: self.emit_token(step_id, delta),
+            )
+            response = json.loads(state.get("response", "{}"))
+            markdown = str(response.get("content") or "").strip()
+            title = str(response.get("title") or "思维导图").strip()
+            if not markdown:
+                raise RuntimeError("思维导图生成结果为空")
 
-            tree_data = json.loads(raw)
+            binding = infer_draft_resource_binding(
+                f"{original_message}\n{title}\n{markdown}",
+                course_name=context.get("course_name"),
+                knowledge_points=context.get("knowledge_points") or [],
+            )
+            draft_resource = make_draft_resource(
+                "mindmap",
+                title,
+                {"markdown": markdown},
+                **binding,
+            )
 
             self.emit_step(workflow_outputs, "completed", "生成思维导图", {
-                "content": json.dumps(tree_data, ensure_ascii=False),
-                "sub_steps": ["✅ 径向树图数据生成完成"],
-                "render_type": "radial_tree",
+                "content": markdown,
+                "sub_steps": ["✅ Markmap 思维导图生成完成"],
+                "render_type": "markmap",
+                "draft_resource": draft_resource,
             }, step_id)
 
             return SkillResult(
                 success=True,
-                data={"tree": tree_data, "type": "mindmap"},
+                data={
+                    "markdown": markdown,
+                    "type": "mindmap",
+                    "draft_resource": draft_resource,
+                },
                 summary="思维导图生成完成",
             )
         except Exception as e:
             self.emit_step(workflow_outputs, "completed", "生成思维导图", {
                 "content": f"生成失败: {str(e)}",
                 "sub_steps": [f"❌ 错误: {str(e)}"],
+                "render_type": "text",
             }, step_id)
             return SkillResult(success=False, error=str(e))
 
@@ -466,7 +462,7 @@ class ArticleGenSkill(BaseSkill):
         from agents.content_gen_agent import ContentGenAgent
         from agents.base import AgentState
 
-        user_message = context.get("user_message", "")
+        user_message = context.get("skill_instruction") or context.get("user_message", "")
         user_id = context.get("user_id", "")
         persist = context.get("persist", True) is not False
 
@@ -484,7 +480,7 @@ class ArticleGenSkill(BaseSkill):
                 persist=False,
             )
             agent = ContentGenAgent()
-            await agent._generate_article(state)
+            await agent._generate_article(state, on_token=lambda delta: self.emit_token(step_id, delta))
 
             resp = json.loads(state.get("response", "{}"))
             content = resp.get("content", "")
@@ -517,11 +513,16 @@ class CodeGenSkill(BaseSkill):
         from services.safety_service import check_text, hallu_rules
 
         user_message = context.get("user_message", "")
+        skill_instruction = context.get("skill_instruction") or ""
         user_id = context.get("user_id", "")
         ad = context.get("all_modules_data", {})
         code_lang = ad.get("code_lang", "python")
         code_desc = (ad.get("code_desc") or user_message or "").strip()
         generation_task = code_desc or user_message
+        generation_prompt = (
+            f"{skill_instruction}\n【规划得到的代码主题】{generation_task}"
+            if skill_instruction else generation_task
+        )
         binding_text = "\n".join([
             str(user_message or ""),
             str(generation_task or ""),
@@ -702,7 +703,7 @@ class CodeGenSkill(BaseSkill):
                     level = "中级"
             prompt = CODE_PROMPT.format(
                 profile=profile_text or "暂无学生画像",
-                topic=generation_task,
+                topic=generation_prompt,
                 code_lang=code_lang,
                 level=level,
                 hallu=hallu_rules(),
@@ -791,12 +792,13 @@ class QuizGenSkill(BaseSkill):
         from agents.content_gen_agent import ContentGenAgent
         from agents.base import AgentState
 
-        user_message = context.get("user_message", "")
+        original_user_message = context.get("user_message", "")
+        user_message = context.get("skill_instruction") or original_user_message
         user_id = context.get("user_id", "")
         ad = context.get("all_modules_data", {})
         agent_context = ad.get("agent_context") or {}
         mistakes = agent_context.get("mistakes") or {}
-        target_knowledge_points = _mistake_knowledge_points(mistakes) if _has_mistake_task_intent(user_message) else []
+        target_knowledge_points = _mistake_knowledge_points(mistakes) if _has_mistake_task_intent(original_user_message) else []
         if target_knowledge_points:
             from services.agent_context_service import build_mistake_prompt_context
             mistake_context = build_mistake_prompt_context(mistakes)
@@ -846,7 +848,7 @@ class QuizGenSkill(BaseSkill):
                 persist=False,
             )
             agent = ContentGenAgent()
-            await agent._generate_quiz(state)
+            await agent._generate_quiz(state, on_token=lambda delta: self.emit_token(step_id, delta))
             sub_steps[-1] = "✅ 练习题内容生成完成"
             sub_steps.append("⏳ 正在解析 JSON、校验题目结构和选项...")
             self.emit_step(workflow_outputs, "running", "生成练习题", {

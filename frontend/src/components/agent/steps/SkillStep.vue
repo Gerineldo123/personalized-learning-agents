@@ -7,6 +7,7 @@ import { ElMessage } from 'element-plus'
 import api from '../../../api'
 import { useUserStore } from '../../../stores/user'
 import { skillDisplayName, skillDisplayIcon } from '../../../utils/agentLabels'
+import MindMapViewer from '../../resource/MindMapViewer.vue'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
@@ -42,7 +43,11 @@ const chartRef = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
 const isRadialTree = computed(() => {
-  return data.value.render_type === 'radial_tree' || data.value.skill_name === 'mindmap_gen'
+  return data.value.render_type === 'radial_tree'
+})
+
+const isMarkmap = computed(() => {
+  return data.value.render_type === 'markmap'
 })
 
 const isVideoCards = computed(() => {
@@ -58,6 +63,9 @@ const isPptSession = computed(() => {
 })
 
 const isStreamingCode = computed(() => props.step.status === 'running' && !!data.value.streaming_code)
+const isStreamingRadialTree = computed(() => (
+  props.step.status === 'running' && isRadialTree.value && !!data.value.content
+))
 
 const progressValue = computed(() => {
   const raw = Number(data.value.progress ?? 0)
@@ -186,6 +194,7 @@ const renderedContent = computed(() => {
   const d = data.value
   if (!d.content) return ''
   if (d.language) return ''
+  if (isMarkmap.value) return ''
   if (isRadialTree.value && treeData.value) return ''
   if (isVideoCards.value && videoList.value.length > 0) return ''
   // 对 Markdown 内容进行渲染
@@ -489,6 +498,18 @@ async function saveDraftResource() {
         </div>
       </div>
 
+      <!-- 与学习资源共用的 Markmap 思维导图 -->
+      <div v-else-if="isMarkmap && data.content" class="skill-content markmap-skill-view">
+        <div v-if="step.status === 'running'" class="structured-stream-label">AI 正在构建 Markmap 思维导图...</div>
+        <MindMapViewer :markdown="data.content" />
+      </div>
+
+      <!-- 兼容历史任务中的径向树流式数据 -->
+      <div v-else-if="isStreamingRadialTree" class="skill-content">
+        <div class="structured-stream-label">AI 正在构建思维导图结构...</div>
+        <pre class="json-block structured-stream"><code>{{ data.content }}</code><span class="code-stream-cursor">▌</span></pre>
+      </div>
+
       <!-- 径向树图（思维导图可视化） -->
       <div v-else-if="treeData && step.status === 'completed'" class="skill-content">
         <div ref="chartRef" class="mindmap-chart"></div>
@@ -618,6 +639,8 @@ async function saveDraftResource() {
 .code-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #2d2d3f; border-radius: 8px 8px 0 0; }
 .code-lang-tag { font-size: 11px; color: #888; }
 .streaming-code-label { font-size: 12px; color: #FBCFA8; animation: streamPulse 1.2s ease-in-out infinite; }
+.structured-stream-label { margin-bottom: 6px; color: #948A80; font-size: 12px; }
+.structured-stream { max-height: 260px; }
 .code-stream-cursor { display: inline-block; color: #FBCFA8; animation: streamBlink 0.8s step-end infinite; }
 .preview-btn { font-size: 12px; padding: 3px 10px; border: 1px solid #98C9B3; border-radius: 6px; background: transparent; color: #98C9B3; cursor: pointer; transition: all 0.2s; }
 .preview-btn:hover { background: #98C9B3; color: #fff; }

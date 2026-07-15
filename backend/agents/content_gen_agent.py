@@ -24,6 +24,24 @@ def _safe_json_loads(raw: str) -> dict:
     return json.loads(preprocessed)
 
 
+async def _completion_text(messages: list[dict], temperature: float, on_token=None) -> str:
+    if on_token is None:
+        resp = await chat_completion(messages, temperature=temperature)
+        return resp.choices[0].message.content or ""
+
+    parts: list[str] = []
+    stream = await chat_completion(messages, temperature=temperature, stream=True)
+    async for chunk in stream:
+        delta = chunk.choices[0].delta.content if chunk.choices else ""
+        if not delta:
+            continue
+        parts.append(delta)
+        callback_result = on_token(delta)
+        if hasattr(callback_result, "__await__"):
+            await callback_result
+    return "".join(parts)
+
+
 def _normalize_choice_options(options) -> list[str]:
     if not isinstance(options, list) or len(options) != 4:
         return []
@@ -325,20 +343,19 @@ class ContentGenAgent(BaseAgent):
         await handler(state)
         return state
 
-    async def _generate_article(self, state: AgentState):
+    async def _generate_article(self, state: AgentState, on_token=None):
         message = state.user_message
         profile = self._profile_text(state)
-        resp = await chat_completion([
+        content = await _completion_text([
             {"role": "user", "content": ARTICLE_PROMPT.format(profile=profile, topic=message, hallu=hallu_rules())}
-        ], temperature=0.7)
-        content = resp.choices[0].message.content
+        ], temperature=0.7, on_token=on_token)
         safe_content, _ = await check_text(content)
         self._save_or_draft_resource(state, "article", safe_content)
         state["response"] = json.dumps({
             "agent": self.name, "resource_type": "article", "content": safe_content
         }, ensure_ascii=False)
 
-    async def _generate_quiz(self, state: AgentState):
+    async def _generate_quiz(self, state: AgentState, on_token=None):
         message = state.user_message
         profile = self._profile_text(state)
         question_count = int(state.get("question_count", 5) or 5)
@@ -347,7 +364,7 @@ class ContentGenAgent(BaseAgent):
         raw_types = state.get("question_types", "single_choice")
         question_types = _normalize_requested_question_types(raw_types)
         code_lang = str(state.get("code_language", "python") or "python")
-        resp = await chat_completion([
+        raw = await _completion_text([
             {"role": "user", "content": QUIZ_PROMPT.format(
                 profile=profile,
                 topic=message,
@@ -357,8 +374,8 @@ class ContentGenAgent(BaseAgent):
                 code_lang=code_lang,
                 hallu=hallu_rules(),
             )}
-        ], temperature=0.5)
-        raw = resp.choices[0].message.content.strip()
+        ], temperature=0.5, on_token=on_token)
+        raw = raw.strip()
         quiz_data = _safe_json_loads(raw)
         safe_quiz, _ = await check_text(json.dumps(quiz_data, ensure_ascii=False))
         if safe_quiz != json.dumps(quiz_data, ensure_ascii=False):

@@ -1,6 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -14,9 +15,13 @@ from agents.skills import (  # noqa: E402
     init_skills,
 )
 from graph.subgraphs.agent_execute import (  # noqa: E402
+    _build_skill_task,
+    _dispatch_skill_nodes,
     _normalize_task_message,
     _parse_plan_json,
     _resolve_skill_routing,
+    _skill_results_for_summary,
+    plan_node,
 )
 
 
@@ -97,6 +102,49 @@ class AgentSkillRoutingTests(unittest.TestCase):
         result = self.route("生成排序算法可视化动画并配套练习题", ["code_gen"])
         self.assertEqual(result["selected_skills"], ["code_gen", "quiz_gen"])
 
+    def test_four_resource_request_is_dispatched_in_parallel(self):
+        message = "帮我系统学习数据结构中的树与二叉树，生成讲解文章、思维导图、题库和Python代码案例"
+        routed = self.route(message)
+        self.assertCountEqual(
+            routed["selected_skills"],
+            ["article_gen", "mindmap_gen", "quiz_gen", "code_gen"],
+        )
+        sends = _dispatch_skill_nodes({"all_modules_data": routed})
+        self.assertIsInstance(sends, list)
+        self.assertEqual(len(sends), 4)
+
+    def test_each_resource_skill_gets_an_isolated_subtask(self):
+        message = "生成讲解文章、思维导图、题库和Python代码案例"
+        article_task = _build_skill_task(message, "article_gen")
+        mindmap_task = _build_skill_task(message, "mindmap_gen")
+        quiz_task = _build_skill_task(message, "quiz_gen")
+        code_task = _build_skill_task(message, "code_gen", "python")
+
+        self.assertIn("只生成一篇", article_task)
+        self.assertIn("只生成用于思维导图", mindmap_task)
+        self.assertIn("只生成可作答", quiz_task)
+        self.assertIn("只生成独立、可运行", code_task)
+        self.assertIn("代码语言使用 python", code_task)
+
+    def test_summary_keeps_facts_for_every_completed_skill(self):
+        results = {
+            "quiz_gen": {"type": "quiz", "quiz": {"title": "树练习", "questions": [
+                {"question": "题目" + "很长" * 2000},
+            ]}},
+            "article_gen": {"type": "article", "article": "# 树与二叉树\n正文"},
+            "mindmap_gen": {"type": "mindmap", "markdown": "# 树与二叉树\n## 遍历"},
+            "code_gen": {"type": "code", "task_desc": "二叉树 Python 案例", "code": "print('ok')"},
+        }
+
+        summary = _skill_results_for_summary(results)
+
+        self.assertEqual(set(summary), set(results))
+        self.assertEqual(summary["quiz_gen"]["question_count"], 1)
+        self.assertEqual(summary["article_gen"]["generated"], True)
+        self.assertEqual(summary["mindmap_gen"]["root"], "树与二叉树")
+        self.assertEqual(summary["mindmap_gen"]["content_length"], len("# 树与二叉树\n## 遍历"))
+        self.assertEqual(summary["code_gen"]["content_length"], len("print('ok')"))
+
     def test_history_context_does_not_add_unrequested_quiz_skill(self):
         contextualized = "给我一个可视化动画助我理解\n相关对话主题：请生成一套概率论练习题"
         result = _resolve_skill_routing(
@@ -148,6 +196,36 @@ class AgentSkillRoutingTests(unittest.TestCase):
         )
         self.assertTrue(valid)
         self.assertEqual(error, "")
+
+
+class AgentPlanNodeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_four_resource_request_uses_deterministic_parallel_plan(self):
+        message = "帮我系统学习数据结构中的树与二叉树，生成讲解文章、思维导图、题库和Python代码案例"
+        state = {
+            "user_id": "test-user",
+            "user_message": message,
+            "history": [],
+            "profile_text": "暂无画像",
+            "workflow_outputs": [],
+            "all_modules_data": {},
+        }
+
+        with patch("services.config_service.is_configured", return_value=True), patch(
+            "graph.subgraphs.agent_execute._llm_stream"
+        ) as llm_stream:
+            result = await plan_node(state)
+
+        llm_stream.assert_not_called()
+        completed = [
+            event for event in result["workflow_outputs"]
+            if event.get("step_type") == "thinking" and event.get("status") == "completed"
+        ][-1]
+        content = completed["data"]["content"]
+        self.assertIn("并行执行 4 个智能体", content)
+        self.assertIn("文章智能体", content)
+        self.assertIn("导图智能体", content)
+        self.assertIn("出题智能体", content)
+        self.assertIn("代码/动画智能体", content)
 
 
 if __name__ == "__main__":
