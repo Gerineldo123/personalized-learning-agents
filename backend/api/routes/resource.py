@@ -535,8 +535,15 @@ def recommend_resources(
             m = re.search(r'\d+', s)
             return int(m.group()) if m else None
 
-    candidate_ids = [x for x in (_parse_rag_id(i) for i in rag_result.get("ids", []) if i) if x is not None]
-    distances = rag_result.get("distances", [])
+    candidate_pairs = []
+    for source, distance in zip(rag_result.get("sources", []), rag_result.get("distances", [])):
+        if source.get("scope") != "user" or not source.get("resource_id"):
+            continue
+        parsed_id = _parse_rag_id(str(source["resource_id"]))
+        if parsed_id is not None:
+            candidate_pairs.append((parsed_id, distance))
+    candidate_ids = [item[0] for item in candidate_pairs]
+    distances = [item[1] for item in candidate_pairs]
 
     if not candidate_ids:
         items = db.query(LearningResource).filter(

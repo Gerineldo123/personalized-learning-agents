@@ -45,6 +45,25 @@ const preferredFormats = computed(() => {
   return value || '待补充'
 })
 
+const profileHeroSummary = computed(() => {
+  const parts: string[] = []
+  const goal = String(profile.value?.learning_goal || '').trim()
+  const style = String(profile.value?.cognitive_style || '').trim()
+  const formats = preferredFormats.value
+  const weakPoints = Array.isArray(profile.value?.weak_points) ? profile.value.weak_points.filter(Boolean) : []
+
+  if (goal) parts.push(`当前学习重点是${goal}`)
+  if (style) parts.push(`更适合${style}方式理解知识`)
+  if (formats !== '待补充') parts.push(`偏好${formats}等学习资源`)
+  if (weakPoints.length) {
+    const preview = weakPoints.slice(0, 2).join('、')
+    parts.push(`建议优先巩固${preview}${weakPoints.length > 2 ? `等 ${weakPoints.length} 个薄弱知识点` : ''}`)
+  }
+  return parts.length
+    ? `${parts.join('；')}。`
+    : '画像信息仍在积累，可继续使用 AI 智能助手并完成题库，让系统形成更准确的学习建议。'
+})
+
 const weakPointPreview = computed(() => {
   const points = profile.value?.weak_points
   return Array.isArray(points) ? points.slice(0, 8) : []
@@ -256,7 +275,7 @@ async function fetchAiInterpret() {
   aiInterpretText.value = ''
   const scores = profile.value.ability_scores || {}
   const weakNames = (profile.value.weak_courses || []).map((c: any) => c.name).join('、')
-  const message = `请根据我当前的学习画像给出深度解读和个性化建议。能力评分：${JSON.stringify(scores)}；薄弱课程：${weakNames || '暂无'}；认知风格：${profile.value.cognitive_style || '未知'}；能力摘要：${profile.value.ability_summary || ''}。请用2-3段话给出有针对性的学习建议。`
+  const message = `请根据我当前的学习画像更新 ability_summary。能力评分：${JSON.stringify(scores)}；薄弱课程：${weakNames || '暂无'}；认知风格：${profile.value.cognitive_style || '未知'}；现有摘要：${profile.value.ability_summary || ''}。摘要需概括主要特点、薄弱方向和下一步建议，并严格遵守系统要求的 JSON 输出格式。`
   try {
     await api.post('/profile/run', null, {
       params: { user_id: userStore.userId, message },
@@ -289,18 +308,22 @@ void openPathResource
 void toggleStepDone
 void sortedWeakCourses
 
-const chatUpdateInput = ref('')
 const chatUpdateLoading = ref(false)
 const chatUpdateResult = ref('')
 
 async function submitChatUpdate() {
-  if (!chatUpdateInput.value.trim() || !userStore.userId) return
+  if (!userStore.userId) return
   chatUpdateLoading.value = true
   chatUpdateResult.value = ''
   try {
-    await api.post('/profile/run', null, { params: { user_id: userStore.userId, message: chatUpdateInput.value } })
-    chatUpdateInput.value = ''
-    chatUpdateResult.value = '画像已更新'
+    await api.post('/profile/run', null, {
+      params: {
+        user_id: userStore.userId,
+        message: '请重点分析我在 AI 智能助手中的历史对话，提取稳定的学习目标、认知风格、资源偏好和反复出现的学习困难，并更新画像摘要。不要根据单次随口提问做过度推断。',
+      },
+      timeout: 60000,
+    })
+    chatUpdateResult.value = '已根据最近的 AI 智能助手对话更新画像'
     await loadProfile()
   } catch { chatUpdateResult.value = '更新失败，请重试' }
   finally { chatUpdateLoading.value = false }
@@ -340,7 +363,7 @@ async function submitChatUpdate() {
         </div>
         <div class="profile-hero-summary">
           <div class="hero-summary-title">画像摘要</div>
-          <p>{{ profile.learning_goal || '暂无明确学习目标，可通过对话建档补充。' }}</p>
+          <p>{{ profileHeroSummary }}</p>
           <div class="profile-source-tags">
             <el-tag v-if="profile.cognitive_style" size="small" type="info">{{ profile.cognitive_style }}</el-tag>
             <el-tag v-if="preferredFormats !== '待补充'" size="small" type="success">{{ preferredFormats }}</el-tag>
@@ -406,10 +429,10 @@ async function submitChatUpdate() {
 
         <!-- 对话式更新画像 -->
         <div class="chat-update-box">
-          <div class="chat-update-title">通过对话更新画像</div>
+          <div class="chat-update-title">根据 AI 助手历史更新画像</div>
+          <p class="chat-update-description">系统会分析你在 AI 智能助手中的近期对话，归纳学习目标、偏好和反复出现的困难，不需要再次手动描述。</p>
           <div class="chat-update-row">
-            <el-input v-model="chatUpdateInput" placeholder="例如：我最近在学强化学习，感觉概率基础比较薄弱" @keydown.enter="submitChatUpdate" />
-            <el-button type="primary" :loading="chatUpdateLoading" @click="submitChatUpdate">更新</el-button>
+            <el-button type="primary" :loading="chatUpdateLoading" @click="submitChatUpdate">分析对话并更新</el-button>
           </div>
           <div v-if="chatUpdateResult" class="chat-update-result">{{ chatUpdateResult }}</div>
         </div>
@@ -928,6 +951,7 @@ async function submitChatUpdate() {
   box-shadow: 0 2px 8px rgba(219,168,120,0.06);
 }
 .chat-update-title { font-size: 13px; font-weight: 500; color: #DBA878; margin-bottom: 10px; }
+.chat-update-description { margin: 0 0 12px; color: #6B635C; font-size: 13px; line-height: 1.7; }
 .chat-update-row { display: flex; gap: 10px; }
 .chat-update-result { margin-top: 8px; font-size: 12px; color: #98C9B3; }
 

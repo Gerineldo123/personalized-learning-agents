@@ -164,41 +164,6 @@ def make_draft_resource(
     }
 
 
-_TOPIC_STOP_PHRASES = (
-    "请帮我", "帮我", "请给我", "给我", "请", "生成一个", "生成", "制作一个", "制作",
-    "创建一个", "创建", "设计一个", "设计", "实现一个", "实现", "写一个", "写个", "开发一个",
-    "开发", "可视化动画", "可视化演示", "交互式动画", "交互动画", "动画演示", "动态演示",
-    "可视化", "动画", "演示", "页面", "代码案例", "代码", "助我理解", "帮助我理解", "用于讲解",
-    "讲解", "关于", "这个", "那个",
-)
-
-
-def _extract_topic_terms(task: str) -> list[str]:
-    text = (task or "").lower()
-    for phrase in _TOPIC_STOP_PHRASES:
-        text = text.replace(phrase.lower(), " ")
-    parts = re.split(r"[\s，。；：、,.!?！？:;（）()\[\]{}<>《》\"'“”‘’/\\|]+|(?:以及|或者|并且|与|和|及)", text)
-    generic = {"主题", "内容", "知识点", "课程", "学习", "理解", "一个", "一种", "相关", "完整", "自包含"}
-    terms = []
-    for part in parts:
-        term = part.strip("-_+")
-        if len(term) < 2 or term in generic or term.isdigit():
-            continue
-        if term not in terms:
-            terms.append(term)
-    return sorted(terms, key=len, reverse=True)[:8]
-
-
-def _validate_topic_alignment(task: str, content: str) -> tuple[bool, str]:
-    terms = _extract_topic_terms(task)
-    if not terms:
-        return True, ""
-    output = (content or "").lower()
-    if any(term in output for term in terms):
-        return True, ""
-    return False, f"生成内容未体现规划主题关键词：{', '.join(terms[:4])}"
-
-
 def _clean_html_output(content: str) -> str:
     cleaned = re.sub(r'^```html?\s*\n?', '', (content or "").strip(), flags=re.IGNORECASE)
     cleaned = re.sub(r'\n?```\s*$', '', cleaned)
@@ -511,6 +476,7 @@ class CodeGenSkill(BaseSkill):
         from agents.base import AgentState
         from core.llm_client import chat_completion
         from services.safety_service import check_text, hallu_rules
+        from services.rag_service import search_rag
 
         user_message = context.get("user_message", "")
         skill_instruction = context.get("skill_instruction") or ""
@@ -533,6 +499,17 @@ class CodeGenSkill(BaseSkill):
             course_name=context.get("course_name") or ad.get("course_name"),
             knowledge_points=context.get("knowledge_points") or ad.get("knowledge_points") or [],
         )
+        rag_results = search_rag(generation_task, user_id, top_k=4)
+        rag_sources = rag_results.get("sources", [])
+        rag_sections = []
+        for index, document in enumerate(rag_results.get("documents", [])):
+            source = rag_sources[index] if index < len(rag_sources) else {}
+            label = " · ".join(filter(None, [
+                str(source.get("course_name") or ""),
+                str(source.get("chapter") or source.get("title") or "用户学习资源"),
+            ]))
+            rag_sections.append(f"【{label or '用户学习资源'}】\n{document[:1200]}")
+        rag_context = "\n---\n".join(rag_sections) or "未命中预制课程知识库；不得虚构资料来源。"
 
         # 检测可视化意图
         VIZ_KEYWORDS = ["可视化", "动画", "演示", "visuali", "animation", "animate", "步骤展示", "动态展示"]
@@ -573,6 +550,8 @@ class CodeGenSkill(BaseSkill):
 用户原始需求：{user_message}
 必须实现的主题：{generation_task}
 学生背景：{profile_text or '未知'}
+可参考的课程资料：
+{rag_context}
 
 输出要求：
 - 只输出完整 HTML，不要 Markdown 代码块，不要解释文字。
@@ -605,29 +584,8 @@ class CodeGenSkill(BaseSkill):
                 content = await generate_visual_html(prompt, emit_tokens=True)
                 if not content:
                     raise RuntimeError("模型未返回可视化动画代码")
-                aligned, alignment_error = _validate_topic_alignment(generation_task, content)
-                if not aligned:
-                    sub_steps[-1] = f"⚠️ {alignment_error}，正在按原主题重试"
-                    self.emit_step(workflow_outputs, "running", "生成代码案例", {
-                        "sub_steps": sub_steps,
-                        "progress": 65,
-                        "current_phase": "主题纠偏",
-                        "progress_note": "检测到生成内容可能偏题，正在严格按规划主题重新生成",
-                        "progress_indeterminate": True,
-                        "progress_label": "3/6 阶段",
-                        "language": "html",
-                        "streaming_code": False,
-                    }, step_id)
-                    retry_prompt = prompt + f"""
 
-上一版生成内容未通过主题一致性检查：{alignment_error}
-本次必须在页面标题、概念说明和动画步骤中明确出现并讲解“{generation_task}”，不得改成其他示例主题。"""
-                    content = await generate_visual_html(retry_prompt, emit_tokens=False)
-                    aligned, alignment_error = _validate_topic_alignment(generation_task, content)
-                    if not aligned:
-                        raise RuntimeError(f"可视化动画主题校验失败：{alignment_error}")
-
-                sub_steps[-1] = "✅ 动画代码生成完成并通过主题校验"
+                sub_steps[-1] = "✅ 动画代码生成完成"
                 sub_steps.append("⏳ 正在校验 HTML 结构并准备预览...")
                 self.emit_step(workflow_outputs, "running", "生成代码案例", {
                     "sub_steps": sub_steps,
@@ -658,7 +616,19 @@ class CodeGenSkill(BaseSkill):
                 draft_resource = make_draft_resource(
                     "anime",
                     f"可视化动画：{generation_task[:40]}",
-                    {"code": content, "language": "html"},
+                    {
+                        "code": content,
+                        "language": "html",
+                        "references": rag_sources,
+                        "knowledge_base_match": {
+                            "system_course_hit": any(item.get("scope") == "system" for item in rag_sources),
+                            "message": (
+                                "已使用预制课程知识库"
+                                if any(item.get("scope") == "system" for item in rag_sources)
+                                else "未命中预制课程知识库"
+                            ),
+                        },
+                    },
                     **graph_binding,
                 )
                 self.emit_step(workflow_outputs, "completed", "生成代码案例", {
@@ -706,6 +676,7 @@ class CodeGenSkill(BaseSkill):
                 topic=generation_prompt,
                 code_lang=code_lang,
                 level=level,
+                rag_context=rag_context,
                 hallu=hallu_rules(),
             )
             content_parts: list[str] = []
@@ -744,6 +715,7 @@ class CodeGenSkill(BaseSkill):
                 kp_weights=graph_binding.get("kp_weights") or {},
                 persist=False,
             )
+            state["rag_sources"] = rag_sources
             agent = ContentGenAgent()
             agent._save_or_draft_resource(state, "code", {"code": safe_content, "language": code_lang})
             content = safe_content

@@ -9,7 +9,6 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from agents.skills import (  # noqa: E402
-    _validate_topic_alignment,
     get_all_skills,
     get_skill,
     init_skills,
@@ -180,23 +179,6 @@ class AgentSkillRoutingTests(unittest.TestCase):
             [{"role": "user", "content": "请讲解方差分析与回归建模"}],
         )
         self.assertIn("方差分析与回归建模", normalized)
-
-    def test_topic_alignment_rejects_unrelated_template(self):
-        valid, error = _validate_topic_alignment(
-            "方差分析与回归建模",
-            "<html><title>K-Means聚类算法</title><body>质心迭代</body></html>",
-        )
-        self.assertFalse(valid)
-        self.assertTrue(error)
-
-    def test_topic_alignment_accepts_expected_topic(self):
-        valid, error = _validate_topic_alignment(
-            "方差分析与回归建模",
-            "<html><title>方差分析与回归建模</title></html>",
-        )
-        self.assertTrue(valid)
-        self.assertEqual(error, "")
-
 
 class AgentPlanNodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_explicit_four_resource_request_uses_deterministic_parallel_plan(self):

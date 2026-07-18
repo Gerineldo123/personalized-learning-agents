@@ -112,7 +112,7 @@ async function submit() {
     <el-card class="auth-card">
       <template #header>
         <div class="auth-head">
-          <span>账号登录</span>
+          <span>智途账号</span>
           <el-radio-group v-model="mode" size="small">
             <el-radio-button value="login">登录</el-radio-button>
             <el-radio-button value="register">注册</el-radio-button>

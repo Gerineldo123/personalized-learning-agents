@@ -1,4 +1,6 @@
 ﻿import traceback
+import asyncio
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -110,7 +112,28 @@ def _repair_legacy_resource_titles():
 
 _repair_legacy_resource_titles()
 
-app = FastAPI(title="个性化学习智能体系统")
+app = FastAPI(title="智途｜个性化学习智能体系统")
+
+_course_kb_warmup_task = None
+
+
+@app.on_event("startup")
+async def warmup_course_knowledge_base():
+    """后台预热公共课程知识库，不阻塞 API 服务启动。"""
+    global _course_kb_warmup_task
+
+    async def run_seed():
+        try:
+            from services.rag_service import ensure_course_knowledge_base
+            status = await asyncio.to_thread(ensure_course_knowledge_base)
+            print(
+                "Course knowledge base ready: "
+                f"{status.get('document_count', 0)} documents / {status.get('chunk_count', 0)} chunks"
+            )
+        except Exception as exc:
+            print(f"[WARN] course knowledge base warmup failed: {exc}")
+
+    _course_kb_warmup_task = asyncio.create_task(run_seed())
 
 app.add_middleware(
     CORSMiddleware,

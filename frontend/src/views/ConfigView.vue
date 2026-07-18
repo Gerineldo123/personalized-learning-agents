@@ -204,8 +204,8 @@ async function testPpt() {
     </div>
 
     <details class="compliance-panel">
-      <summary>开源与 AI 工具说明</summary>
-      <p>赛题要求在提交文档显著位置标注开源项目、AI 工具/框架及协议。本系统保留此说明入口，最终提交前仍需团队人工复核版本和协议。</p>
+      <summary>技术组件与服务</summary>
+      <p>智途采用以下开源框架与 AI 服务构建，各组件按照对应开源协议或服务条款使用。</p>
       <div class="compliance-grid">
         <span>Vue / Vite / Element Plus：前端框架与 UI，MIT</span>
         <span>ECharts：图表可视化，Apache-2.0</span>
@@ -216,7 +216,6 @@ async function testPpt() {
         <span>Docmee / veasion AiPPT：PPT 分步生成，按仓库协议与服务条款</span>
         <span>python-pptx / Pillow：课件与图片处理，MIT / HPND</span>
       </div>
-      <p class="compliance-note">完整清单见 <code>docs/第三方依赖与AI工具说明.md</code>。</p>
     </details>
 
     <el-tabs v-model="activeTab" class="config-tabs">
@@ -304,7 +303,6 @@ async function testPpt() {
 .compliance-panel p { margin: 10px 0 0; line-height: 1.6; font-size: 13px; }
 .compliance-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin-top: 12px; }
 .compliance-grid span { padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-soft); font-size: 12px; color: var(--text-primary); }
-.compliance-note code { color: var(--color-primary); }
 .tab-label { display: inline-flex; align-items: center; gap: 0; }
 .tab-tag { margin-left: 8px; font-size: 11px; }
 .config-card { border: 1px solid var(--border-light); border-radius: var(--radius-lg); background: var(--bg-card); margin-top: 16px; }

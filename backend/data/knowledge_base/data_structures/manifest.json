@@ -1,0 +1,101 @@
+{
+  "course_id": "data_structures",
+  "course_name": "数据结构",
+  "version": "1.0.0",
+  "audience": "高等院校计算机类专业本科生",
+  "source": "team_constructed",
+  "license": "团队原创课程资料，仅用于本项目教学与比赛展示",
+  "minimum_rendered_characters": 50000,
+  "documents": [
+    {
+      "id": "ds-00-overview",
+      "file": "00_课程导论.md",
+      "title": "数据结构课程导论与复杂度分析",
+      "chapter": "课程导论",
+      "document_type": "chapter",
+      "knowledge_points": ["线性表", "栈与队列", "树与二叉树", "图", "查找算法", "排序算法", "哈希表"],
+      "practice_focus": ["抽象数据类型与存储结构的区别", "时间复杂度与空间复杂度估算", "根据业务约束选择数据结构"]
+    },
+    {
+      "id": "ds-01-linear-list",
+      "file": "01_线性表.md",
+      "title": "线性表：顺序存储、链式存储与工程选择",
+      "chapter": "线性表",
+      "document_type": "chapter",
+      "knowledge_points": ["线性表"],
+      "practice_focus": ["顺序表插入删除", "单链表指针调整", "顺序表与链表场景选择"]
+    },
+    {
+      "id": "ds-02-stack-queue",
+      "file": "02_栈与队列.md",
+      "title": "栈与队列：受限线性结构及其典型应用",
+      "chapter": "栈与队列",
+      "document_type": "chapter",
+      "knowledge_points": ["栈与队列"],
+      "practice_focus": ["括号匹配与表达式求值", "循环队列判空判满", "队列与广度优先搜索"]
+    },
+    {
+      "id": "ds-03-tree",
+      "file": "03_树与二叉树.md",
+      "title": "树与二叉树：层次结构、遍历与编码",
+      "chapter": "树与二叉树",
+      "document_type": "chapter",
+      "knowledge_points": ["树与二叉树"],
+      "practice_focus": ["二叉树递归与非递归遍历", "由遍历序列还原二叉树", "哈夫曼树与带权路径长度"]
+    },
+    {
+      "id": "ds-04-graph",
+      "file": "04_图.md",
+      "title": "图：关系建模、遍历与路径算法",
+      "chapter": "图",
+      "document_type": "chapter",
+      "knowledge_points": ["图"],
+      "practice_focus": ["邻接矩阵与邻接表选择", "深度优先与广度优先遍历", "最短路径与最小生成树"]
+    },
+    {
+      "id": "ds-05-search",
+      "file": "05_查找算法.md",
+      "title": "查找算法：有序查找、树表查找与性能边界",
+      "chapter": "查找算法",
+      "document_type": "chapter",
+      "knowledge_points": ["查找算法"],
+      "practice_focus": ["二分查找边界与循环不变量", "二叉搜索树查找与退化", "静态查找与动态查找选择"]
+    },
+    {
+      "id": "ds-06-sort",
+      "file": "06_排序算法.md",
+      "title": "排序算法：比较、稳定性与工程权衡",
+      "chapter": "排序算法",
+      "document_type": "chapter",
+      "knowledge_points": ["排序算法"],
+      "practice_focus": ["排序过程跟踪", "稳定性与复杂度比较", "数据特征驱动的算法选择"]
+    },
+    {
+      "id": "ds-07-hash",
+      "file": "07_哈希表.md",
+      "title": "哈希表：映射、冲突处理与装载因子",
+      "chapter": "哈希表",
+      "document_type": "chapter",
+      "knowledge_points": ["哈希表"],
+      "practice_focus": ["哈希函数设计", "开放定址与链地址冲突处理", "装载因子与扩容"]
+    },
+    {
+      "id": "ds-08-project",
+      "file": "08_综合实践.md",
+      "title": "数据结构综合实践：校园导航与学习任务管理",
+      "chapter": "综合实践",
+      "document_type": "project",
+      "knowledge_points": ["线性表", "栈与队列", "树与二叉树", "图", "查找算法", "排序算法", "哈希表"],
+      "practice_focus": ["校园导航系统的数据建模", "学习任务管理系统的模块设计", "性能测试与数据结构替换实验"]
+    },
+    {
+      "id": "ds-09-exercises",
+      "file": "09_综合练习与解析.md",
+      "title": "数据结构综合练习、诊断方法与解析",
+      "chapter": "综合练习",
+      "document_type": "exercise",
+      "knowledge_points": ["线性表", "栈与队列", "树与二叉树", "图", "查找算法", "排序算法", "哈希表"],
+      "practice_focus": ["复杂度综合判断", "算法过程与结果推演", "错误算法诊断与修正"]
+    }
+  ]
+}

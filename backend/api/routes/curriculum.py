@@ -243,6 +243,13 @@ def get_course_kp_coverage(course_name: str, user_id: str):
         db.close()
 
 
+@router.get("/courseware/{course_name}/status")
+def get_courseware_status(course_name: str):
+    """返回预制课程知识库的原始文档与向量索引状态。"""
+    from services.rag_service import get_course_knowledge_base_status
+    return get_course_knowledge_base_status(course_name)
+
+
 @router.get("/courseware/{course_name:path}")
 def get_courseware(course_name: str):
     """返回比赛演示用的完整课程样例资料。"""

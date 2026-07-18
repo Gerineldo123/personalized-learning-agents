@@ -1,5 +1,5 @@
 ﻿import json
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from api.deps import get_db
 from core.database import SessionLocal
@@ -700,11 +700,17 @@ async def rebuild_profile(user_id: str):
 
 @router.post("/run")
 async def run_profile_agent(user_id: str, message: str):
-    """通过自然语言对话触发画像智能体更新"""
+    """基于 AI 助手历史对话和当前指令更新画像。"""
     agent = ProfileAgent()
     state = AgentState(user_id=user_id, user_message=message)
-    await agent.process(state)
-    return {"ok": True}
+    try:
+        await agent.process(state)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "source": "conversation_history",
+    }
 
 
 @router.post("")

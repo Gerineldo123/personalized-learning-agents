@@ -74,7 +74,7 @@ async function deleteAccount() {
   <el-container v-else class="app-container">
     <el-header class="app-header" height="60px">
       <div class="header-left">
-        <span class="logo-text">个性化学习</span>
+        <span class="logo-text">智途</span>
       </div>
       <nav class="header-nav">
         <div

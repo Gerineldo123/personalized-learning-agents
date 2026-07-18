@@ -22,6 +22,7 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
   "weak_points": ["薄弱知识点"],
   "learning_goal": "学习目标描述",
   "preferred_format": ["偏好资源格式"],
+  "ability_summary": "结合对话历史形成的画像摘要，80-120字",
   "focus_stamina_score": 1-10,
   "focus_peak_hours": [9, 10, 15],
   "focus_interrupt_rate": 0.0-1.0
@@ -34,6 +35,7 @@ EXTRACT_PROFILE_PROMPT = """你是一个学生画像分析专家。根据提供�
 - focus_peak_hours: 从专注数据的高效时段直接取值，无数据不填
 - focus_interrupt_rate: 从专注数据的中断率直接取值，无数据不填
 - 已有画像中非空字段保留，新分析仅在置信度高时覆盖
+- ability_summary 必须概括学习目标、学习偏好、主要困难和下一步方向，不要只重复单个学习目标
 - 只返回JSON，不要其他内容"""
 
 
@@ -64,13 +66,8 @@ class ProfileAgent(BaseAgent):
                 {"role": "user", "content": state.user_message}
             ], temperature=0.3)
 
-            raw = resp.choices[0].message.content.strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`").strip()
-                if raw.startswith("json"):
-                    raw = raw[4:].strip()
-
-            extracted = json.loads(raw)
+            raw = (resp.choices[0].message.content or "").strip()
+            extracted = self._parse_extracted(raw)
 
             old_snapshot = self._profile_dict(old_profile) if old_profile else {}
 
@@ -90,10 +87,14 @@ class ProfileAgent(BaseAgent):
 
             # 写历史快照（记录本次变化的维度）
             new_snapshot = self._profile_dict(old_profile)
+            delta_fields = (
+                "learning_goal", "cognitive_style", "preferred_format",
+                "weak_points", "ability_summary", "focus_stamina_score",
+                "focus_peak_hours", "focus_interrupt_rate",
+            )
             delta = {
                 k: {"from": old_snapshot.get(k), "to": new_snapshot.get(k)}
-                for k in ("knowledge_base", "weak_points", "ability_scores",
-                          "focus_stamina_score", "cognitive_style")
+                for k in delta_fields
                 if old_snapshot.get(k) != new_snapshot.get(k)
             }
             db.add(ProfileHistory(
@@ -103,6 +104,10 @@ class ProfileAgent(BaseAgent):
                     "ability_scores": new_snapshot.get("ability_scores") or {},
                     "knowledge_base": new_snapshot.get("knowledge_base") or {},
                     "weak_points": new_snapshot.get("weak_points") or [],
+                    "learning_goal": new_snapshot.get("learning_goal") or "",
+                    "cognitive_style": new_snapshot.get("cognitive_style") or "",
+                    "preferred_format": new_snapshot.get("preferred_format") or [],
+                    "ability_summary": new_snapshot.get("ability_summary") or "",
                     "focus_stamina_score": new_snapshot.get("focus_stamina_score"),
                 },
                 delta=delta,
@@ -123,6 +128,38 @@ class ProfileAgent(BaseAgent):
             return state
         finally:
             db.close()
+
+    @staticmethod
+    def _parse_extracted(raw: str) -> dict:
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError("画像智能体未返回有效内容")
+
+        if text.startswith("```"):
+            text = text.strip("`").strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start:end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        # 部分模型会忽略 JSON 约束而直接返回解读正文。此时只更新摘要，
+        # 不根据非结构化文本猜测其它画像字段。
+        return {"ability_summary": text[:800]}
 
     def _get_chat_summary(self, db, user_id: str) -> str:
         convs = db.query(Conversation).filter(
@@ -193,6 +230,7 @@ class ProfileAgent(BaseAgent):
             "weak_points": p.weak_points or [],
             "learning_goal": p.learning_goal or "",
             "preferred_format": p.preferred_format or [],
+            "ability_summary": p.ability_summary or "",
             "focus_stamina_score": p.focus_stamina_score,
             "focus_peak_hours": p.focus_peak_hours or [],
             "focus_interrupt_rate": p.focus_interrupt_rate,
@@ -220,6 +258,9 @@ class ProfileAgent(BaseAgent):
             pf = list(set((profile.preferred_format or []) + extracted["preferred_format"]))
             profile.preferred_format = pf
             evidence["preferred_format"] = "对话更新"
+        if extracted.get("ability_summary"):
+            profile.ability_summary = extracted["ability_summary"]
+            evidence["ability_summary"] = "AI助手历史对话分析"
         if extracted.get("focus_stamina_score") is not None:
             profile.focus_stamina_score = extracted["focus_stamina_score"]
             evidence["focus_stamina_score"] = "对话更新"

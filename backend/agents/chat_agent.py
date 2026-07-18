@@ -1,11 +1,12 @@
 import json
+import re
 from typing import AsyncGenerator
 from agents.base import BaseAgent, AgentState
 from core.llm_client import chat_completion
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import search_rag
 
-SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
+SYSTEM_PROMPT = """你是“智途”个性化学习智能体系统的 AI 助手。
 
 【核心规则 - 必须严格遵守】
 每次回答中，你必须将所有学科专业术语用双方括号标记：[[术语名称]]。
@@ -55,6 +56,9 @@ SYSTEM_PROMPT = """你是一个个性化学习智能体系统的 AI 助手。
 - 上下文中包含系统已读取到的错题本、学习资源、学习路径、知识图谱和专注记录。
 - 当这些列表非空时，不要回答“没有具体错题内容”或“无法访问资源/路径/图谱”。
 - 分析错题时必须引用错题本中的题目、学生答案、正确答案和知识点。
+- 使用预制课程知识库内容时，在相关段落末尾用“资料依据：课程·章节”标注来源；没有资料时不得编造引用。
+- 如果检索资料正文明确包含问题答案，必须说明知识库已提供该信息并据此回答；禁止一边引用资料，一边声称“知识库未直接提供”。
+- 只有在下方没有出现“资料检索状态：已命中”时，才可以说明未命中预制课程资料。
 
 {rag_context}
 """
@@ -79,7 +83,7 @@ class ChatAgent(BaseAgent):
             messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
         messages.append({"role": "user", "content": state.user_message})
 
-        stream_resp = await chat_completion(messages, temperature=0.7, stream=True)
+        stream_resp = await chat_completion(messages, temperature=0.4, stream=True)
 
         collected = ""
         async for chunk in stream_resp:
@@ -116,13 +120,90 @@ class ChatAgent(BaseAgent):
 
     def _build_rag_context(self, state: AgentState) -> str:
         try:
-            results = search_rag(state.user_message, state.get("user_id", ""), top_k=3)
+            query = self._rag_query(state.user_message)
+            results = search_rag(query, state.get("user_id", ""), top_k=6)
             docs = results.get("documents", [])
             if not docs:
                 return ""
-            return "相关学习资料：\n" + "\n---\n".join(d[:800] for d in docs[:3])
+            sources = results.get("sources", [])
+            ranked = sorted(
+                [
+                    (document, sources[index] if index < len(sources) else {})
+                    for index, document in enumerate(docs)
+                ],
+                key=lambda item: self._rag_relevance(query, item[0], item[1]),
+                reverse=True,
+            )
+            sections = []
+            for document, source in ranked[:3]:
+                label = " · ".join(filter(None, [
+                    str(source.get("course_name") or ""),
+                    str(source.get("chapter") or source.get("title") or "用户学习资源"),
+                ]))
+                sections.append(f"【资料来源：{label or '用户学习资源'}】\n{document[:1000]}")
+            return (
+                "资料检索状态：已命中。以下内容是系统实际检索到的资料；"
+                "若正文直接包含答案，不得声称知识库未提供。\n"
+                "相关学习资料（仅在与问题相关时使用）：\n"
+                + "\n---\n".join(sections)
+            )
         except Exception:
             return ""
+
+    @staticmethod
+    def _rag_query(message: str) -> str:
+        query = str(message or "").strip()
+        fillers = (
+            "请根据预制课程知识库回答并标明资料来源",
+            "请根据预制课程知识库回答",
+            "请结合预制课程知识库回答",
+            "请根据预制课程知识库",
+            "并标明资料来源",
+            "请标明资料来源",
+            "标明资料来源",
+        )
+        for filler in fillers:
+            query = query.replace(filler, "")
+        cleaned = query.strip(" \t\r\n，。！？；：,.!?;:")
+        return cleaned or str(message or "").strip()
+
+    @staticmethod
+    def _rag_relevance(query: str, document: str, source: dict) -> int:
+        normalized = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(query or ""))
+        source_text = "".join([
+            str(source.get("title") or ""),
+            str(source.get("chapter") or ""),
+            "".join(str(value) for value in source.get("knowledge_points") or []),
+        ])
+        searchable = re.sub(
+            r"[^0-9A-Za-z\u4e00-\u9fff]+",
+            "",
+            source_text + str(document or ""),
+        )
+        if not normalized or not searchable:
+            return 0
+
+        subject = normalized
+        for prefix in ("请问", "请解释", "解释一下", "为什么", "如何", "怎么"):
+            if subject.startswith(prefix):
+                subject = subject[len(prefix):]
+        subject = subject.split("的", 1)[0]
+
+        score = 0
+        if 2 <= len(subject) <= 16 and subject in searchable:
+            score += 500
+            if subject in source_text:
+                score += 500
+
+        max_size = min(8, len(normalized))
+        for size in range(2, max_size + 1):
+            grams = {normalized[index:index + size] for index in range(len(normalized) - size + 1)}
+            for gram in grams:
+                if gram in searchable:
+                    score += size * size
+                if gram in source_text:
+                    score += size * size
+        return score
 
 
 if __name__ == "__main__":

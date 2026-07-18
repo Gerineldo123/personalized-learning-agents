@@ -274,7 +274,7 @@ watch(() => userStore.userId, refreshHome)
   <div class="home-page">
     <div class="home-shell">
       <section class="hero-section animate-up animate-delay-1">
-        <div class="hero-eyebrow">个性化学习智能体系统</div>
+        <div class="hero-eyebrow">智途 · 个性化学习智能体系统</div>
         <h1 class="hero-heading">今天想学点什么？</h1>
         <button class="hero-search animate-up animate-delay-2" type="button" @click="goAgent()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#948A80" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="#948A80" stroke-width="2" stroke-linecap="round"/></svg>

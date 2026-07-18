@@ -116,10 +116,10 @@ body {
 COVER_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>{css}</style></head>
 <body><div class="cover">
 <div class="cover-bg1"></div><div class="cover-bg2"></div><div class="cover-bg3"></div>
-<div class="cover-tag">AI LEARNING · COURSEWARE</div>
+<div class="cover-tag">ZHITU · AI COURSEWARE</div>
 <div class="cover-title">{title}</div>
 <div class="cover-divider"></div>
-<div class="cover-sub">AI 个性化学习 · 自动生成课件</div>
+<div class="cover-sub">智途 · AI 个性化学习课件</div>
 </div></body></html>"""
 
 SLIDE_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>{css}</style></head>

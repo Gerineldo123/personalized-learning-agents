@@ -7,6 +7,7 @@ from core.database import SessionLocal
 from models.resource import LearningResource
 from services.safety_service import check_text, hallu_rules
 from services.rag_service import index_resource
+from services.rag_service import search_rag
 from services.kp_service import infer_resource_tags
 from services.ppt_model_service import create_ppt_session
 from services.resource_title_service import build_resource_title
@@ -210,6 +211,8 @@ ARTICLE_PROMPT = """你是一个知识讲解专家。根据学生画像和需求
 
 学生画像：{profile}
 学习需求：{topic}
+资料依据：
+{rag_context}
 
 要求：
 - 使用Markdown格式
@@ -226,6 +229,8 @@ QUIZ_PROMPT = """你是一个高校课程教学评估专家。根据学生画像
 题目数量：{question_count}
 题型要求：{question_types}
 编程语言：{code_lang}
+资料依据：
+{rag_context}
 
 返回JSON格式（只允许 single_choice、fill_blank、coding 三种 type；每种题型示例如下）：
 {{
@@ -285,6 +290,8 @@ CODE_PROMPT = """你是一个编程教学专家。根据学生画像和知识点
 学生画像：{profile}
 知识点：{topic}
 编程语言：{code_lang}
+资料依据：
+{rag_context}
 
 要求：
 - 使用{code_lang}语言编写完整的可运行代码示例
@@ -299,6 +306,8 @@ ANIME_PROMPT = """你是一个计算机与数学课程可视化动画设计专�
 学生画像：{profile}
 知识点：{topic}
 难度：{level}
+资料依据：
+{rag_context}
 
 要求：
 - 只输出完整 HTML 文档，不要 Markdown 代码块，不要额外解释
@@ -346,8 +355,14 @@ class ContentGenAgent(BaseAgent):
     async def _generate_article(self, state: AgentState, on_token=None):
         message = state.user_message
         profile = self._profile_text(state)
+        rag_context = self._rag_context(state, message)
         content = await _completion_text([
-            {"role": "user", "content": ARTICLE_PROMPT.format(profile=profile, topic=message, hallu=hallu_rules())}
+            {"role": "user", "content": ARTICLE_PROMPT.format(
+                profile=profile,
+                topic=message,
+                rag_context=rag_context,
+                hallu=hallu_rules(),
+            )}
         ], temperature=0.7, on_token=on_token)
         safe_content, _ = await check_text(content)
         self._save_or_draft_resource(state, "article", safe_content)
@@ -364,6 +379,7 @@ class ContentGenAgent(BaseAgent):
         raw_types = state.get("question_types", "single_choice")
         question_types = _normalize_requested_question_types(raw_types)
         code_lang = str(state.get("code_language", "python") or "python")
+        rag_context = self._rag_context(state, message)
         raw = await _completion_text([
             {"role": "user", "content": QUIZ_PROMPT.format(
                 profile=profile,
@@ -372,6 +388,7 @@ class ContentGenAgent(BaseAgent):
                 difficulty=difficulty,
                 question_types=question_types,
                 code_lang=code_lang,
+                rag_context=rag_context,
                 hallu=hallu_rules(),
             )}
         ], temperature=0.5, on_token=on_token)
@@ -391,6 +408,7 @@ class ContentGenAgent(BaseAgent):
         message = state.user_message
         profile = self._profile_text(state)
         code_lang = str(state.get("code_language", "python") or "python")
+        rag_context = self._rag_context(state, message)
         kb = state.profile.knowledge_base if state.profile else {}
         level = "初级"
         for name, score in kb.items():
@@ -399,7 +417,14 @@ class ContentGenAgent(BaseAgent):
             elif score >= 0.4 and level == "初级":
                 level = "中级"
         resp = await chat_completion([
-            {"role": "user", "content": CODE_PROMPT.format(profile=profile, topic=message, code_lang=code_lang, level=level, hallu=hallu_rules())}
+            {"role": "user", "content": CODE_PROMPT.format(
+                profile=profile,
+                topic=message,
+                code_lang=code_lang,
+                level=level,
+                rag_context=rag_context,
+                hallu=hallu_rules(),
+            )}
         ], temperature=0.5)
         content = resp.choices[0].message.content
         safe_content, _ = await check_text(content)
@@ -411,6 +436,7 @@ class ContentGenAgent(BaseAgent):
     async def _generate_anime(self, state: AgentState):
         message = state.user_message
         profile = self._profile_text(state)
+        rag_context = self._rag_context(state, message)
         kb = state.profile.knowledge_base if state.profile else {}
         level = "初级"
         for _name, score in kb.items():
@@ -419,7 +445,13 @@ class ContentGenAgent(BaseAgent):
             elif score >= 0.4 and level == "初级":
                 level = "中级"
         resp = await chat_completion([
-            {"role": "user", "content": ANIME_PROMPT.format(profile=profile, topic=message, level=level, hallu=hallu_rules())}
+            {"role": "user", "content": ANIME_PROMPT.format(
+                profile=profile,
+                topic=message,
+                level=level,
+                rag_context=rag_context,
+                hallu=hallu_rules(),
+            )}
         ], temperature=0.5)
         content = resp.choices[0].message.content.strip()
         if content.startswith("```"):
@@ -494,6 +526,37 @@ class ContentGenAgent(BaseAgent):
             f"学习目标：{p.learning_goal or '无'}"
         )
 
+    def _rag_context(self, state: AgentState, query: str) -> str:
+        results = search_rag(query, state.get("user_id", ""), top_k=4)
+        documents = results.get("documents", [])
+        sources = results.get("sources", [])
+        state["rag_sources"] = sources
+        if not documents:
+            return "未命中预制课程知识库；不得虚构资料来源。"
+        sections = []
+        for index, document in enumerate(documents):
+            source = sources[index] if index < len(sources) else {}
+            label = " · ".join(filter(None, [
+                str(source.get("course_name") or ""),
+                str(source.get("chapter") or source.get("title") or "用户学习资源"),
+            ]))
+            sections.append(f"【{label or '用户学习资源'}】\n{document[:1200]}")
+        return "\n---\n".join(sections)
+
+    def _attach_references(self, content, state: AgentState) -> dict:
+        resource_content = dict(content) if isinstance(content, dict) else {"text": content}
+        references = list(state.get("rag_sources") or [])
+        resource_content["references"] = references
+        resource_content["knowledge_base_match"] = {
+            "system_course_hit": any(item.get("scope") == "system" for item in references),
+            "message": (
+                "已使用预制课程知识库"
+                if any(item.get("scope") == "system" for item in references)
+                else "未命中预制课程知识库"
+            ),
+        }
+        return resource_content
+
     def _save_resource(self, state: AgentState, resource_type: str, content):
         prev_id = state.get("resource_db_id")
         title = self._extract_title(content, resource_type, state)
@@ -512,7 +575,7 @@ class ContentGenAgent(BaseAgent):
             + [x for x in [graph_tags.get("course_name")] if x]
             + list(graph_tags.get("knowledge_points") or [])
         ))
-        resource_content = content if isinstance(content, dict) else {"text": content}
+        resource_content = self._attach_references(content, state)
         if graph_tags.get("course_bindings"):
             resource_content = dict(resource_content)
             resource_content["course_bindings"] = graph_tags.get("course_bindings")
@@ -566,7 +629,7 @@ class ContentGenAgent(BaseAgent):
                 "client_draft_id": state.get("client_draft_id") or uuid.uuid4().hex,
                 "resource_type": resource_type,
                 "title": title,
-                "content": content if isinstance(content, dict) else {"text": content},
+                "content": self._attach_references(content, state),
                 "course_name": state.get("course_name"),
                 "knowledge_points": state.get("knowledge_points") or [],
                 "kp_weights": state.get("kp_weights") or {},
