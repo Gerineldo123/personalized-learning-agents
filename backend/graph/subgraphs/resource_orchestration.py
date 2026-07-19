@@ -31,6 +31,16 @@ RESOURCE_PLAN = {
 DEFAULT_RESOURCE_TYPES = ["article", "mindmap", "quiz", "code", "ppt", "video"]
 MIN_COURSE_PATH_KPS = 3
 
+RESOURCE_TASK_INSTRUCTIONS = {
+    "article": "只生成资源包中的概念讲解文章，聚焦核心概念、过程解释和学习建议；不要生成题库、代码、视频或PPT。",
+    "mindmap": "只生成资源包中的思维导图，梳理知识层级、关键概念和关系；不要生成讲解文章、题库、代码、视频或PPT。",
+    "quiz": "只生成资源包中的练习题库，包含题目、答案和解析；不要生成讲解文章、代码、视频或PPT。",
+    "code": "只生成资源包中的代码教学案例，给出可运行代码和关键说明；不要生成题库、视频、PPT或完整资源包。",
+    "ppt": "只创建资源包中的PPT课件分步生成任务，围绕主题组织课件大纲；不要生成题库、代码、视频或完整资源包。",
+    "video": "只搜索并推荐资源包中的教学视频，返回具体视频资源；不要生成文章、题库、代码或PPT。",
+    "evaluation": "只生成资源包中的学习评估建议，说明如何检验学习效果；不要生成其它资源类型。",
+}
+
 
 def _profile_snapshot(profile) -> dict:
     if not profile:
@@ -74,13 +84,6 @@ def _resource_info(resource_type: str, state: AgentState) -> dict:
     return info
 
 
-def _article_content(state: AgentGraphState) -> str:
-    for resource in reversed(state.get("generated_resources") or []):
-        if resource.get("resource_type") == "article":
-            return str(resource.get("content_preview") or "")
-    return ""
-
-
 def _extract_content_preview(agent_state: AgentState) -> str:
     try:
         raw = json.loads(agent_state.get("response", "{}"))
@@ -88,6 +91,25 @@ def _extract_content_preview(agent_state: AgentState) -> str:
         return json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else str(content)
     except Exception:
         return ""
+
+
+def _resource_task_message(state: AgentGraphState, resource_type: str) -> str:
+    original = str(state.get("user_message") or "").strip()
+    course_name = state.get("course_name")
+    knowledge_points = [str(kp) for kp in (state.get("knowledge_points") or []) if kp]
+    focus = "、".join(knowledge_points) or course_name or original
+    instruction = RESOURCE_TASK_INSTRUCTIONS.get(
+        resource_type,
+        "只完成当前资源类型对应的子任务，不要生成完整资源包。",
+    )
+    parts = [
+        f"资源包总目标：{original}",
+        f"共同学习主题：{focus}",
+        f"你的分工：{instruction}",
+    ]
+    if knowledge_points:
+        parts.append(f"需覆盖知识点：{'、'.join(knowledge_points)}")
+    return "\n".join(parts)
 
 
 def _profile_major(profile) -> str:
@@ -131,12 +153,10 @@ def _classify_study_scope(
 
     if course and course_kps:
         course_text_match = bool(course_name and course_name in (topic or ""))
-        if explicit_course or course_text_match:
-            if len(bound_kps) < MIN_COURSE_PATH_KPS:
-                bound_kps = course_kps[:4]
-            return "course", bound_kps, course_kps, "matched_curriculum_course"
         if bound_kps:
             return "knowledge_point", bound_kps, course_kps, "matched_course_knowledge_point"
+        if explicit_course or course_text_match:
+            return "course", course_kps[:4], course_kps, "matched_curriculum_course"
 
     if course and not course_kps:
         return "extension", [], [], "course_has_no_kp_file"
@@ -290,7 +310,7 @@ async def resource_plan_node(state: AgentGraphState) -> dict:
         {"resource_type": rtype, "agent": RESOURCE_PLAN[rtype][0], "purpose": RESOURCE_PLAN[rtype][1]}
         for rtype in requested
     ]
-    jobs = [{"resource_type": rtype} for rtype in requested if rtype != "article"]
+    jobs = [{"resource_type": rtype} for rtype in requested]
     workflow = [_event("resource_planned", plan)]
     return {
         "requested_resource_types": requested,
@@ -298,14 +318,6 @@ async def resource_plan_node(state: AgentGraphState) -> dict:
         "workflow_outputs": workflow,
         "agent_events": collaboration_events_from_workflow(workflow),
     }
-
-
-async def article_gen_node(state: AgentGraphState) -> dict:
-    requested = set(state.get("requested_resource_types") or [])
-    if "article" not in requested:
-        return {}
-
-    return await _run_resource_node(state, "article", state.get("user_message", ""))
 
 
 def _dispatch_parallel_resources(state: AgentGraphState):
@@ -323,11 +335,7 @@ async def resource_gen_node(state: AgentGraphState) -> dict:
     if not resource_type:
         return {}
 
-    message = state.get("user_message", "")
-    if resource_type == "mindmap":
-        article = _article_content(state)
-        if article:
-            message = f"{message}\n\n参考讲解内容：\n{article[:1500]}"
+    message = _resource_task_message(state, resource_type)
     return await _run_resource_node(state, resource_type, message)
 
 
@@ -346,7 +354,7 @@ async def _run_resource_node(state: AgentGraphState, resource_type: str, message
         agent_state.update({"code_language": "python"})
 
     agent_name = RESOURCE_PLAN.get(resource_type, ("content_gen", ""))[0]
-    started = _event("resource_started", {"resource_type": resource_type, "agent": agent_name})
+    started = _event("resource_started", {"resource_type": resource_type, "agent": agent_name, "task": message})
     _write_agent_event("resource_started", started["data"])
     try:
         if resource_type == "mindmap":
@@ -500,7 +508,6 @@ async def finalize_node(state: AgentGraphState) -> dict:
 _builder = StateGraph(AgentGraphState)
 _builder.add_node("profile_diagnosis", profile_diagnosis_node)
 _builder.add_node("resource_plan", resource_plan_node)
-_builder.add_node("article_gen", article_gen_node)
 _builder.add_node("resource_gen", resource_gen_node)
 _builder.add_node("safety_review", safety_review_node)
 _builder.add_node("graph_tagging", graph_tagging_node)
@@ -509,8 +516,7 @@ _builder.add_node("finalize", finalize_node)
 
 _builder.set_entry_point("profile_diagnosis")
 _builder.add_edge("profile_diagnosis", "resource_plan")
-_builder.add_edge("resource_plan", "article_gen")
-_builder.add_conditional_edges("article_gen", _dispatch_parallel_resources, ["resource_gen", "safety_review"])
+_builder.add_conditional_edges("resource_plan", _dispatch_parallel_resources, ["resource_gen", "safety_review"])
 _builder.add_edge("resource_gen", "safety_review")
 _builder.add_edge("safety_review", "graph_tagging")
 _builder.add_edge("graph_tagging", "path_update")

@@ -103,6 +103,7 @@ export interface AgentCollaborationEvent {
   resource_type?: string
   resource_id?: number
   resource_title?: string
+  ppt_session?: Record<string, unknown>
   course_name?: string
   knowledge_points?: string[]
   error?: string

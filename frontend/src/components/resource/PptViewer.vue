@@ -54,6 +54,7 @@ const downloadUrl = computed(() => {
 const previewImages = computed(() => (preview.value.images || []).filter(Boolean))
 const hasImagePreview = computed(() => preview.value.status === 'ready' && previewImages.value.length > 0)
 const previewStatus = computed(() => preview.value.status || 'idle')
+const isLowFidelityPreview = computed(() => preview.value.mode === 'python_low_fidelity')
 const currentImageUrl = computed(() => {
   if (!hasImagePreview.value) return ''
   return fullStaticUrl(previewImages.value[currentSlide.value] || previewImages.value[0])
@@ -62,7 +63,7 @@ const fallbackSlide = computed(() => props.content.slides?.[currentSlide.value])
 const fallbackSlideCount = computed(() => props.content.slides?.length || 0)
 const displayTotal = computed(() => hasImagePreview.value ? previewImages.value.length : fallbackSlideCount.value)
 const lowFidelityWarning = computed(() => {
-  if (preview.value.mode !== 'python_low_fidelity') return ''
+  if (!isLowFidelityPreview.value) return ''
   return preview.value.warning || '当前为低保真预览，完整样式请下载 PPTX 查看'
 })
 const fallbackErrorNotice = computed(() => {
@@ -178,8 +179,8 @@ function initPreview() {
     startPolling()
     return
   }
-  if (!preview.value.status || preview.value.status === 'idle') {
-    requestPreview(false)
+  if (!preview.value.status || preview.value.status === 'idle' || isLowFidelityPreview.value) {
+    requestPreview(isLowFidelityPreview.value)
   } else {
     fetchPreviewStatus().catch(() => {})
   }
@@ -199,13 +200,13 @@ onBeforeUnmount(stopPolling)
       <div class="ppt-header-right">
         <span v-if="displayTotal" class="slide-count">{{ currentSlide + 1 }} / {{ displayTotal }}</span>
         <el-button
-          v-if="downloadUrl && (previewStatus === 'failed' || previewStatus === 'idle')"
+          v-if="downloadUrl && (previewStatus === 'failed' || previewStatus === 'idle' || isLowFidelityPreview)"
           size="small"
           :icon="Refresh"
           :loading="loadingPreview"
-          @click="requestPreview(true)"
+          @click="requestPreview(isLowFidelityPreview || previewStatus === 'failed')"
         >
-          {{ previewStatus === 'failed' ? '重新生成预览' : '生成预览' }}
+          {{ isLowFidelityPreview ? '生成高清预览' : (previewStatus === 'failed' ? '重新生成预览' : '生成预览') }}
         </el-button>
         <a v-if="downloadUrl" :href="fullDownloadUrl()" class="download-btn" download>
           下载PPT

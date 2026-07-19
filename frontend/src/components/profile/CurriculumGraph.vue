@@ -27,13 +27,13 @@ const showParsePanel = ref(false)
 const graphSource = ref<'preset' | 'parsed'>('preset')
 
 const STATUS_COLOR: Record<string, string> = {
-  completed: '#52C41A',
-  learning: '#DBA878',
-  available: '#98C9B3',
-  locked: '#D9D1C8',
-  weak: '#F56C6C',
-  recommended: '#9B59B6',
-  not_started: '#D9D1C8',
+  completed: '#2F9E8B',
+  learning: '#D9922E',
+  available: '#3A6EA5',
+  locked: '#A8B0B9',
+  weak: '#C24B45',
+  recommended: '#6C63B5',
+  not_started: '#A8B0B9',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -55,17 +55,17 @@ const RELATION_LABEL: Record<string, string> = {
 }
 
 const RELATION_STYLE: Record<string, any> = {
-  prerequisite: { color: '#B87945', width: 2, type: 'solid' },
-  support: { color: '#4E8AA8', width: 1.6, type: 'dashed' },
-  parallel: { color: '#D8C3A5', width: 1.2, type: 'dotted' },
-  advanced: { color: '#9B59B6', width: 2, type: 'solid' },
-  cross_domain: { color: '#D46B08', width: 1.8, type: 'dashed' },
+  prerequisite: { color: '#D9922E', width: 2, type: 'solid' },
+  support: { color: '#3A6EA5', width: 1.6, type: 'dashed' },
+  parallel: { color: '#A8B0B9', width: 1.2, type: 'dotted' },
+  advanced: { color: '#6C63B5', width: 2, type: 'solid' },
+  cross_domain: { color: '#2F9E8B', width: 1.8, type: 'dashed' },
 }
 
-const SELECTED_COLOR = '#3A332E'
-const PREREQUISITE_COLOR = '#B87945'
-const SUCCESSOR_COLOR = '#9B59B6'
-const RELATED_COLOR = '#4E8AA8'
+const SELECTED_COLOR = '#1F2A44'
+const PREREQUISITE_COLOR = '#D9922E'
+const SUCCESSOR_COLOR = '#6C63B5'
+const RELATED_COLOR = '#3A6EA5'
 const DIM_OPACITY = 0.24
 
 const selectedNode = computed(() =>
@@ -504,11 +504,11 @@ onUnmounted(() => chart?.dispose())
 .cg-hint { font-size: 12px; color: #6B635C; }
 .relation-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: #6B635C; padding: 8px 10px; background: #FFF9F2; border: 1px solid #F0E3D6; border-radius: 8px; }
 .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
-.legend-dot.selected { background: #3A332E; }
-.legend-dot.prerequisite { background: #B87945; }
-.legend-dot.successor { background: #9B59B6; }
-.legend-dot.related { background: #4E8AA8; }
-.legend-dot.dimmed { background: rgba(58,51,46,0.24); }
+.legend-dot.selected { background: #1F2A44; }
+.legend-dot.prerequisite { background: #D9922E; }
+.legend-dot.successor { background: #6C63B5; }
+.legend-dot.related { background: #3A6EA5; }
+.legend-dot.dimmed { background: rgba(31,42,68,0.24); }
 .cg-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; }
 .cg-chart { width: 100%; height: 520px; border: 1px solid #F0E8E0; border-radius: 8px; background: #fff; }
 .cg-empty-state { width: 100%; height: 520px; border: 1px dashed #EAD8C4; border-radius: 8px; background: #FFFAF4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 24px; color: #7A6A5C; }
@@ -522,9 +522,9 @@ onUnmounted(() => chart?.dispose())
 .relation-block { display: flex; flex-direction: column; gap: 8px; }
 .relation-title { font-size: 13px; font-weight: 700; color: #3A332E; }
 .relation-title::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-.prerequisite-title::before { background: #B87945; }
-.successor-title::before { background: #9B59B6; }
-.related-title::before { background: #4E8AA8; }
+.prerequisite-title::before { background: #D9922E; }
+.successor-title::before { background: #6C63B5; }
+.related-title::before { background: #3A6EA5; }
 .relation-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .course-actions { display: flex; justify-content: space-between; margin-top: auto; gap: 8px; }
 .parse-panel { background: #FAFAFA; border: 1px solid #E8E0D8; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }

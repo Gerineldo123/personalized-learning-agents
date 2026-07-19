@@ -238,6 +238,82 @@ function appendCollaborationEvent(taskId: number, event: AgentCollaborationEvent
   if (!events.some((item) => item.event_id === event.event_id)) {
     taskMeta.value[taskId].collaborationEvents = [...events, event]
   }
+  upsertCollaborationStep(taskId, event)
+}
+
+const resourceStepMeta: Record<string, { skill: string; icon: string; title: string; running: string; done: string }> = {
+  article: { skill: 'article_gen', icon: '📄', title: '生成学习文章', running: '正在调用模型生成文章...', done: '学习文章已生成' },
+  mindmap: { skill: 'mindmap_gen', icon: '🧠', title: '生成思维导图', running: '正在梳理知识结构...', done: '思维导图已生成' },
+  quiz: { skill: 'quiz_gen', icon: '📝', title: '生成练习题', running: '正在生成题干、选项、答案和解析...', done: '练习题已生成' },
+  code: { skill: 'code_gen', icon: '💻', title: '生成代码案例', running: '正在生成代码案例...', done: '代码案例已生成' },
+  anime: { skill: 'code_gen', icon: '🎬', title: '生成动画演示', running: '正在生成可视化动画...', done: '动画演示已生成' },
+  ppt: { skill: 'ppt_gen', icon: '📊', title: '创建PPT课件', running: '正在创建 AiPPT 分步课件任务...', done: 'PPT课件任务已创建' },
+  video: { skill: 'video_search', icon: '🎬', title: '搜索教学视频', running: '正在搜索并筛选教学视频...', done: '教学视频已推荐' },
+  evaluation: { skill: 'evaluation', icon: '📈', title: '生成学习评估', running: '正在评估学习效果...', done: '学习评估已生成' },
+}
+
+function collaborationStepId(event: AgentCollaborationEvent) {
+  const key = event.resource_type || event.agent_key || event.stage
+  return `collab-${key}`
+}
+
+function upsertCollaborationStep(taskId: number, event: AgentCollaborationEvent) {
+  if (!['resource_started', 'resource_created', 'resource_failed'].includes(event.stage)) return
+  const resourceType = event.resource_type || event.agent_key || 'resource'
+  const meta = resourceStepMeta[resourceType] || {
+    skill: resourceType,
+    icon: '🔧',
+    title: event.role || '执行资源子任务',
+    running: event.output_summary || '正在执行...',
+    done: event.output_summary || '已完成',
+  }
+  const status = event.status === 'error'
+    ? 'error'
+    : event.status === 'completed'
+      ? 'completed'
+      : 'running'
+  const note = status === 'completed'
+    ? (event.resource_title ? `${meta.done}：${event.resource_title}` : meta.done)
+    : status === 'error'
+      ? (event.error || '执行失败')
+      : (event.output_summary || meta.running)
+  const subSteps = status === 'running'
+    ? ['✅ 已接收资源包分工', `⏳ ${meta.running}`]
+    : status === 'completed'
+      ? ['✅ 已接收资源包分工', `✅ ${note}`]
+      : ['✅ 已接收资源包分工', `❌ ${note}`]
+  const pptSessionPayload = resourceType === 'ppt' && event.ppt_session
+    ? {
+        title: event.resource_title || 'PPT课件',
+        ppt_session: event.ppt_session,
+        status: 'pending_step_by_step',
+        message: '请进入 AiPPT 分步工作台确认大纲和模板。',
+      }
+    : null
+
+  agentStore.upsertStep(taskId, {
+    stepId: collaborationStepId(event),
+    stepType: 'skill',
+    status,
+    title: meta.title,
+    agentName: event.agent_name,
+    data: {
+      skill_name: meta.skill,
+      skill_icon: meta.icon,
+      content: pptSessionPayload
+        ? JSON.stringify(pptSessionPayload)
+        : (event.input_summary || event.output_summary || ''),
+      sub_steps: subSteps,
+      render_type: pptSessionPayload ? 'ppt_session' : undefined,
+      progress: status === 'running' ? 45 : 100,
+      current_phase: status === 'running' ? meta.title : (status === 'completed' ? '已完成' : '失败'),
+      progress_note: note,
+      progress_indeterminate: status === 'running',
+      progress_label: status === 'running' ? '执行中...' : undefined,
+    },
+    expanded: status === 'running',
+    timestamp: event.timestamp ? new Date(event.timestamp).getTime() : Date.now(),
+  })
 }
 
 // 滚动

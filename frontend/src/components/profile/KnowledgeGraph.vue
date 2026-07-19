@@ -36,6 +36,15 @@ function resolveGraphFile(discipline?: string): string | null {
 
 let graphData: { nodes: any[]; links: any[]; categories: any[] } | null = null
 
+const MASTERY_COLOR = {
+  mastered: '#2F9E8B',
+  developing: '#D9922E',
+  weak: '#C24B45',
+  unassessed: '#A8B0B9',
+  next: '#6C63B5',
+  nextBorder: '#3F3A87',
+}
+
 const isExternalEmptyGraph = computed(() =>
   Boolean(props.graphData && (!props.graphData.nodes || props.graphData.nodes.length === 0))
 )
@@ -111,16 +120,16 @@ function renderChart() {
   const nodes = graphData.nodes.map((n: any) => {
     const score = kb[n.id] ?? 0
     const isNext = nextSet.has(n.id)
-    const color = isNext ? '#9b59b6'
-      : score >= 0.8 ? '#67c23a'
-      : score >= 0.5 ? '#e6a23c'
-      : score > 0 ? '#f56c6c'
-      : '#909399'
+    const color = isNext ? MASTERY_COLOR.next
+      : score >= 0.8 ? MASTERY_COLOR.mastered
+      : score >= 0.5 ? MASTERY_COLOR.developing
+      : score > 0 ? MASTERY_COLOR.weak
+      : MASTERY_COLOR.unassessed
     return {
       ...n,
       name: n.id,
       symbolSize: isNext ? 42 : 28 + score * 20,
-      itemStyle: { color, borderColor: isNext ? '#6c3483' : undefined, borderWidth: isNext ? 2 : 0 },
+      itemStyle: { color, borderColor: isNext ? MASTERY_COLOR.nextBorder : undefined, borderWidth: isNext ? 2 : 0 },
     }
   })
 
@@ -142,7 +151,7 @@ function renderChart() {
       categories: graphData!.categories,
       roam: true,
       force: { repulsion: 150, edgeLength: 100 },
-      lineStyle: { color: 'source', curveness: 0.1, opacity: 0.5 },
+      lineStyle: { color: 'source', curveness: 0.1, opacity: 0.42 },
       emphasis: { focus: 'adjacency' },
       label: {
         show: true,
@@ -199,7 +208,13 @@ watch(() => props.knowledgeBase, renderChart, { deep: true })
 .kg-wrap { background: var(--bg-card, #FFFBF5); border: 1px solid var(--border-light, #EFE6DC); border-radius: var(--radius-md, 12px); padding: 16px; }
 .kg-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary, #6B635C); margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; flex-shrink: 0; }
+.dot[style*="#67c23a"] { background: #2F9E8B !important; }
+.dot[style*="#e6a23c"] { background: #D9922E !important; }
+.dot[style*="#f56c6c"] { background: #C24B45 !important; }
+.dot[style*="#909399"] { background: #A8B0B9 !important; }
+.dot[style*="#9b59b6"] { background: #6C63B5 !important; }
 .kg-next { font-size: 12px; color: #6B635C; margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.kg-next :deep(.el-tag) { background-color: #F0EEFF !important; border-color: #6C63B5 !important; color: #3F3A87 !important; }
 .kg-chart { width: 100%; height: 420px; }
 .kg-empty { height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #ead8c4; border-radius: 10px; background: #fffaf4; color: #7A6A5C; }
 .kg-empty-title { font-weight: 700; color: #3A332E; }

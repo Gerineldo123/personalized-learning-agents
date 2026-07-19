@@ -101,7 +101,12 @@ def collaboration_event(stage: str, data: Any) -> dict:
             event["knowledge_points"] = data.get("knowledge_points")
         if data.get("focus_knowledge_points"):
             event["knowledge_points"] = data.get("focus_knowledge_points")
+        if data.get("task"):
+            event["input_summary"] = data.get("task")
+            if stage == "resource_started":
+                event["output_summary"] = _short(data.get("task"))
         if data.get("ppt_session"):
+            event["ppt_session"] = data.get("ppt_session")
             event["output_summary"] = "已创建 AiPPT 分步生成任务，等待大纲确认和模板选择"
     elif isinstance(data, list) and stage == "resource_planned":
         event["output_summary"] = "计划生成：" + "、".join(

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
+import os
 import shutil
+import subprocess
 import tempfile
 import threading
 from datetime import datetime
@@ -24,13 +27,15 @@ STATIC_DIR = BACKEND_DIR / "static"
 PPT_DIR = STATIC_DIR / "ppt"
 PREVIEW_DIR = STATIC_DIR / "ppt_preview"
 
-PREVIEW_MODE = "python_low_fidelity"
-PREVIEW_WARNING = "当前为低保真预览，完整样式请下载 PPTX 查看"
+NATIVE_PREVIEW_MODE = "powerpoint_native"
+LOW_FIDELITY_PREVIEW_MODE = "python_low_fidelity"
+LOW_FIDELITY_PREVIEW_WARNING = "未检测到可用的 PowerPoint 原生渲染，当前显示兼容预览；完整样式请下载 PPTX 查看"
 CANVAS_WIDTH = 1280
 MIN_CANVAS_HEIGHT = 720
 
 _ACTIVE_TASKS: set[int] = set()
 _TASK_LOCK = threading.Lock()
+_POWERPOINT_RENDER_LOCK = threading.Lock()
 _FONT_CACHE: dict[tuple[int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 
 
@@ -43,13 +48,15 @@ def _preview_payload(
     images: list[str] | None = None,
     total: int = 0,
     error: str | None = None,
+    mode: str | None = None,
+    warning: str | None = None,
 ) -> dict[str, Any]:
     return {
         "status": status,
         "images": images or [],
         "total": total,
-        "mode": PREVIEW_MODE,
-        "warning": PREVIEW_WARNING,
+        "mode": mode,
+        "warning": warning,
         "error": error,
         "generated_at": _utc_now() if status in {"ready", "failed"} else None,
     }
@@ -380,7 +387,7 @@ def _render_shape(canvas: Image.Image, draw: ImageDraw.ImageDraw, shape: Any, sc
             _draw_placeholder(draw, bbox, "文本预览不可用")
 
 
-def _render_pptx_to_images(ppt_path: Path, resource_id: int, render_dir: Path) -> list[str]:
+def _render_pptx_to_images_low_fidelity(ppt_path: Path, resource_id: int, render_dir: Path) -> list[str]:
     presentation = Presentation(str(ppt_path))
     slide_width = int(presentation.slide_width)
     slide_height = int(presentation.slide_height)
@@ -412,6 +419,84 @@ def _render_pptx_to_images(ppt_path: Path, resource_id: int, render_dir: Path) -
     if not images:
         raise RuntimeError("PPTX 不包含可预览页面")
     return images
+
+
+def _powershell_literal(value: Path) -> str:
+    return "'" + str(value.resolve()).replace("'", "''") + "'"
+
+
+def _render_pptx_with_powerpoint(ppt_path: Path, resource_id: int, render_dir: Path) -> list[str]:
+    if os.name != "nt":
+        raise RuntimeError("PowerPoint 原生预览仅支持 Windows")
+
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        raise RuntimeError("未找到 PowerShell")
+
+    render_dir.mkdir(parents=True, exist_ok=True)
+    script = f"""
+$ErrorActionPreference = 'Stop'
+$sourcePath = {_powershell_literal(ppt_path)}
+$outputDir = {_powershell_literal(render_dir)}
+$application = $null
+$presentation = $null
+try {{
+    $application = New-Object -ComObject PowerPoint.Application
+    $application.DisplayAlerts = 1
+    $presentation = $application.Presentations.Open($sourcePath, $true, $false, $false)
+    $width = 1920
+    $height = [int][Math]::Round($width * $presentation.PageSetup.SlideHeight / $presentation.PageSetup.SlideWidth)
+    for ($index = 1; $index -le $presentation.Slides.Count; $index++) {{
+        $outputPath = Join-Path $outputDir ("slide_{{0:D3}}.png" -f $index)
+        $presentation.Slides.Item($index).Export($outputPath, 'PNG', $width, $height)
+    }}
+}} finally {{
+    if ($presentation -ne $null) {{
+        $presentation.Close()
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($presentation)
+    }}
+    if ($application -ne $null) {{
+        $application.Quit()
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($application)
+    }}
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}}
+"""
+    encoded_script = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+    with _POWERPOINT_RENDER_LOCK:
+        result = subprocess.run(
+            [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_script],
+            capture_output=True,
+            timeout=180,
+            creationflags=creation_flags,
+            check=False,
+        )
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(detail[-500:] or "PowerPoint 原生渲染失败")
+
+    exported = sorted(render_dir.glob("slide_*.png"))
+    if not exported:
+        raise RuntimeError("PowerPoint 未导出任何预览页")
+    return [f"/static/ppt_preview/{resource_id}/{path.name}" for path in exported]
+
+
+def _render_pptx_to_images(
+    ppt_path: Path,
+    resource_id: int,
+    render_dir: Path,
+) -> tuple[list[str], str, str | None]:
+    try:
+        images = _render_pptx_with_powerpoint(ppt_path, resource_id, render_dir)
+        return images, NATIVE_PREVIEW_MODE, None
+    except Exception:
+        shutil.rmtree(render_dir, ignore_errors=True)
+        images = _render_pptx_to_images_low_fidelity(ppt_path, resource_id, render_dir)
+        return images, LOW_FIDELITY_PREVIEW_MODE, LOW_FIDELITY_PREVIEW_WARNING
 
 
 def get_ppt_preview_status(resource_id: int, user_id: str | None = None) -> dict[str, Any]:
@@ -459,14 +544,20 @@ def generate_ppt_preview(resource_id: int, force: bool = False) -> dict[str, Any
             work_dir = Path(temp_dir)
             source_path = _prepare_source_ppt(content, work_dir)
             staged_dir = work_dir / "slides"
-            images = _render_pptx_to_images(source_path, resource_id, staged_dir)
+            images, mode, warning = _render_pptx_to_images(source_path, resource_id, staged_dir)
 
             final_dir = PREVIEW_DIR / str(resource_id)
             if final_dir.exists():
                 shutil.rmtree(final_dir)
             shutil.move(str(staged_dir), str(final_dir))
 
-        ready = _preview_payload("ready", images=images, total=len(images))
+        ready = _preview_payload(
+            "ready",
+            images=images,
+            total=len(images),
+            mode=mode,
+            warning=warning,
+        )
         return _set_preview(resource_id, ready)
     except Exception as exc:
         failed = _preview_payload("failed", error=str(exc)[:500])

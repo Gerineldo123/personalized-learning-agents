@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { AgentStep, CodeData } from '../../../types/agent'
+import AnimationViewer from '../../resource/AnimationViewer.vue'
 
 const props = defineProps<{ step: AgentStep }>()
 
 const expanded = ref(props.step.status === 'running')
 const copied = ref(false)
 const previewVisible = ref(false)
-const fullscreenPreview = ref(false)
-const iframeHeight = ref(760)
 const data = computed(() => props.step.data as CodeData)
 const isHtml = computed(() => ['html', 'htm'].includes((data.value.language || '').toLowerCase()))
 
@@ -63,13 +62,6 @@ function copyCode() {
   })
 }
 
-function onIframeLoad(e: Event) {
-  const iframe = e.target as HTMLIFrameElement
-  try {
-    const h = iframe.contentDocument?.documentElement?.scrollHeight
-    if (h && h > 200) iframeHeight.value = Math.min(Math.max(h + 20, 680), 920)
-  } catch {}
-}
 </script>
 
 <template>
@@ -92,9 +84,6 @@ function onIframeLoad(e: Event) {
           <button v-if="isHtml" class="preview-btn" @click.stop="previewVisible = !previewVisible">
             {{ previewVisible ? '显示代码' : '运行预览' }}
           </button>
-          <button v-if="isHtml" class="preview-btn secondary" @click.stop="fullscreenPreview = true">
-            大屏预览
-          </button>
           <button class="copy-btn" @click.stop="copyCode">
             {{ copied ? '已复制' : '复制代码' }}
           </button>
@@ -102,19 +91,11 @@ function onIframeLoad(e: Event) {
       </div>
 
       <div v-if="isHtml && previewVisible" class="preview-shell">
-        <div class="preview-shell-head">
-          <div>
-            <div class="preview-title">HTML 动画预览</div>
-            <div class="preview-subtitle">已启用宽屏适配；复杂动画可使用大屏预览查看。</div>
-          </div>
-          <button class="open-full-btn" @click.stop="fullscreenPreview = true">打开大屏</button>
-        </div>
-        <iframe
-          :srcdoc="previewSrcdoc"
-          sandbox="allow-scripts"
-          class="html-preview"
-          :style="{ height: iframeHeight + 'px' }"
-          @load="onIframeLoad"
+        <AnimationViewer
+          :html="previewSrcdoc"
+          title="HTML 动画预览"
+          description="动画已按当前窗口自动适配。"
+          compact
         />
       </div>
 
@@ -131,20 +112,6 @@ function onIframeLoad(e: Event) {
       </div>
     </div>
 
-    <Teleport to="body">
-      <div v-if="fullscreenPreview" class="preview-modal" @click.self="fullscreenPreview = false">
-        <div class="preview-modal-card">
-          <div class="preview-modal-header">
-            <div>
-              <div class="preview-modal-title">大屏动画预览</div>
-              <div class="preview-modal-subtitle">{{ langLabel }}</div>
-            </div>
-            <button class="preview-modal-close" @click="fullscreenPreview = false">关闭</button>
-          </div>
-          <iframe :srcdoc="previewSrcdoc" sandbox="allow-scripts" class="html-preview-modal" />
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>
 
@@ -171,26 +138,13 @@ function onIframeLoad(e: Event) {
 .toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .copy-btn, .preview-btn { font-size: 12px; padding: 4px 12px; border: 1px solid #555; border-radius: 6px; background: #3d3d4f; color: #ddd; cursor: pointer; transition: all 0.2s; }
 .preview-btn { border-color: #98C9B3; color: #98C9B3; }
-.preview-btn.secondary { border-color: #E8C29C; color: #E8C29C; }
 .copy-btn:hover, .preview-btn:hover { border-color: #E8C29C; color: #E8C29C; }
-.preview-shell { background: linear-gradient(180deg, #FFF8F1 0%, #F8EFE5 100%); padding: 20px; border-top: 1px solid rgba(255,255,255,0.45); }
-.preview-shell-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.preview-title { font-size: 14px; font-weight: 700; color: #3A332E; }
-.preview-subtitle { margin-top: 3px; font-size: 12px; color: #6B635C; }
-.open-full-btn { border: 1px solid #E8C29C; color: #7C5C3C; background: #FFFBF5; border-radius: 999px; padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer; flex-shrink: 0; }
-.html-preview { width: 100%; min-height: 680px; border: none; border-radius: 18px; background: #fff; display: block; transition: height 0.2s; box-shadow: 0 18px 38px rgba(58, 51, 46, 0.14); }
+.preview-shell { background: #FFF8F1; padding: 20px; border-top: 1px solid rgba(255,255,255,0.45); }
 .code-editor { background: #1e1e2e; overflow-x: auto; }
 .code-block { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; padding: 14px; margin: 0; display: block; color: #cdd6f4; white-space: pre; tab-size: 2; }
 .output-section { border-top: 1px solid #EFE6DC; }
 .output-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #FFF5EB; }
 .output-label { font-size: 12px; color: #6B635C; font-weight: 500; }
 .output-content { margin: 0; padding: 12px 14px; background: #FFFBF5; color: #6B635C; white-space: pre-wrap; overflow-x: auto; }
-.preview-modal { position: fixed; inset: 0; z-index: 9999; background: rgba(33, 28, 24, 0.72); display: flex; align-items: center; justify-content: center; padding: 28px; }
-.preview-modal-card { width: min(1280px, 96vw); height: min(900px, 92vh); background: #FFFBF5; border-radius: 22px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 28px 80px rgba(0,0,0,0.28); }
-.preview-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #EFE6DC; }
-.preview-modal-title { font-size: 16px; font-weight: 800; color: #3A332E; }
-.preview-modal-subtitle { font-size: 12px; color: #948A80; margin-top: 4px; }
-.preview-modal-close { border: 1px solid #E8C29C; background: #FFF5EB; border-radius: 999px; padding: 7px 14px; cursor: pointer; color: #7C5C3C; }
-.html-preview-modal { flex: 1; width: 100%; border: none; background: #fff; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 </style>

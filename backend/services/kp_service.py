@@ -97,8 +97,16 @@ def _build_index():
 _build_index()
 
 
+def _prune_generic_kps(matches: list[str]) -> list[str]:
+    unique = list(dict.fromkeys(matches))
+    has_specific = any(len(kp.strip()) >= 2 for kp in unique)
+    if not has_specific:
+        return unique
+    return [kp for kp in unique if len(kp.strip()) >= 2]
+
+
 def match_kp(text: str) -> list[str]:
-    return [kp for kp in kp_course_map if kp in (text or "")]
+    return _prune_generic_kps([kp for kp in kp_course_map if kp in (text or "")])
 
 
 def _course_matches(text: str) -> list[str]:
@@ -133,7 +141,7 @@ def _match_kps_for_inference(text: str, course_context: str | None = None) -> li
         if allowed is not None and alias_kp not in allowed:
             continue
         matches.append(alias_kp)
-    return matches
+    return _prune_generic_kps(matches)
 
 
 def get_course_kps(course_name: str | None) -> list[str]:
@@ -154,7 +162,7 @@ def infer_course_from_text(text: str, default: str | None = None) -> str | None:
 
 
 def default_focus_kps(course_name: str | None, text: str = "", limit: int = 4) -> list[str]:
-    matched = match_kp(text or "")
+    matched = _match_kps_for_inference(text or "", course_name)
     if matched:
         return list(dict.fromkeys(matched))[:limit]
     nodes = get_course_kps(course_name)

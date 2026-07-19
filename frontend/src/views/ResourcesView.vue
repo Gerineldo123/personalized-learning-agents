@@ -7,6 +7,7 @@ import { useEventStore } from '../stores/event'
 import MindMapViewer from '../components/resource/MindMapViewer.vue'
 import QuizCard from '../components/resource/QuizCard.vue'
 import PptViewer from '../components/resource/PptViewer.vue'
+import AnimationViewer from '../components/resource/AnimationViewer.vue'
 import ResourceLineagePanel from '../components/resource/ResourceLineagePanel.vue'
 import { ElMessage } from 'element-plus'
 import { renderMarkdownEnhanced as renderMdCommon, codeBlockStore } from '../utils/markdown'
@@ -1267,21 +1268,12 @@ function biliPlayerSrc(url: string): string {
         :user-id="userStore.userId"
         @updated="updateSelectedContent"
       />
-      <div v-else-if="selected.resource_type === 'anime'" class="anime-viewer">
-        <div class="anime-toolbar">
-          <div>
-            <strong>可视化动画预览</strong>
-            <p>动画以沙箱 iframe 方式运行，源文件已保存到学习资源。</p>
-          </div>
-        </div>
-        <iframe
-          v-if="animeHtmlContent(selected.content)"
-          :srcdoc="animeHtmlContent(selected.content)"
-          sandbox="allow-scripts"
-          class="anime-iframe"
-        />
-        <div v-else class="anime-empty">该动画资源缺少可预览的 HTML 内容。</div>
-      </div>
+      <AnimationViewer
+        v-else-if="selected.resource_type === 'anime'"
+        :html="animeHtmlContent(selected.content)"
+        title="可视化动画预览"
+        description="动画以沙箱方式运行，源文件已保存到学习资源。"
+      />
       <div v-else-if="selected.resource_type === 'video'" class="video-viewer">
         <div v-if="biliPlayerSrc(selected.content?.url)" class="video-embed-wrap">
           <iframe
@@ -1673,32 +1665,6 @@ function biliPlayerSrc(url: string): string {
 .video-meta { padding: 14px 18px; }
 .video-source { font-size: 12px; color: #948A80; }
 .video-reason { margin: 6px 0 0; color: #3A332E; font-size: 14px; line-height: 1.6; }
-.anime-viewer {
-  background: #FFFBF5;
-  border-radius: 12px;
-  border: 1px solid #EFE6DC;
-  overflow: hidden;
-}
-.anime-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  border-bottom: 1px solid #EFE6DC;
-  background: #fff8ef;
-}
-.anime-toolbar strong { color: #3A332E; }
-.anime-toolbar p { margin: 4px 0 0; color: #7A6A5C; font-size: 13px; }
-.anime-iframe {
-  width: 100%;
-  height: min(72vh, 760px);
-  min-height: 560px;
-  border: none;
-  background: #fff;
-}
-.anime-empty { padding: 48px; text-align: center; color: #948A80; }
-
 @keyframes floatUpIn {
   from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }

@@ -8,6 +8,7 @@ import api from '../../../api'
 import { useUserStore } from '../../../stores/user'
 import { skillDisplayName, skillDisplayIcon } from '../../../utils/agentLabels'
 import MindMapViewer from '../../resource/MindMapViewer.vue'
+import AnimationViewer from '../../resource/AnimationViewer.vue'
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
@@ -317,15 +318,6 @@ const isHtmlCode = computed(() =>
 )
 const hasCodeContent = computed(() => !!data.value.language && (!!data.value.content || isStreamingCode.value))
 const previewVisible = ref(true)
-const iframeHeight = ref(700)
-
-function onIframeLoad(e: Event) {
-  const iframe = e.target as HTMLIFrameElement
-  try {
-    const h = iframe.contentDocument?.documentElement?.scrollHeight
-    if (h && h > 200) iframeHeight.value = h + 20
-  } catch {}
-}
 
 function toggleExpand() {
   expanded.value = !expanded.value
@@ -524,7 +516,12 @@ async function saveDraftResource() {
             {{ previewVisible ? '显示代码' : '运行预览' }}
           </button>
         </div>
-        <iframe v-if="step.status === 'completed' && isHtmlCode && previewVisible" :srcdoc="data.content" sandbox="allow-scripts" class="html-preview" :style="{ height: iframeHeight + 'px' }" @load="onIframeLoad" />
+        <AnimationViewer
+          v-if="step.status === 'completed' && isHtmlCode && previewVisible"
+          :html="data.content"
+          title="动画预览"
+          compact
+        />
         <pre v-else class="code-block"><code>{{ data.content || '// 正在等待模型输出...' }}</code><span v-if="isStreamingCode" class="code-stream-cursor">▌</span></pre>
       </div>
 
@@ -644,7 +641,6 @@ async function saveDraftResource() {
 .code-stream-cursor { display: inline-block; color: #FBCFA8; animation: streamBlink 0.8s step-end infinite; }
 .preview-btn { font-size: 12px; padding: 3px 10px; border: 1px solid #98C9B3; border-radius: 6px; background: transparent; color: #98C9B3; cursor: pointer; transition: all 0.2s; }
 .preview-btn:hover { background: #98C9B3; color: #fff; }
-.html-preview { width: calc(100% + 28px); margin-left: -14px; min-height: 600px; height: auto; border: none; border-top: 1px solid #EFE6DC; background: #fff; display: block; border-radius: 0 0 8px 8px; }
 .json-block { background: #FFF5EB; color: #6B635C; padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid #EFE6DC; font-family: var(--font-mono); }
 .json-block code { font-family: var(--font-mono); }
 .markdown-body { font-size: 14px; line-height: 1.7; color: #6B635C; max-height: 500px; overflow-y: auto; }
